@@ -130,6 +130,70 @@ Files: `extension/src/background.js`, `extension/src/content.js`,
 
 ---
 
+### 4. A maintenance-window resolution is cached permanently
+
+**Severity: high — one outage poisons the cache for every later run.**
+
+Found during the first real-stack run. eLitigation was in a maintenance window (F12,
+third occurrence). The neutral-citation URL fetch correctly detected it, the search
+fallback then matched the case name against the maintenance page, and the run stored:
+
+```
+citation_key   | status   | method | confidence | expires_at
+sgca:2007:37   | resolved | search | 1.0        | NULL
+```
+
+`documents` stayed empty, so the row says **resolved** while no text exists. Every
+later run reuses it and reports `CITATION_UNVERIFIED — exists, but its text was not
+available`, and it will keep doing so after eLitigation comes back, because
+`expires_at` is NULL and nothing invalidates it.
+
+The verdict direction is safe (WARN, never FAIL — the F12 rule holds). The defect is
+that a *transient* source state was written to a *durable* cache with no expiry, and
+the only way out today is deleting the row by hand.
+
+**Next step:** do not cache a resolution whose document has no usable text, or give
+SOURCE_UNAVAILABLE resolutions a short `expires_at`. The column already exists and is
+never populated.
+
+Files: `src/verifier/repos/resolutions.py`, `src/verifier/pipeline/resolver.py`.
+
+---
+
+### 5. The Docker image does not ship `tests/corpus`, so mock mode cannot verify in a container
+
+**Severity: medium — the compose file's own promise is untrue.**
+
+`docker-compose.yml` opens with "The whole stack boots with an empty .env in
+PROVIDER_MODE=mock." It boots, but it cannot verify anything: `MockFetcher` reads
+`tests/corpus/*.html` via `parents[4] / "tests" / "corpus"`, and the image copies only
+`src`, `alembic`, `pyproject.toml` and `README.md`. Every citation resolves to nothing.
+
+Verified by running the acceptance pair inside the `api` container: both returned
+`CITATION_UNVERIFIED`. The same script run natively, against the same Postgres, passed.
+
+**Next step:** COPY `tests/corpus` into the image (it is ~500 kB), or mount it in
+compose for the mock profile.
+
+Files: `docker/Dockerfile`, `docker-compose.yml`.
+
+---
+
+### 6. There is no `FETCHER_MODE`
+
+**Severity: low — but it is what made bug 5 hard to work around.**
+
+`EMBEDDINGS_MODE`, `SUMMARISER_MODE` and `JUDGE_MODE` can each be set independently of
+`PROVIDER_MODE`. The fetcher cannot: `get_http_fetcher()` keys on `settings.is_mock`,
+which is the global switch. So "real models, local corpus" — the exact configuration
+used for every calibration run in `docs/03-findings.md` Parts 4 and 5, and the only way
+to exercise L3/L5 while eLitigation is down — requires flipping the global to `mock`
+and setting the other three back to `real`.
+
+Files: `src/verifier/providers/factory.py`, `src/verifier/settings.py`.
+
+---
+
 ### 4. `make seed-lists` reports success while writing nowhere durable
 
 **Severity: medium — cosmetic today, misleading tomorrow.**
