@@ -41,6 +41,12 @@ POST /v1/verify {question, ai_output, context, is_followup}
 
 ### Why this ordering
 
+Citation forms follow the sponsor's house style, the SAL *SLR Style Guide* (2021) —
+neutral citations, both bracket conventions for law reports, the four statute forms, and
+the subsequent-reference shorthand (`("ANJ")`, `([1] supra)`) that SLR style makes
+pervasive. That guide is a specification here, not a nicety: a form we fail to recognise
+is authority the answer gets no credit for. See `docs/03-findings.md` F13.
+
 **L1a comes first, before anything is fetched.** L1b and L1c only ever examine
 authority the output actually wrote down, so an answer that states the law from memory
 — confidently, fluently, citing nothing — passes them both without a mark against it.

@@ -23,10 +23,15 @@ import re
 # Neutral citations
 # ---------------------------------------------------------------------------
 
-#: Singapore court codes that appear in neutral citations, longest-first so that the
-#: alternation prefers ``SGHC(A)`` over ``SGHC``. Ordering is load-bearing: Python's
-#: ``|`` is first-match, not longest-match, so ``SGHC`` placed first would match the
-#: stem of ``SGHC(A) 12`` and leave "(A) 12" unparsed.
+#: Singapore court designators, per the SLR Style Guide 2021, Appendix 1B para 2-1.2.1
+#: ("Singapore neutral citations"). Longest-first so that the alternation prefers
+#: ``SGHC(A)`` over ``SGHC``. Ordering is load-bearing: Python's ``|`` is first-match,
+#: not longest-match, so ``SGHC`` placed first would match the stem of ``SGHC(A) 12``
+#: and leave "(A) 12" unparsed.
+#:
+#: The last two are not in the Style Guide's table -- it covers courts, and these are
+#: tribunals -- but they are real neutral citations that appear in legal writing, and
+#: failing to recognise one would count a properly cited answer as citing nothing.
 SG_COURT_CODES: tuple[str, ...] = (
     "SGCA(I)",
     "SGHC(I)",
@@ -35,9 +40,12 @@ SG_COURT_CODES: tuple[str, ...] = (
     "SGHCF",
     "SGHCR",
     "SGHC",
+    "SGSCT",  # Small Claims Tribunal
     "SGDC",
     "SGMC",
     "SGFC",
+    "SGYC",  # Youth Courts
+    "SGCT",  # Constitutional Tribunal
     "SGIPOS",
     "SGPDPC",
 )
@@ -64,10 +72,20 @@ NEUTRAL_CITATION_EXACT = re.compile(
 
 #: Series we recognise. Longest / multi-word first, for the same first-match reason as
 #: the court codes ("EWCA Civ" must beat nothing, but "SLR(R)" must beat "SLR").
+#: Drawn from the SLR Style Guide's tables of official, semi-official, preferred and
+#: unofficial law reports (2021 ed, para 2-1.1.4). Breadth is a correctness concern
+#: rather than a nicety: a series we do not recognise is authority the answer gets no
+#: credit for, and L1a fails an output that appears to cite nothing.
 REPORT_SERIES: tuple[str, ...] = (
+    # Singapore
     "SLR(R)",
     "SLR",
+    "SSLR",  # Straits Settlements Law Reports -- the guide's "(1908) 12 SSLR 120"
+    # Malaysia
     "MLJ",
+    "AMR",
+    "CLJ",
+    # England and Wales
     "All ER",
     "WLR",
     "EWCA Civ",
@@ -76,25 +94,47 @@ REPORT_SERIES: tuple[str, ...] = (
     "UKHL",
     "UKSC",
     "UKPC",
+    "Lloyd's Rep",
+    "FSR",
+    "RPC",
     "AC",
     "QB",
     "KB",
     "Ch",
+    "Fam",
+    # Commonwealth
+    "NZLR",
+    "CLR",
+    "NSWLR",
+    "ALJR",
+    "ALR",
+    "FCR",
+    "DLR",
+    "SCR",
 )
 
 _SERIES_ALT = "|".join(re.escape(s).replace(r"\ ", r"\s+") for s in REPORT_SERIES)
 
-#: ``[2007] 4 SLR(R) 100``, ``[1932] AC 562``, ``[2011] UKSC 50``.
+#: ``[2007] 4 SLR(R) 100``, ``[1932] AC 562``, ``[2011] UKSC 50``, ``(1992) 175 CLR 1``.
 #:
-#: The bracketed year is mandatory. Without it "Ch 1" or "AC 562" would match ordinary
-#: prose ("see Ch 1 of the report"), and a spurious citation is a spurious check.
+#: BOTH bracket styles are accepted, because the SLR Style Guide requires both (2021
+#: ed, para 2-1.1.2): brackets when the series is organised by year of publication and
+#: the year is needed to find the case (``[2010] 1 SLR 1``), parentheses when the series
+#: is published by volume number and the year merely records when it was decided
+#: (``(1992) 175 CLR 1``). Accepting only brackets would silently drop every citation to
+#: a volume-organised series -- and a citation we fail to see is a citation the answer
+#: does not get credit for, which at L1a means reporting properly cited work as citing
+#: nothing at all.
+#:
+#: A year in one or the other is mandatory. Without it "Ch 1" or "AC 562" would match
+#: ordinary prose ("see Ch 1 of the report"), and a spurious citation is a spurious check.
 #:
 #: England's ``EWCA Civ`` / ``UKSC`` forms are *neutral* citations in their own system,
 #: but we classify them REPORT because that is what the type means here: not resolvable
 #: against the Singapore corpus, therefore UNRESOLVABLE, therefore never a FAIL.
 REPORT_CITATION = re.compile(
-    r"\[(?P<year>(?:1[6-9]|20)\d{2})\]\s*"
-    r"(?:(?P<volume>\d{1,2})\s+)?"
+    r"(?:\[(?P<year>(?:1[6-9]|20)\d{2})\]|\((?P<paren_year>(?:1[6-9]|20)\d{2})\))\s*"
+    r"(?:(?P<volume>\d{1,3})\s*(?:\((?P<issue>\d{1,2})\))?\s+)?"
     r"(?P<series>" + _SERIES_ALT + r")\s*"
     r"(?P<page>\d{1,4})\b"
 )
@@ -272,6 +312,10 @@ BARE_DOMAIN = re.compile(
 #:
 #: A bare ``at 294`` is deliberately NOT matched: in legal writing that is a *page*
 #: reference into a law report ("[1992] 2 NZLR 282 at 294"), not a paragraph number.
+#: The SLR Style Guide settles this (2021 ed, para 2-1.1.5): a paragraph pinpoint "should
+#: be in brackets, eg, '[2001] 3 SLR 10 at [16]'", while a page pinpoint is written bare,
+#: "without being preceded by 'p' or 'pp' or 'page(s)'" -- so the brackets are the whole
+#: signal, and an unbracketed number after "at" is a page.
 #: Treating it as a paragraph would point the quote check at a paragraph that does not
 #: exist, which turns a verifiable quote into an unverifiable one.
 #: Blocks "at [2021] 1 SLR 55" from being read as "paragraph 2021". A bracketed number
@@ -360,49 +404,78 @@ SENTENCE_BREAK = re.compile(
 JUDGMENT_PARA_NUMBER = re.compile(r"^\s*(?P<number>\d{1,4})[\s    .]+")
 
 # ---------------------------------------------------------------------------
-# Statutory references (L1a authority)
+# Statutory references (L1a authority) -- SLR Style Guide 2021, para 2-2.1
 # ---------------------------------------------------------------------------
+#
+# The forms the guide prescribes for Singapore legislation:
+#
+#   revised, pre-1 Mar 2021   Short Title (Cap 322, 2007 Rev Ed) pinpoint
+#   revised, on/after         Short Title 1969 (2020 Rev Ed) pinpoint
+#   unrevised, 1965-          Short Title of Act 2016 (Act 19 of 2016) pinpoint
+#   Constitution              Constitution of the Republic of Singapore
+#                             (1985 Rev Ed, 1999 Reprint) Art 12
+#
+# Recognising all of them matters more than it looks: an unrecognised statute is not a
+# missing nicety, it is authority the answer does not get credit for -- and L1a fails an
+# output that appears to cite nothing at all.
 
-#: A named piece of legislation: "Building Control Act 1989", "Penal Code",
-#: "Companies Act (Cap 50)", "Personal Data Protection Act 2012".
-#:
-#: Title-Case words before the head noun, capped at 6 to stop a runaway match from
-#: swallowing the front of a sentence ("Under Singapore Law The Building Control Act").
-_LEGISLATION_HEAD = r"(?:Act|Code|Ordinance|Constitution|Rules|Regulations|Convention)"
+_LEGISLATION_HEAD = r"(?:Act|Code|Ordinance|Constitution|Rules|Regulations|Order|Convention|Bill)"
 
 #: Words that introduce a statute rather than forming part of its title.
 _DETERMINER = r"(?:[Tt]he|[Tt]his|[Tt]hat|[Ss]uch|[Ss]aid|[Aa]n?)"
 
-#: "s 20", "s. 20(1)(a)", "section 20", "ss 20-22", "sections 20 and 21".
+#: "(Protection)" in "Administration of Justice (Protection) Act 2016"; "(Electronic
+#: Service System)" in the Active Mobility regulations. Statute short titles routinely
+#: carry a parenthesised qualifier, and a Title-Case-words-only pattern cannot match
+#: across one -- so the whole reference would be missed.
+_ACT_PAREN = r"\((?:[A-Z][A-Za-z’\'\-]*)(?:\s+(?:[A-Za-z][A-Za-z’\'\-]*)){0,5}\)"
+
+_ACT_WORD = r"(?:(?!" + _DETERMINER + r"\s)[A-Z][A-Za-z’\'\-]+|" + _ACT_PAREN + r"|of|and|for)"
+
+#: ``s 20``, ``s. 20(1)(a)``, ``ss 510-513``, ``reg 14(3)(l)``, ``Art 12``, ``Pt 1``,
+#: ``cl 5``, ``sub-s (2)``. Abbreviations per the guide's table at para 1-3.2.2.
+#:
+#: ``O``/``r`` (Order and rule of the Rules of Court) are handled separately below: a
+#: bare "r 5" is too close to ordinary prose to admit on its own.
 SECTION_REFERENCE = re.compile(
-    r"\b(?P<kw>ss?|sections?|regs?|regulations?|arts?|articles?|paras?)\.?\s*"
+    r"\b(?P<kw>ss?|sub-ss?|sections?|subsections?|regs?|regulations?|arts?|articles?"
+    r"|paras?|paragraphs?|Pts?|cls?|clauses?|schs?)\.?\s*"
     r"(?P<number>\d{1,4}[A-Z]?(?:\(\d+\))*(?:\([a-z]\))*)",
     # Case-insensitive: "Section 300" opens a sentence as often as "s 20" sits inside one.
     re.IGNORECASE,
 )
 
-#: "(Cap 29)", "Cap. 50", "Cap 97, 2020 Rev Ed".
+#: ``O 14 r 1``, ``O 15 rr 1, 2`` -- the Rules of Court form. Required as a unit: the
+#: single-letter abbreviations are only unambiguous in combination.
+#: The rule half is REQUIRED. "O 14" alone is two characters from ordinary prose,
+#: whereas "O 14 r 1" is unambiguous, and a spurious statute is a spurious authority --
+#: which at L1a means clearing an assertion that nothing actually supports.
+ORDER_RULE_REFERENCE = re.compile(
+    r"\bO\s*(?P<order>\d{1,3})\s*,?\s*rr?\s*(?P<rule>\d{1,3}(?:\(\d+\))*)\b"
+)
+
+#: ``(Cap 29)``, ``Cap. 50``, ``(Cap 322, 2007 Rev Ed)``.
 CHAPTER_REFERENCE = re.compile(r"\bCap\.?\s*(?P<chapter>\d{1,4}[A-Z]?)\b")
 
+#: ``2007 Rev Ed``, ``(2020 Rev Ed)``, ``1999 Reprint`` -- the revised-edition marker.
+#: On its own it is not a citation, but it is part of one, so it has to be absorbed into
+#: the reference rather than left dangling as a second "authority".
+REVISED_EDITION = re.compile(r"\b(?P<rev_year>(?:1[89]|20)\d{2})\s+(?:Rev\s+Ed|Reprint)\b")
+
+#: ``(Act 19 of 2016)`` -- the Act number of an unrevised statute.
+ACT_NUMBER = re.compile(r"\bAct\s+(?P<act_no>\d{1,3})\s+of\s+(?P<act_year>(?:1[89]|20)\d{2})\b")
+
 #: The named statute itself.
-#: The leading determiner is excluded from the title. Without this, "the Act" matches
-#: as a *named* statute -- "The" is Title-Case at the head of a sentence -- and a vague
-#: back-reference would be counted as authority it plainly is not.
 NAMED_LEGISLATION = re.compile(
     r"\b(?:" + _DETERMINER + r"\s+)?"
     # The lookahead stops the Title-Case run from absorbing its own determiner: at the
     # head of a sentence "The" is capitalised, so without it "The Act" parses as a
     # two-word statute title and a vague back-reference counts as authority.
-    r"(?P<act>(?:(?!" + _DETERMINER + r"\s)[A-Z][A-Za-z’'\-]+\s+){1,6}" + _LEGISLATION_HEAD + r")"
+    r"(?P<act>(?:" + _ACT_WORD + r"\s+){1,7}" + _LEGISLATION_HEAD + r")"
     # 1800s included: the Penal Code 1871 and the Evidence Act 1893 are live statutes.
     r"(?:\s+(?P<year>(?:1[89]|20)\d{2}))?\b"
 )
 
-#: "the Act", "the statute", "the legislation", "the Regulations".
-#:
-#: NOT authority on its own -- it points at something that must have been named
-#: earlier. Treated as a proposition needing support rather than as support, which is
-#: how "under the Act, a developer must ..." with no Act ever named gets caught.
 #: The determiner is case-insensitive because "The Act" opens sentences, but the head
 #: noun is NOT: a capitalised "Act" is a statute, whereas a lowercase "act" is the
 #: ordinary noun ("the act of signing"). Only heads that cannot be anything else --
@@ -513,3 +586,34 @@ MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}\s")
 #: Leading markdown list / numbering markers, stripped before classification so a
 #: bulleted assertion is treated exactly like a sentence in a paragraph.
 LIST_MARKER = re.compile(r"^\s{0,8}(?:[-*+]\s+|\d{1,2}[.)]\s+)")
+
+# ---------------------------------------------------------------------------
+# Subsequent references (SLR Style Guide 2021, paras 2-1.1.1, 2-1.5, 2-2.3)
+# ---------------------------------------------------------------------------
+#
+# SLR style cites a case in full ONCE and refers back to it thereafter:
+#
+#   1   ... The case of ANJ v ANK [2015] 4 SLR 1043 ("ANJ") stands for ...
+#   8   As was discussed in ANJ ([1] supra) ...
+#   20  This point was raised in ANJ at [32].
+#
+# Every later mention is a properly cited reference. A verifier that only counts full
+# citations would read paragraphs 8 and 20 as unsupported assertions -- which is to say
+# it would penalise the citation style the sponsor's own house guide mandates. That is
+# the single largest source of false positives available to L1a, so these forms are
+# recognised as authority in their own right.
+
+#: The short title defined after a first citation: ``("ANJ")``, ``(“the Act”)``.
+#: Curly and straight quotes both, because a model emits either.
+SHORT_TITLE_DEFINITION = re.compile(r"\(\s*[“\"'‘](?P<title>[^”\"'’()]{2,60}?)[”\"'’]\s*\)")
+
+#: ``([1] supra)`` -- the guide's cross-reference form for a case cited earlier
+#: (para 2-1.5), plus the bare Latin forms that carry the same meaning.
+SUPRA_REFERENCE = re.compile(r"\(\s*\[\d{1,4}\]\s+supra\s*\)|\b(?:supra|ibid|id)\b(?![\w-])")
+
+#: A defined short title has to look like a name, not like a stray quoted phrase. A
+#: title made only of lowercase function words ("the above", "as follows") is prose the
+#: author happened to quote, and treating it as authority would clear real assertions.
+SHORT_TITLE_STOPWORDS: frozenset[str] = frozenset(
+    {"above", "below", "as follows", "the above", "see", "note", "sic", "emphasis added"}
+)

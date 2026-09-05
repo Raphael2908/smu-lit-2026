@@ -47,6 +47,7 @@ __all__ = [
     "extract_statutes",
     "scope_spans",
     "sentence_spans",
+    "subsequent_references",
 ]
 
 #: Same-scope proximity budget, matching ``attribution.PROXIMITY_MAX_CHARS``. A quote
@@ -93,7 +94,20 @@ def extract_statutes(text: str) -> list[StatuteReference]:
             continue
         found.append((match.start(), match.end(), {"section": match.group("number")}))
 
-    merged = _merge_adjacent(text, found)
+    for match in patterns.ORDER_RULE_REFERENCE.finditer(text):
+        section = f"O {match.group('order')} r {match.group('rule')}"
+        found.append((match.start(), match.end(), {"section": section}))
+
+    # "2007 Rev Ed" and "Act 19 of 2016" are PARTS of a citation, never one on their
+    # own -- the guide writes them inside the statute's parentheses (paras 2-2.1.2.1
+    # and 2-2.1.2.2). They are collected so the merge absorbs them into the reference
+    # they belong to, and ``_anchored`` then drops any that stand alone.
+    for match in patterns.REVISED_EDITION.finditer(text):
+        found.append((match.start(), match.end(), {"_part": "rev_ed"}))
+    for match in patterns.ACT_NUMBER.finditer(text):
+        found.append((match.start(), match.end(), {"_part": "act_no"}))
+
+    merged = _anchored(_merge_adjacent(text, found))
 
     statutes: list[StatuteReference] = []
     for ordinal, (start, end, fields) in enumerate(merged):
@@ -156,8 +170,28 @@ def _merge_adjacent(
     return merged
 
 
-#: What may separate two halves of a single statutory reference.
-_CONNECTIVE_GAP = re.compile(r"[\s,()]*(?:(?:of|under|in|to|the|read\s+with)\s*)*[\s,()]*")
+def _anchored(
+    merged: list[tuple[int, int, dict[str, str | None]]],
+) -> list[tuple[int, int, dict[str, str | None]]]:
+    """Drop references that are only a fragment of one.
+
+    "2007 Rev Ed" or "Act 19 of 2016" standing alone -- with no Act, section or chapter
+    beside it to attach to -- names no legislation. Counting one as authority would let
+    an answer clear L1a by writing an edition marker.
+    """
+    anchors = ("act", "section", "chapter")
+    return [item for item in merged if any(item[2].get(key) for key in anchors)]
+
+
+#: What may separate two halves of a single statutory reference. The comma matters:
+#: the guide writes "(Cap 322, 2007 Rev Ed)" as ONE citation (para 2-2.1.2.2).
+#: "Parts of statutes should be cited from the largest part to the smallest" (para
+#: 2-2.1.2.1), so "... Act 2016, The Schedule, Pt 1" is one reference with a pinpoint,
+#: not two authorities.
+_CONNECTIVE_GAP = re.compile(
+    r"[\s,()]*(?:(?:of|under|in|to|the|read\s+with"
+    r"|First|Second|Third|Fourth|Fifth|Sixth|Schedule|Schedules)\s*)*[\s,()]*"
+)
 
 
 def _close_paren(text: str, end: int) -> int:
@@ -326,7 +360,7 @@ def extract_propositions(
     # law. Quoted text is L1c's question, checked against the source it came from.
     masked = _mask(text, quotes or [])
     scopes = scope_spans(text)
-    authorities = _authorities(clusters, statutes)
+    authorities = _authorities(clusters, statutes, subsequent_references(text, clusters))
 
     propositions: list[ExtractedProposition] = []
     for start, end in sentence_spans(text):
@@ -357,8 +391,76 @@ def extract_propositions(
     return propositions
 
 
+def subsequent_references(
+    text: str, clusters: list[CitationCluster]
+) -> list[tuple[AuthorityKind, int, Span]]:
+    """Short-title and ``supra`` references back to a citation given earlier.
+
+    SLR style cites a case in full once and refers back to it thereafter (Style Guide
+    2021, paras 2-1.1.1 and 2-1.5)::
+
+        1   ... The case of ANJ v ANK [2015] 4 SLR 1043 ("ANJ") stands for ...
+        8   As was discussed in ANJ ([1] supra) ...
+        20  This point was raised in ANJ at [32].
+
+    Paragraphs 8 and 20 are properly cited. Counting only full citations would read
+    them as unsupported assertions -- penalising precisely the citation style the
+    sponsor's own house guide mandates, which is the largest single source of false
+    positives available to this layer.
+
+    A short title is only honoured if the output DEFINED it, in parentheses, after a
+    citation. That keeps an arbitrary capitalised word from being read as a reference.
+    """
+    out: list[tuple[AuthorityKind, int, Span]] = []
+    if not clusters:
+        return out
+    by_start = sorted(clusters, key=lambda c: c.span.start)
+
+    def preceding_cluster(position: int) -> CitationCluster | None:
+        earlier = [c for c in by_start if c.span.start <= position]
+        return earlier[-1] if earlier else None
+
+    for match in patterns.SHORT_TITLE_DEFINITION.finditer(text):
+        title = match.group("title").strip()
+        if not title or title.lower() in patterns.SHORT_TITLE_STOPWORDS:
+            continue
+        # The definition must sit just after the citation it names, per the guide's
+        # "defined after the first mention of the full citation".
+        owner = preceding_cluster(match.start())
+        if owner is None or match.start() - owner.span.end > _DEFINITION_MAX_GAP:
+            continue
+        for mention in re.finditer(rf"\b{re.escape(title)}\b", text):
+            if mention.start() <= match.end():
+                continue  # the defining occurrence itself, and the citation before it
+            out.append(
+                (
+                    AuthorityKind.CITATION,
+                    owner.ordinal,
+                    Span(start=mention.start(), end=mention.end()),
+                )
+            )
+
+    for match in patterns.SUPRA_REFERENCE.finditer(text):
+        owner = preceding_cluster(match.start())
+        if owner is None:
+            continue
+        out.append(
+            (AuthorityKind.CITATION, owner.ordinal, Span(start=match.start(), end=match.end()))
+        )
+
+    return out
+
+
+#: How far after a citation a short-title definition may sit and still belong to it.
+#: Generous enough for "... [2015] 4 SLR 1043 at [17] ("ANJ")", tight enough that a
+#: quoted phrase a sentence later is not mistaken for one.
+_DEFINITION_MAX_GAP = 80
+
+
 def _authorities(
-    clusters: list[CitationCluster], statutes: list[StatuteReference]
+    clusters: list[CitationCluster],
+    statutes: list[StatuteReference],
+    subsequent: list[tuple[AuthorityKind, int, Span]] | None = None,
 ) -> list[tuple[AuthorityKind, int, Span]]:
     """Everything that can support a proposition, ordered by position.
 
@@ -369,6 +471,7 @@ def _authorities(
         (AuthorityKind.CITATION, c.ordinal, c.span) for c in clusters
     ]
     items += [(AuthorityKind.STATUTE, s.ordinal, s.span) for s in statutes if s.specific]
+    items += list(subsequent or [])
     items.sort(key=lambda item: (item[2].start, item[2].end))
     return items
 

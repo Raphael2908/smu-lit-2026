@@ -177,7 +177,10 @@ def extract_citations(text: str) -> list[ExtractedCitation]:
                     raw_text=match.group(0),
                     citation_type=CitationType.REPORT,
                     span=Span(start=match.start(), end=match.end()),
-                    year=int(match.group("year")),
+                    # The SLR Style Guide uses brackets for year-organised series and
+                    # parentheses for volume-organised ones (2021 ed, para 2-1.1.2), so
+                    # the year arrives in whichever group matched.
+                    year=int(match.group("year") or match.group("paren_year")),
                 ),
             )
         )

@@ -18,6 +18,7 @@ distinction matters more than usual in a project whose pitch is rigour.
 | F9 | A judgment does not fit one embedding call | Body 83,808 chars ≈ **21K tokens** vs voyage-law-2's 16K context — chunking is mandatory |
 | F10 | `SGHC(A)` becomes `SGHCA` in the URL | Parenthesised court suffixes are stripped, not encoded |
 | **F12** | **There is a THIRD page state: site maintenance** | Discovered when eLitigation went down mid-build. See below — this one is dangerous |
+| **F13** | **The corpus has a house citation style: the SAL *SLR Style Guide* (2021)** | Read directly. It is the spec for what the extractor must recognise — see below |
 
 ### F12 — the maintenance page, and why it nearly caused a catastrophic false positive
 
@@ -46,6 +47,51 @@ title non-empty but not a citation       -> SOURCE_UNAVAILABLE (WARN, never FAIL
 The general rule this instantiates: **"cannot verify" is never "fabricated."** It
 applies equally to report-only citations (F7), an expired login-walled session, and a
 source outage. Only positive evidence of non-existence may fail a run.
+
+### F13 — the corpus has a house citation style, and it is a specification
+
+Source: **SAL, *SLR Style Guide* (2021 ed)**, read directly
+([SMU research guide copy](https://researchguides.smu.edu.sg/ld.php?content_id=50481427)).
+This is the Academy's own style guide — the sponsor's house rules for how a citation in
+this corpus is written — so it is not a nicety to conform to, it is the **specification
+for what the extractor must recognise**.
+
+The failure direction is the dangerous one. A citation form the extractor does not
+recognise is authority the answer gets no credit for, and L1a fails an output that
+appears to cite nothing at all. Every gap below was therefore a **false red** waiting
+to happen. Six were found and closed:
+
+| Guide | Rule | What we were doing |
+|---|---|---|
+| 2-1.2.1 | Court designators include `SGCT`, `SGSCT`, `SGYC` | Not recognised — three courts' citations counted as nothing |
+| 2-1.1.2 | Parentheses for volume-organised series (`(1992) 175 CLR 1`), brackets for year-organised (`[2010] 1 SLR 1`) | Brackets only — every volume-organised series silently dropped |
+| 2-1.1.4 | Tables of official/unofficial reports per jurisdiction | 15 series recognised; now 28 |
+| 2-2.1.2 | `Short Title (Cap 322, 2007 Rev Ed)` · `Short Title 1969 (2020 Rev Ed)` · `Short Title 2016 (Act 19 of 2016)` | A parenthesised qualifier in a short title (`Administration of Justice (Protection) Act`) defeated the match outright |
+| 1-3.2.2 | Pinpoint abbreviations `s(s)`, `sub-s`, `reg(s)`, `O`, `r(r)`, `Pt(s)`, `cl`, `sch` | Only `s`/`section`/`reg`/`art` |
+| **2-1.5** | **Cite in full once, then by short title or `([1] supra)`** | **Every subsequent reference read as an uncited assertion** |
+
+The last row is the important one. The guide's own worked example:
+
+```
+1   ... The case of ANJ v ANK [2015] 4 SLR 1043 ("ANJ") stands for the proposition that ...
+8   As was discussed in ANJ ([1] supra) ...
+20  This point was raised in ANJ at [32].
+```
+
+Paragraphs 8 and 20 are *correctly cited*. A verifier counting only full citations reads
+them as unsupported assertions — penalising the citation style the sponsor mandates.
+That was the single largest source of false positives available to L1a, and it is now
+recognised: a short title the output itself defined, and `supra`/`ibid`, both count as
+authority.
+
+**One thing the guide confirmed rather than changed.** Para 2-1.1.5: a paragraph
+pinpoint "should be in brackets, eg, `[2001] 3 SLR 10 at [16]`", while a page pinpoint
+is written bare, "without being preceded by 'p' or 'pp' or 'page(s)'". The extractor had
+already refused to read a bare `at 294` as a paragraph number, by reasoning about law
+reports. The guide makes that decision authoritative rather than merely sensible.
+
+`tests/extraction/test_slr_style.py` pins all of it against the guide's own examples,
+paragraph by paragraph.
 
 ## Part 2 — what the literature says about cosine thresholds
 
