@@ -5,7 +5,12 @@ x-app: &app
   build:
     context: .
     dockerfile: docker/Dockerfile
-  env_file: [.env]
+  # Optional: the stack is designed to boot with no secrets at all, so a missing
+  # .env must not break compose. Without `required: false` every compose command
+  # fails on a fresh clone, which is exactly the one-shot-setup promise broken.
+  env_file:
+    - path: .env
+      required: false
   environment:
     DATABASE_URL: postgresql+psycopg://verifier:verifier@postgres:5432/verifier
     REDIS_URL: redis://redis:6379/0

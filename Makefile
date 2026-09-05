@@ -28,14 +28,17 @@ docker-check: ## Fail with a useful message if the Docker daemon is down
 	  echo "  ('make test' needs no Docker at all.)"; \
 	  echo ""; exit 1; }
 
-dev: docker-check ## Primary dev path: postgres+redis in Docker, api+worker native
+env: ## Create .env from .env.example if absent (all values are optional)
+	@test -f .env || { cp .env.example .env; echo "Created .env from .env.example"; }
+
+dev: docker-check env ## Primary dev path: postgres+redis in Docker, api+worker native
 	docker compose up -d postgres redis
 	uv run alembic upgrade head
 	@echo "Now run in two shells:"
 	@echo "  uv run uvicorn verifier.api.app:app --reload --port 8000"
 	@echo "  uv run celery -A verifier.worker.celery_app.celery_app worker -Q default,maintenance -l info"
 
-up: docker-check ## Full stack in Docker
+up: docker-check env ## Full stack in Docker
 	docker compose up -d --build
 	@echo "API on http://localhost:8000/healthz"
 
@@ -59,4 +62,4 @@ smoke: ## POST a sample verification against a running API
 	  -H 'Content-Type: application/json' \
 	  -d '{"question":"What is the test for a duty of care in Singapore?","ai_output":"The Court of Appeal set out a single two-stage test in Spandeck Engineering (S) Pte Ltd v Defence Science & Technology Agency [2007] SGCA 37."}' | python3 -m json.tool
 
-.PHONY: help setup lint fmt test docker-check dev up down nuke migrate seed-lists login smoke
+.PHONY: help setup lint fmt test docker-check env dev up down nuke migrate seed-lists login smoke

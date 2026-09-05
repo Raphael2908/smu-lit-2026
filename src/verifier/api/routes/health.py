@@ -39,11 +39,12 @@ async def readyz() -> ReadyResponse:
         probe_browser_session(),
     )
 
-    if settings.is_mock:
-        # Mock mode is self-contained by design: no database, no broker, no keys.
-        status = "ok"
-    else:
-        status = "ok" if (database and redis) else "degraded"
+    # Report against what this configuration actually depends on. Mock providers are
+    # self-contained, but the storage backend is a separate choice: running mock
+    # vendors on Postgres is the demo configuration, and a database outage there is a
+    # genuine degradation that must not be reported as "ok".
+    required = [database] if settings.uses_postgres else []
+    status = "ok" if all(required) else "degraded"
 
     return ReadyResponse(
         status=status,
