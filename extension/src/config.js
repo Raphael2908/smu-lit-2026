@@ -52,18 +52,57 @@ SALV.config = {
   autoVerify: true,
 };
 
-/** User overrides from chrome.storage.sync, applied over the defaults above. */
+/** How long to wait for chrome.storage before falling back to the defaults above. */
+SALV.STORAGE_TIMEOUT_MS = 1000;
+
+/**
+ * User overrides from chrome.storage.sync, applied over the defaults above.
+ *
+ * The timeout is the whole point, and try/catch is not a substitute for it. In an
+ * ORPHANED content script -- the extension reloaded while a claude.ai tab stayed open,
+ * which happens on every edit -- the `chrome.*` bindings point at a destroyed
+ * extension context and `chrome.storage.sync.get` NEVER SETTLES. It does not reject,
+ * so nothing is caught, and an awaiting caller is parked forever. That is precisely
+ * how this extension presented as "does not inject": no panel, no error, no output,
+ * nothing to read anywhere. A config read is a nicety; it may never be able to stop
+ * the panel from mounting.
+ */
 SALV.loadConfig = async function loadConfig() {
   try {
-    const stored = await chrome.storage.sync.get('config');
-    if (stored && stored.config) Object.assign(SALV.config, stored.config);
+    const stored = await Promise.race([
+      chrome.storage.sync.get('config'),
+      new Promise((resolve) => setTimeout(() => resolve(null), SALV.STORAGE_TIMEOUT_MS)),
+    ]);
+    if (stored === null) {
+      SALV.warn('chrome.storage did not answer; using defaults (is this tab orphaned?)');
+    } else if (stored.config) {
+      Object.assign(SALV.config, stored.config);
+    }
   } catch (err) {
     // Storage is unavailable in some contexts; defaults are always usable.
-    console.debug('[SAL Verifier] config load skipped:', err && err.message);
+    SALV.warn('config load skipped:', (err && err.message) || err);
   }
   return SALV.config;
 };
 
+/**
+ * Chatty logging, hidden by default.
+ *
+ * console.debug is filtered out of Chrome's console unless the level is set to
+ * Verbose. That is fine for chatter and actively harmful for anything diagnostic:
+ * "there was no console output" was treated as evidence this script never ran, when
+ * it was only evidence of the log level. Anything a human might go looking for uses
+ * SALV.banner or SALV.warn below.
+ */
 SALV.log = function log(...args) {
   console.debug('[SAL Verifier]', ...args);
+};
+
+/** Visible at the default log level. Use for anything worth finding. */
+SALV.banner = function banner(...args) {
+  console.info('[SAL Verifier]', ...args);
+};
+
+SALV.warn = function warn(...args) {
+  console.warn('[SAL Verifier]', ...args);
 };
