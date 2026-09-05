@@ -162,3 +162,79 @@ async def test_a_provider_returning_the_wrong_vector_count_is_an_error():
     cached = CachedEmbedder(Broken(), InMemoryEmbeddingRepo())
     with pytest.raises(ValueError, match="vectors"):
         await cached.embed_texts(TEXTS, input_type=INPUT_TYPE_DOCUMENT)
+
+
+class BrokenRepo:
+    """Every method raises, the way a Postgres repo can when the database is not there."""
+
+    def __init__(self) -> None:
+        self.writes = 0
+
+    async def get_many(self, model, input_hashes):
+        raise RuntimeError("connection refused")
+
+    async def put_many(self, model, vectors, document_id=None):
+        self.writes += 1
+        raise RuntimeError("connection refused")
+
+    async def sample_background(self, model, limit, exclude_document_id=None):
+        raise RuntimeError("connection refused")
+
+
+async def test_a_broken_cache_degrades_to_a_miss_rather_than_failing_the_layer():
+    """A cache is not a verdict.
+
+    The repo used to be a process-local dict that could not fail. It is now whatever
+    ``get_repos()`` holds, which in production is Postgres over a network, so every call
+    acquired a new failure mode. We would rather re-embed a judgment than fail a citation
+    over a database blip -- the rule ``_persist_resolutions`` already states.
+    """
+    counting = CountingEmbedder(MockEmbedder())
+    repo = BrokenRepo()
+    cached = CachedEmbedder(counting, repo)
+
+    result = await cached.embed_texts(TEXTS, input_type=INPUT_TYPE_DOCUMENT)
+
+    assert len(result.vectors) == len(TEXTS), "the vectors are correct despite the outage"
+    assert all(math.isclose(sum(v * v for v in vec), 1.0, rel_tol=1e-6) for vec in result.vectors)
+    assert (result.cache_hits, result.cache_misses) == (0, 2)
+    assert repo.writes == 1, "the write was attempted, and its failure swallowed"
+
+
+async def test_a_broken_cache_yields_an_empty_background_not_an_exception():
+    """L3 must fall back to its absolute floor, which an empty pool already means."""
+    cached = CachedEmbedder(CountingEmbedder(MockEmbedder()), BrokenRepo())
+
+    assert await cached.sample_background(limit=8, exclude_document_id="doc-1") == []
+
+
+async def test_the_zero_argument_layer_default_takes_its_repo_from_the_bundle():
+    """The composition root must actually swap the repos, which is what was never wired.
+
+    ``registry.build_layer`` builds L3 and L4 with no arguments, so the default is the
+    only repo they will ever get. It returned a process-local dict while
+    ``build_pg_repos()`` constructed a Postgres repo nothing read -- two caches side by
+    side, so ``text_embeddings`` stayed empty and every run re-embedded the judgment
+    (F25). Pinning it against ``set_repos`` proves the bundle is the source of truth
+    without needing a database.
+    """
+    from verifier.repos.pg import Repos, get_repos, set_repos
+    from verifier.semantic.defaults import default_embedding_repo, reset_default_repos
+
+    sentinel = InMemoryEmbeddingRepo()
+    bundle = get_repos()
+    reset_default_repos()
+    set_repos(
+        Repos(
+            documents=bundle.documents,
+            resolutions=bundle.resolutions,
+            embeddings=sentinel,
+            runs=bundle.runs,
+            lists=bundle.lists,
+        )
+    )
+    try:
+        assert default_embedding_repo() is sentinel
+    finally:
+        set_repos(None)
+        reset_default_repos()

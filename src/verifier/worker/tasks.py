@@ -13,7 +13,10 @@ The layer DAG itself is ``asyncio.gather`` inside a single task, not a chord per
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
+
+from celery.exceptions import SoftTimeLimitExceeded
 
 from verifier.contracts.enums import RunStatus
 from verifier.contracts.runs import RunOptions, RunState, VerifyRequest
@@ -21,6 +24,7 @@ from verifier.logging import get_logger
 from verifier.pipeline import gate
 from verifier.pipeline.events import build_event_sink
 from verifier.pipeline.orchestrator import Orchestrator
+from verifier.settings import get_settings
 from verifier.worker.celery_app import (
     QUEUE_JUDGE,
     TASK_JUDGE_VERIFICATION,
@@ -33,12 +37,16 @@ __all__ = ["judge_verification", "run_verification"]
 log = get_logger("verifier.worker.tasks")
 
 #: Soft limits leave room to finish cleanly and record an ERROR state; hard limits are
-#: the backstop. The judge gets far more because it makes one frontier-model call and
-#: the deterministic phase has already completed by then.
-RUN_SOFT_LIMIT = 45
-RUN_HARD_LIMIT = 60
-JUDGE_SOFT_LIMIT = 90
-JUDGE_HARD_LIMIT = 120
+#: the backstop. The judge gets its own because it makes one frontier-model call and the
+#: deterministic phase has already completed by then.
+#:
+#: Read once, here, because Celery binds them at task-decoration time -- changing one
+#: needs a worker restart. See settings for why the run budget is 150 and not 45.
+_s = get_settings()
+RUN_SOFT_LIMIT = _s.RUN_SOFT_LIMIT_S
+RUN_HARD_LIMIT = _s.RUN_HARD_LIMIT_S
+JUDGE_SOFT_LIMIT = _s.JUDGE_SOFT_LIMIT_S
+JUDGE_HARD_LIMIT = _s.JUDGE_HARD_LIMIT_S
 
 #: Process-local fallback store, used only when no repo factory exists yet. It keeps
 #: the worker importable and testable during the parallel build; production swaps in
@@ -78,6 +86,42 @@ def build_orchestrator(**overrides: Any) -> Orchestrator:
     return Orchestrator(run_repo=repo, sink=sink, **overrides)
 
 
+async def _mark_timed_out(run_id: str, limit_s: int) -> None:
+    """Record a killed run as terminally ERRORed.
+
+    A terminal state beats a run that stays pending forever: the extension polls until
+    ``is_final``, and a hung badge is worse than a reported failure. Mirrors
+    ``api.deps._mark_error``, which is the same rule on the inline path.
+
+    THE WRITE MUST GO THROUGH THE REPO. The API does not read this worker's Redis event
+    sink -- it derives its own events by diffing run states it loads from the repo
+    (``api.sse.diff_events``), so the row is the only channel the two share. Saving it
+    is what makes both ``GET /v1/runs/{id}`` and the SSE stream terminate.
+
+    Idempotent, and best-effort: this runs in the window between the soft and hard
+    limit, and a cleanup that raises would just replace one silent failure with another.
+    """
+    try:
+        repo = get_run_repo()
+        state = await repo.get(run_id)
+        if state is None or state.is_final:
+            return
+        message = f"verification exceeded its {limit_s}s budget"
+        await repo.save(
+            state.model_copy(
+                update={
+                    "status": RunStatus.ERROR,
+                    "is_final": True,
+                    "errors": [*state.errors, message],
+                    "completed_at": datetime.now(UTC),
+                }
+            )
+        )
+        log.warning("run_timed_out", run_id=run_id, limit_s=limit_s)
+    except Exception as exc:  # noqa: BLE001 - never mask the timeout with a cleanup error
+        log.warning("timeout_cleanup_failed", run_id=run_id, error=str(exc))
+
+
 def _run_async(coro: Any) -> Any:
     """One event loop per task.
 
@@ -100,7 +144,15 @@ def run_verification(self: Any, run_id: str, *, defer_judge: bool = False) -> di
 
     No-op if the run is already complete.
     """
-    return _run_async(_run_verification(run_id, defer_judge=defer_judge))
+    try:
+        return _run_async(_run_verification(run_id, defer_judge=defer_judge))
+    except SoftTimeLimitExceeded:
+        # The signal is raised in whatever frame is executing, which is usually the
+        # event loop's select rather than anything inside the orchestrator's try. So
+        # the run row keeps whatever status it last wrote and reads as still working.
+        # Give it a terminal one, then re-raise so the task result still says FAILURE.
+        _run_async(_mark_timed_out(run_id, RUN_SOFT_LIMIT))
+        raise
 
 
 async def _run_verification(run_id: str, *, defer_judge: bool = False) -> dict[str, Any]:
@@ -131,13 +183,22 @@ async def _run_verification(run_id: str, *, defer_judge: bool = False) -> dict[s
         # Hand the judge to its own queue so a 90-second model call never occupies the
         # deterministic worker. The deterministic verdict is already published, so the
         # client has something to render right now.
-        celery_app.send_task(TASK_JUDGE_VERIFICATION, args=[run_id], queue=QUEUE_JUDGE)
-        return {
-            "run_id": run_id,
-            "status": state.status.value,
-            "verdict": state.verdict.value,
-            "judge_dispatched": True,
-        }
+        #
+        # Falling back to the inline judge if the handoff fails is what keeps deferral
+        # from introducing a new way to hang: an unreachable broker, or a deployment
+        # running no judgeworker, would otherwise park the run at deterministic_ready
+        # with nothing left to finalise it.
+        try:
+            celery_app.send_task(TASK_JUDGE_VERIFICATION, args=[run_id], queue=QUEUE_JUDGE)
+        except Exception as exc:  # noqa: BLE001 - degrade to inline, never strand the run
+            log.warning("judge_dispatch_failed", run_id=run_id, error=str(exc))
+        else:
+            return {
+                "run_id": run_id,
+                "status": state.status.value,
+                "verdict": state.verdict.value,
+                "judge_dispatched": True,
+            }
 
     state = await orchestrator.run_judge_phase(state, decision=decision, options=options)
     return {
@@ -157,7 +218,11 @@ async def _run_verification(run_id: str, *, defer_judge: bool = False) -> dict[s
 )
 def judge_verification(self: Any, run_id: str) -> dict[str, Any]:
     """L5 plus finalisation, on the judge queue."""
-    return _run_async(_judge_verification(run_id))
+    try:
+        return _run_async(_judge_verification(run_id))
+    except SoftTimeLimitExceeded:
+        _run_async(_mark_timed_out(run_id, JUDGE_SOFT_LIMIT))
+        raise
 
 
 async def _judge_verification(run_id: str) -> dict[str, Any]:

@@ -294,6 +294,11 @@ class Orchestrator:
             log.exception("pipeline_failed", error=str(exc))
             state.status = RunStatus.ERROR
             state.errors.append(str(exc))
+            # ERROR is terminal, so say so. Without is_final the run reads as still
+            # working: the extension polls on is_final and would spin forever, and
+            # ``sse.diff_events`` emits final/done only on the False->True edge, so the
+            # stream would never close either. A reported failure beats a hung badge.
+            state.is_final = True
             state.completed_at = datetime.now(UTC)
             state.timings.total_ms = int((time.perf_counter() - started) * 1000)
             await self._publish(state, publisher, EventName.ERROR, {"error": str(exc)})

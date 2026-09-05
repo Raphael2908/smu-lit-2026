@@ -10,9 +10,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from verifier.logging import get_logger
 from verifier.providers.base import Embedder, Summariser
 from verifier.repos.base import DocumentRepo, EmbeddingRepo
 from verifier.repos.memory import InMemoryDocumentRepo, InMemoryEmbeddingRepo
+
+log = get_logger(__name__)
 
 
 class _Default:
@@ -69,15 +72,38 @@ def default_document_repo() -> DocumentRepo:
 
 
 def default_embedding_repo() -> EmbeddingRepo:
-    """Process-local embedding cache.
+    """The process's embedding cache, taken from the repo bundle.
 
-    Shared across layer instances on purpose: a per-instance cache would report a 100%
-    miss rate forever and, worse, leave L3's background pool permanently empty.
+    Memoised across layer instances on purpose: a per-instance cache would report a
+    100% miss rate forever and, worse, leave L3's background pool permanently empty.
+
+    The bundle is what makes the cache DURABLE. ``get_repos()`` returns a
+    ``PgEmbeddingRepo`` under ``REPO_BACKEND=postgres`` and an ``InMemoryEmbeddingRepo``
+    otherwise, so this one line is the whole of the module docstring's promise that the
+    composition root swaps the repos without either layer noticing. It was never wired:
+    ``registry.build_layer`` builds L3 and L4 with no arguments, so both fell through to
+    a process-local dict while ``build_pg_repos()`` constructed a Postgres repo nothing
+    ever read. Two caches side by side, neither shared between workers, so every run
+    re-embedded the whole judgment -- ~43 s of the 46 s that overran the run budget.
+
+    Falling back to memory rather than raising is deliberate, and matches
+    ``Orchestrator._repos()``: a database that is not up is a slow verifier, never a
+    broken one.
     """
     global _embedding_repo
     if _embedding_repo is None:
-        _embedding_repo = InMemoryEmbeddingRepo()
+        _embedding_repo = _bundle_embedding_repo()
     return _embedding_repo
+
+
+def _bundle_embedding_repo() -> EmbeddingRepo:
+    try:
+        from verifier.repos.pg import get_repos
+
+        return get_repos().embeddings
+    except Exception as exc:  # noqa: BLE001 - a cache is never a verdict
+        log.warning("embedding_repo_unavailable", error=str(exc))
+        return InMemoryEmbeddingRepo()
 
 
 def reset_default_repos() -> None:

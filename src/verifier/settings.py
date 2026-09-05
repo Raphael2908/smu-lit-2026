@@ -278,6 +278,28 @@ class Settings(BaseSettings):
     #: fix; the fix is the queue.
     SOURCE_BROWSER_INLINE_TIMEOUT_S: float = 20.0
 
+    # --- Celery run budgets ------------------------------------------------------
+    #: Wall-clock budget for the deterministic phase, and the hard backstop after it.
+    #: The soft limit is what leaves room to record a terminal ERROR state; the hard
+    #: limit kills the worker process.
+    #:
+    #: MEASURED, not guessed. A cold run on Spandeck (43 chunks) spends 46.0s in the
+    #: deterministic phase, 43.4s of it embedding the judgment (docs/03-findings.md
+    #: F24). The old value was 45, so every cold run through the API was killed -- a
+    #: budget that forbade the only work it existed to permit. 150 leaves room for a
+    #: longer judgment and a slow fetch without pretending the work is faster than it
+    #: is; the durable embedding cache (F25) means only the FIRST run touching a given
+    #: judgment ever pays it.
+    #:
+    #: Celery reads these at task-decoration time, so a change needs a worker restart,
+    #: exactly as the module constants they replaced did.
+    RUN_SOFT_LIMIT_S: int = 150
+    RUN_HARD_LIMIT_S: int = 180
+    #: The judge gets its own queue and its own budget: one frontier-model call, with
+    #: the deterministic verdict already published and rendered by the time it starts.
+    JUDGE_SOFT_LIMIT_S: int = 90
+    JUDGE_HARD_LIMIT_S: int = 120
+
     # --- Browser (login-walled sources) ---
     BROWSER_PROFILE_DIR: str = "./browser-profile"
     #: Blank means "send whatever Chromium sends", which is the correct default.
