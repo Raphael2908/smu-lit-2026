@@ -37,7 +37,21 @@ globalThis.SALV = globalThis.SALV || {};
 
   const DETERMINISTIC_LAYERS = ['L1', 'L2', 'L3', 'L4'];
 
-  const HIGHLIGHT_NAMES = { fail: 'salv-fail', warn: 'salv-warn', info: 'salv-info' };
+  /*
+   * `focus` belongs in this map even though nothing buckets findings into it.
+   * `clearHighlights` iterates these names, so the hover highlight -- set by
+   * `highlightOne` and ruled in panel.css -- was the one highlight nothing could
+   * clear: it survived a new run and the panel's own dismiss button, holding a
+   * Range onto a node that may since have been unmounted. `applyHighlights`
+   * iterates its own buckets, which have no `focus` key, so naming it here costs
+   * nothing and closes the leak.
+   */
+  const HIGHLIGHT_NAMES = {
+    fail: 'salv-fail',
+    warn: 'salv-warn',
+    info: 'salv-info',
+    focus: 'salv-focus',
+  };
 
   let root = null;
   let bodyEl = null;
@@ -64,7 +78,7 @@ globalThis.SALV = globalThis.SALV || {};
     root.setAttribute('data-state', 'idle');
 
     headerEl = el('div', 'salv-header');
-    const title = el('div', 'salv-title', 'SAL Verifier');
+    const title = el('div', 'salv-title', 'Sigma Tech');
     const verdict = el('span', 'salv-verdict-pill', 'idle');
     verdict.id = 'salv-verdict';
     themeBtn = el('button', 'salv-toggle', '☾');
@@ -184,15 +198,35 @@ globalThis.SALV = globalThis.SALV || {};
     return String(status === null || status === undefined ? '' : status).replace(/_/g, ' ');
   }
 
-  function layerRow(code, result) {
+  /**
+   * `run` carries what the ROW cannot see for itself: whether the run it belongs to has
+   * finished, and how long it has been going.
+   *
+   * SKIPPED IS A TERMINAL STATUS. It means the layer was deliberately not run -- what
+   * fail-fast does to L5 once a deterministic check has already failed. A layer with no
+   * result on a run still in flight has not been skipped; it has not started. Printing
+   * the terminal word for the transient state told the reader that five layers had
+   * looked at their work and declined, at a moment when none of them had reported yet.
+   * The same objection statusLabel() makes to softening `not_applicable` into "skipped"
+   * applies here, in the other direction.
+   */
+  function layerRow(code, result, run) {
     const row = el('div', 'salv-layer');
     row.appendChild(el('span', 'salv-layer-code', code));
     row.appendChild(el('span', 'salv-layer-name', LAYER_LABELS[code] || code));
 
-    const status = result ? result.status : 'skipped';
-    const pill = el('span', 'salv-pill', statusLabel(status));
-    pill.setAttribute('data-kind', statusKind(status));
-    row.appendChild(pill);
+    const pending = !result && !(run && run.isFinal);
+    if (pending) {
+      // The row keeps four children whatever happens. `.salv-layer` is `display:
+      // contents` inside a four-column grid, so a missing cell does not close up -- it
+      // slides the meta column left and knocks this row out of line with every other.
+      row.appendChild(el('span'));
+    } else {
+      const status = result ? result.status : 'skipped';
+      const pill = el('span', 'salv-pill', statusLabel(status));
+      pill.setAttribute('data-kind', statusKind(status));
+      row.appendChild(pill);
+    }
 
     const meta = el('span', 'salv-layer-meta');
     if (result) {
@@ -207,6 +241,12 @@ globalThis.SALV = globalThis.SALV || {};
         cache.title = `${result.cache_hits} cache hit(s)`;
         meta.appendChild(cache);
       }
+    } else if (pending && run && typeof run.elapsedMs === 'number') {
+      // With no status to report, the only true thing the row can say is how long the
+      // run has been going. It lands in the same reserved slot as a finished layer's
+      // duration, so the column reads straight down, and it ticks without a timer:
+      // pollRun re-renders every 400 ms whether or not the delta carried anything new.
+      meta.appendChild(el('span', 'salv-duration', `${(run.elapsedMs / 1000).toFixed(1)}s`));
     }
     row.appendChild(meta);
     return row;
@@ -464,18 +504,27 @@ globalThis.SALV = globalThis.SALV || {};
 
   function highlightOne(segments, finding) {
     if (!highlightsSupported()) return;
-    CSS.highlights.delete('salv-focus');
+    CSS.highlights.delete(HIGHLIGHT_NAMES.focus);
     if (!finding || !finding.output_span) return;
     const range = SALV.capture.rangeFor(segments, finding.output_span.start, finding.output_span.end);
-    if (range) CSS.highlights.set('salv-focus', new Highlight(range));
+    if (range) CSS.highlights.set(HIGHLIGHT_NAMES.focus, new Highlight(range));
   }
 
   // --- render ---------------------------------------------------------------------
-  function renderIdle() {
+  /**
+   * `note` says WHY there is nothing to show, when there is something worth saying.
+   *
+   * Reserved for an explicit gesture -- a toolbar click or a right-click that found no
+   * answer. An automatic scan that comes up empty passes nothing and leaves the plain
+   * resting state alone: it has no news, and a running commentary on every scrap of
+   * page furniture the ladder considered is not news.
+   */
+  function renderIdle(note) {
     mount();
     setVerdict('idle', 'idle');
     bodyEl.replaceChildren();
     bodyEl.appendChild(el('p', 'salv-hint', 'Waiting for a response to verify.'));
+    if (note) bodyEl.appendChild(el('p', 'salv-note', note));
   }
 
   function renderVerifying(meta) {
@@ -560,10 +609,18 @@ globalThis.SALV = globalThis.SALV || {};
 
     // --- layers (ALL of them, including the ones that passed) ---------------------
     const layers = section('Layers', 'salv-layers');
+    // Elapsed is measured client-side, from the moment the run was dispatched: the
+    // backend's `timings` only fill in as the run completes, so mid-run there is no
+    // server number to show. `ctx.startedAt` is absent in the fixture harness, and an
+    // absent clock renders as nothing rather than as a wrong number.
+    const run = {
+      isFinal: !!state.is_final,
+      elapsedMs: ctx && typeof ctx.startedAt === 'number' ? Date.now() - ctx.startedAt : null,
+    };
     for (const code of DETERMINISTIC_LAYERS) {
-      layers.appendChild(layerRow(code, (state.layers || {})[code]));
+      layers.appendChild(layerRow(code, (state.layers || {})[code], run));
     }
-    layers.appendChild(layerRow('L5', (state.layers || {})['L5']));
+    layers.appendChild(layerRow('L5', (state.layers || {})['L5'], run));
     bodyEl.appendChild(layers);
 
     // --- deterministic findings ---------------------------------------------------
@@ -576,7 +633,16 @@ globalThis.SALV = globalThis.SALV || {};
       for (const finding of deterministic) list.appendChild(findingItem(finding, onHover));
       det.appendChild(list);
     } else {
-      det.appendChild(el('p', 'salv-empty', 'No deterministic problems found.'));
+      // Mid-run this section has nothing to report because nothing has reported yet,
+      // which is not the same fact as a clean bill of health -- and a clean bill of
+      // health is exactly how "No deterministic problems found" reads.
+      det.appendChild(
+        el(
+          'p',
+          'salv-empty',
+          run.isFinal ? 'No deterministic problems found.' : 'Nothing found so far.'
+        )
+      );
     }
     bodyEl.appendChild(det);
 

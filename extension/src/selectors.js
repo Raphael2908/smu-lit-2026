@@ -82,6 +82,50 @@ globalThis.SALV = globalThis.SALV || {};
     return !!(el.closest && el.closest(CONTROL_SELECTOR));
   }
 
+  /** Elements whose whole reason for existing is to take you somewhere else. */
+  const NAVIGATIONAL_SELECTOR =
+    'a[href], button, [role="button"], [role="link"], [role="menuitem"], ' +
+    '[role="option"], [role="tab"]';
+
+  /** Above this share of an element's text sitting inside links, it is chrome. */
+  const NAV_TEXT_RATIO = 0.8;
+
+  /** Landmarks are page furniture by their own declaration. */
+  const LANDMARK_SELECTOR =
+    'nav, aside, header, footer, [role="navigation"], [role="complementary"], ' +
+    '[role="banner"], [role="contentinfo"]';
+
+  /**
+   * A RATIO, NEVER AN EXISTENCE CHECK. This distinction is the whole helper.
+   *
+   * "Contains a link or a control" would delete the entire transcript: every real
+   * claude.ai answer embeds the `role="toolbar"` action bar documented above, and
+   * answers cite sources, so answers contain links by their nature. What separates a
+   * sidebar row from an answer is not that the row contains a link -- it is that the
+   * row IS one, while an answer merely mentions some. Measure the share, not the
+   * presence, and the two stop looking alike.
+   *
+   * `isControl` cannot decide this alone. It uses `closest`, so it sees a control the
+   * element sits INSIDE and never one nested beneath it -- and a recents row is exactly
+   * that shape, an `<li>` or a bare `<div>` wrapping the `<a>` that carries its text.
+   */
+  function interactiveTextRatio(el) {
+    const total = textLength(el);
+    if (!total || !el.querySelectorAll) return 0;
+    if (el.matches && el.matches(NAVIGATIONAL_SELECTOR)) return 1;
+    // Outermost matches only: a button nested inside a link would otherwise have its
+    // text counted twice and push the ratio past 1.
+    const matches = Array.from(el.querySelectorAll(NAVIGATIONAL_SELECTOR));
+    const outermost = matches.filter((m) => !matches.some((o) => o !== m && o.contains(m)));
+    let interactive = 0;
+    for (const match of outermost) interactive += textLength(match);
+    return interactive / total;
+  }
+
+  function isNavigational(el) {
+    return isControl(el) || interactiveTextRatio(el) >= NAV_TEXT_RATIO;
+  }
+
   /**
    * Drop nodes that merely contain other message nodes -- keep the INNERMOST.
    *
@@ -172,6 +216,12 @@ globalThis.SALV = globalThis.SALV || {};
     let best = null;
     let bestArea = 0;
     for (const el of document.querySelectorAll('div, main, section')) {
+      // THE WEAKEST OF THE THREE GUARDS HERE, and deliberately not the one the fix
+      // rests on. claude.ai's sidebar may declare none of these roles, and when it is
+      // collapsed its rect is ~0 anyway, so `bestArea` never moves, `best` stays null
+      // and the fallback below lands on `main` -- which on /new has a recents list of
+      // its own. What actually rejects navigation is the member and group gates.
+      if (el.closest(LANDMARK_SELECTOR)) continue;
       const style = getComputedStyle(el);
       const scrolls = style.overflowY === 'auto' || style.overflowY === 'scroll';
       if (!scrolls || el.scrollHeight <= el.clientHeight + 8) continue;
@@ -195,7 +245,9 @@ globalThis.SALV = globalThis.SALV || {};
   function findRepeatedGroup(container) {
     let best = null;
     const walk = (el, depth) => {
-      const children = Array.from(el.children).filter((c) => textLength(c) > 20 && visible(c));
+      const children = Array.from(el.children).filter(
+        (c) => textLength(c) > 20 && visible(c) && !isNavigational(c)
+      );
       if (children.length >= 2) {
         const tags = new Set(children.map((c) => c.tagName));
         const uniformity = 1 - (tags.size - 1) / children.length;
@@ -203,6 +255,9 @@ globalThis.SALV = globalThis.SALV || {};
         if (!best || score > best.score) best = { parent: el, children, depth, score };
       }
       for (const child of el.children) {
+        // Pruning here costs less walking than it saves: a recents list is ~100% link
+        // text, so one test at the <ul> skips every row beneath it.
+        if (isNavigational(child)) continue;
         if (depth < 30) walk(child, depth + 1);
       }
     };
@@ -225,6 +280,12 @@ globalThis.SALV = globalThis.SALV || {};
     const raw = (el.getAttribute && el.getAttribute('class')) || '';
     return raw.split(/\s+/).filter(Boolean);
   }
+
+  /** A class token must sit on 25-75% of siblings before it is evidence of two roles. */
+  const MAX_DISCRIMINATOR_IMBALANCE = 0.25;
+
+  /** Answers are longer than prompts. Below this ratio the split has nothing behind it. */
+  const MIN_TURN_LENGTH_RATIO = 2;
 
   function classifyByClassFrequency(children) {
     const tokensByChild = new Map(children.map((c) => [c, new Set(classTokens(c))]));
@@ -261,7 +322,32 @@ globalThis.SALV = globalThis.SALV || {};
       const lengths = group.map(textLength).sort((a, b) => a - b);
       return lengths[Math.floor(lengths.length / 2)];
     };
-    const userGroup = median(groupA) <= median(groupB) ? groupA : groupB;
+    const medianA = median(groupA);
+    const medianB = median(groupB);
+
+    // THE SPLIT MUST BE EVIDENCED, OR THERE IS NO SPLIT.
+    //
+    // The premise stated above -- prompts are consistently shorter than answers,
+    // because that is a property of the conversation rather than of the markup -- is
+    // falsifiable and free to test. On a navigation list it LOSES on both counts:
+    // every recents row carries identical class tokens, so every token is skipped as
+    // undiscriminating and the alternation fallback fires; and every row is about as
+    // long as the next, so there is no length gap either. Splitting it regardless is
+    // how the sidebar came to be read as a transcript and fourteen conversation titles
+    // were verified as though they were answers (todo.md bug 21). Returning null costs
+    // an automatic run on a page that has no transcript; tier 4 is still there for a
+    // page that has one this cannot see, which is the trade this ladder is built on.
+    //
+    // The balance ceiling is load-bearing, not decoration. Without it a single row
+    // carrying one extra class -- "unread", "selected" -- is a "discriminator" at
+    // |1/14 - 0.5| = 0.43 and walks straight through. Genuinely alternating turns sit
+    // near 1/(2n): 0.17 at three turns and falling, comfortably inside 0.25.
+    const trustedSplit = discriminator !== null && bestBalance <= MAX_DISCRIMINATOR_IMBALANCE;
+    const shorter = Math.min(medianA, medianB);
+    const longer = Math.max(medianA, medianB);
+    if (!trustedSplit && longer < shorter * MIN_TURN_LENGTH_RATIO) return null;
+
+    const userGroup = medianA <= medianB ? groupA : groupB;
     const userSet = new Set(userGroup);
     return children.map((el) => ({ el, role: userSet.has(el) ? ROLE_USER : ROLE_ASSISTANT }));
   }
@@ -272,10 +358,15 @@ globalThis.SALV = globalThis.SALV || {};
     // The 20-char floor above picks the right PARENT; membership then takes every
     // child of it. A short turn ("Why?") must not be dropped -- short prompts are
     // exactly the follow-ups whose pairing matters most.
+    // Navigation is excluded here as well as in the group search above: the group is
+    // chosen by its children, but membership takes every child of the winning parent,
+    // so a transcript with a stray link-shaped sibling would otherwise readmit it.
     const members = Array.from(group.parent.children).filter(
-      (c) => visible(c) && textLength(c) > 0
+      (c) => visible(c) && textLength(c) > 0 && !isNavigational(c)
     );
     if (members.length < 2) return null;
+    // May be null: the classifier now refuses a split it cannot evidence, and a tier
+    // that returns nothing is stepped over by the ladder rather than believed.
     return classifyByClassFrequency(inDocumentOrder(members));
   }
 

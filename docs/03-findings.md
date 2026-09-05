@@ -850,3 +850,94 @@ measurement of the pipeline and explicitly not a measurement of the product.
 
 `n = 1` judgment and one answer. Enough to confirm the registry and to condemn the time
 budget; not a benchmark.
+
+---
+
+## Part 9 — the fixes, measured through the deployed worker
+
+Same stack, same answer, same day. The image was rebuilt from `2607f5a` and verified
+byte-identical to the working tree before the run. Postgres and Redis were **not**
+wiped, so the resolutions and documents from Part 8 were already present — this measures
+the fixes, not a fresh install.
+
+### F30 — the durable embedding cache works, and does not move the score
+
+| | Part 8 (before) | Run A (cold) | Run B (warm) |
+|---|---|---|---|
+| `text_embeddings` rows | **0** | 170 | 170 |
+| cache hits / misses | 0 / 171 | 0 / 171 | **170 / 1** |
+| deterministic phase | 46.0 s | 61.9 s | **11.5 s** |
+| L3 | 43.4 s | 59.8 s | **9.4 s** |
+| total | killed at 45 s | 79.1 s | **26.5 s** |
+| verdict | *never finished* | pass | pass |
+| **L3 score** | 0.537 | **0.548** | **0.548** |
+
+The row that matters most is the last one. A cache that changed the score would be a
+bug wearing a speedup's clothes; the warm run and the cold run agree to three decimals,
+because the key is the content hash of the embed input and the vectors are normalised
+on write. `text_embeddings` had been 0 after every previous run, including a fully
+successful one, so a non-zero count is the whole of F25's claim reversed.
+
+Run A is *slower* than Part 8's 46.0 s because it now also pays to persist 170 vectors,
+and because it ran against a busier machine. That cost is paid once per judgment.
+
+### F31 — the judge runs on the queue that was built for it
+
+`judgeworker` received its first task ever:
+
+```
+Task verifier.judge_verification[dc200487...] received
+Task verifier.judge_verification[dc200487...] succeeded in 16.5s:
+  {'status': 'complete', 'verdict': 'pass', 'judge_ran': True}
+```
+
+Both runs passed through `deterministic_ready` before reaching `complete`, which is the
+deterministic verdict being published and rendered while the judge is still cold — the
+behaviour the two-phase design was written for and had never once exhibited.
+
+### F32 — a killed run now settles, verified against real Postgres
+
+The offline tests exercise this against a fake repo, so it was also driven against
+`PgRunRepo` in the worker container:
+
+```
+before: status=pending  is_final=False
+after : status=error    is_final=True
+        errors=['verification exceeded its 150s budget']
+again : errors=1                      # idempotent under acks_late redelivery
+```
+
+and `GET /v1/runs/{id}` reports `status=error, is_final=True`, which is what stops the
+extension polling. F27's three-of-four `pending` runs cannot recur.
+
+### F33 — embeddings never carry a `document_id`, so the background pool stays empty
+
+Newly visible, and not fixed. All 170 cached vectors have `document_id = NULL`:
+
+```
+embeddings with doc: 0 of 170
+```
+
+`_document_key` (`l3_alignment.py:645-656`) falls back to the document's **content hash**
+when `SourceDocument.id` is unset, which it is for a freshly-fetched document.
+`PgEmbeddingRepo.put_many` does `uuid.UUID(document_id)` and, on `ValueError`, stores
+`NULL`. `sample_background` then filters `document_id IS NOT NULL` and matches nothing.
+
+L3 detects it and says so, which is the system behaving correctly:
+
+```
+background_empty: true, margin_skipped: true
+note: "No background corpus was available, so the contrastive margin was
+       skipped and only the absolute floor was applied."
+```
+
+**This is not a regression.** Before the fix the in-memory repo started cold in every
+task and had only ever seen the one document under test, so the pool was empty then too.
+What changes is that it is now *permanently* empty rather than incidentally so: 170
+durable vectors are sitting in the table and none can be sampled. The contrastive margin
+Part 4 calibrates has therefore never run in production — every live L3 verdict to date,
+including Part 8's and both runs above, rests on the absolute floor alone.
+
+That does not invalidate the scores, which are `max cos(claim, cited)` and independent of
+the margin. It does mean the margin half of L3 is unmeasured outside the offline
+calibration set, and it is recorded as todo.md bug 24.

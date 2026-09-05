@@ -17,7 +17,7 @@
   host page's cascade either way.
 -->
 <meta charset="utf-8">
-<title>SAL Verifier panel — fixtures</title>
+<title>Sigma Tech panel — fixtures</title>
 <link rel="stylesheet" href="../src/panel.css">
 <style>
   body { margin: 0; padding: 24px; background: #e9e6e0; font: 13px system-ui, sans-serif; }
@@ -51,7 +51,7 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
 
     const FIXTURES = {
     'Pass — everything checked': {
-      verdict: 'pass',
+      verdict: 'pass', is_final: true,
       timings: { total_ms: 8420 }, cache: { hits: 3, misses: 1 }, cost_usd: 0.0182,
       layers: { L1: L('pass', 1.0, 210, 2), L2: L('pass', 1.0, 95), L3: L('pass', 0.61, 3180, 1), L4: L('pass', 0.58, 1240), L5: L('pass', null, 3690) },
       findings: [],
@@ -62,7 +62,7 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
     },
 
     'Fail — fabricated citation': {
-      verdict: 'fail', short_circuited: true,
+      verdict: 'fail', is_final: true, short_circuited: true,
       short_circuit_reason: 'L1b found a citation the source reports does not exist, so the judge was never consulted.',
       timings: { total_ms: 4110 }, cache: { hits: 1, misses: 2 },
       layers: { L1: L('fail', 0.0, 980), L2: L('pass', 1.0, 88), L3: L('skipped', null, 0), L4: L('pass', 0.55, 1190), L5: null },
@@ -81,7 +81,7 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
     },
 
     'Nothing was verified': {
-      verdict: 'warn',
+      verdict: 'warn', is_final: true,
       timings: { total_ms: 6050 }, cache: { hits: 0, misses: 3 },
       layers: { L1: L('warn', null, 3020), L2: L('pass', 1.0, 91), L3: L('not_applicable', null, 0), L4: L('pass', 0.52, 1310), L5: L('pass', null, 1620) },
       findings: [],
@@ -93,7 +93,7 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
     },
 
     'Partial — judge advisory, long evidence': {
-      verdict: 'warn',
+      verdict: 'warn', is_final: true,
       timings: { total_ms: 12980 }, cache: { hits: 2, misses: 4 }, cost_usd: 0.0341,
       layers: { L1: L('pass', 1.0, 240, 1), L2: L('warn', 0.5, 102), L3: L('warn', 0.279, 4820, 1), L4: L('pass', 0.61, 1450), L5: L('warn', null, 6310) },
       findings: [
@@ -110,6 +110,22 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
       },
       errors: [],
     },
+  };
+
+  /*
+   * A run still in flight. `layers` is empty because nothing has reported yet -- which
+   * is a different fact from a layer having been deliberately skipped, and the reason
+   * this state needed a fixture: with none, five rows reading "Skipped" mid-run went
+   * out unreviewed. Rendered with a `startedAt` so the elapsed column has something to
+   * show; in the live panel it ticks every 400 ms off pollRun's re-render.
+   */
+  const PENDING = {
+    verdict: 'pending',
+    is_final: false,
+    timings: {}, cache: { hits: 0, misses: 0 },
+    layers: {},
+    findings: [],
+    resolutions: {},
   };
 
   const params = new URLSearchParams(location.search);
@@ -137,12 +153,28 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
   }
 
   snapshot('Idle', () => SALV.panel.renderIdle());
+  // The note only ever accompanies an explicit gesture -- a toolbar click or a
+  // right-click that found no answer. An automatic scan that comes up empty renders the
+  // bare state above, which is what /new shows.
+  snapshot('Idle — nothing on this page', () => SALV.panel.renderIdle(
+    'No conversation on this page yet. Open a chat and ask a question.'));
+  // The long one. This is the fixture that answers whether .salv-note needs its
+  // word-break rule: watch the 380px rail for horizontal overflow.
+  snapshot('Idle — page furniture', () => SALV.panel.renderIdle(
+    'Nothing to verify: this captured as 38 characters, which is page furniture rather ' +
+    'than an answer. Right-click the response and choose "Verify this response" to run ' +
+    'it anyway.'));
   snapshot('Verifying (follow-up)', () => SALV.panel.renderVerifying({ isFollowup: true }));
-  snapshot('Error', () => SALV.panel.renderError(
+  snapshot('Pending — nothing has reported yet', () =>
+    SALV.panel.render(PENDING, { startedAt: Date.now() - 4200 }));
+  // Two errors side by side, so the line between "the tool broke" and "there was
+  // nothing here" can be judged in one glance against the two idle states above.
+  snapshot('Error — backend down', () => SALV.panel.renderError(
     'Could not reach the verifier at http://127.0.0.1:8000. Is it running? (Failed to fetch)'));
+  snapshot('Error — timed out', () => SALV.panel.renderError('The verification timed out.'));
   for (const [label, state] of Object.entries(FIXTURES)) {
     snapshot(label, () => SALV.panel.render(state, {}));
   }
   live.remove();   // only the clones remain
-  document.title = `SAL Verifier panel — ${theme} / ${view}`;
+  document.title = `Sigma Tech panel — ${theme} / ${view}`;
 </script>

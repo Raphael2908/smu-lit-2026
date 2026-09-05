@@ -353,6 +353,10 @@
   background: var(--salv-note-bg);
   font-size: var(--salv-fs-small);
   color: var(--salv-note-fg);
+  /* Notes now carry full sentences, not the one clause they were written for. In the
+     380px rail an unbroken run -- a long word, a URL -- would otherwise push the whole
+     panel sideways. `.salv-error` has carried this for the same reason. */
+  word-break: break-word;
 }
 
 #salv-panel .salv-error {

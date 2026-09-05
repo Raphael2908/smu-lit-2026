@@ -515,11 +515,12 @@ mock override — against the live source they resolve, with documents, which cl
 / L5 1.0, for `$0.0338` (F24). L3's top passage is Spandeck [72] with a paragraph range
 and a live URL, so F13's fix works on real data.
 
-**But not through the deployed worker.** The run takes 53.4 s against a
-`RUN_SOFT_LIMIT` of 45, so every one of 4 API-dispatched runs was killed by
-`SoftTimeLimitExceeded`. The clean `pass` was obtained in-process, outside Celery — a
-measurement of the pipeline, explicitly not of the product. Bugs 18–22 below are what
-that exposed; they are ordered by what has to be fixed first.
+**It did not work through the deployed worker, and now does.** The run took 53.4 s
+against a `RUN_SOFT_LIMIT` of 45, so all 4 API-dispatched runs were killed and the
+clean `pass` had to be obtained in-process, outside Celery. Bugs **18, 19 and 20 are
+now fixed** (`2607f5a`) and re-verified live through the worker — `docs/03-findings.md`
+Part 9: a cold run completes in 79 s, a warm one in **26.5 s** on `170/1` cache hits,
+and the judge runs on its own queue. Bugs 21–24 below remain open.
 
 Two runbook side-quests are **not** done and are still worth doing: bug 5's recall
 measurement for the Haiku extractor, and a deliberate re-check of bug 7 (no
@@ -528,9 +529,19 @@ where the direct URL had worked moments earlier, which is that bug's fingerprint
 
 ---
 
-### 18. Nothing reads the durable embedding cache, so no run is ever warm
+### 18. ~~Nothing reads the durable embedding cache, so no run is ever warm~~ — FIXED
 
-**Severity: critical — it is the root cause of the timeout, and it is a one-line wiring bug.**
+**Fixed in `2607f5a`, verified live: `docs/03-findings.md` F30.** `text_embeddings` went
+0 -> 170 rows, a second run hit `170/1` where every run before it reported `0/171`, and
+the deterministic phase dropped **46.0 s -> 11.5 s**. The L3 score is unchanged to three
+decimals (0.548 cold and warm), which is the property that matters: a cache that moved
+the score would be a bug wearing a speedup's clothes.
+
+The cause was as diagnosed below. `default_embedding_repo()` now takes the repo from
+`get_repos()`, and `CachedEmbedder`'s three repo calls are best-effort, because the repo
+is now network I/O rather than a dict that cannot fail.
+
+<details><summary>Original diagnosis</summary>
 
 After a **fully successful** run: `chunks` 0, `text_embeddings` 0, `document_summaries`
 0, `cache hits 0 / misses 171`. `PgEmbeddingRepo` is implemented and constructed by
@@ -551,11 +562,23 @@ visible.
 
 Files: `src/verifier/layers/registry.py`, `src/verifier/semantic/defaults.py`.
 
+</details>
+
 ---
 
-### 19. A killed task leaves the run `pending` forever
+### 19. ~~A killed task leaves the run `pending` forever~~ — FIXED
 
-**Severity: high — the API reports a dead run as still working.**
+**Fixed in `2607f5a`, verified live against real Postgres: F32.** `pending` ->
+`status=error, is_final=True`, idempotent under redelivery, and `GET /v1/runs/{id}`
+reports it as terminal so the extension stops polling.
+
+It had **two** independent leaks, not one. `SoftTimeLimitExceeded` subclasses
+`Exception`, so it lands wherever the signal interrupts: usually the event loop's
+`select`, escaping `asyncio.run` (fixed by the new handler); sometimes inside the
+orchestrator's own `except`, which set `status=ERROR` but never `is_final` (fixed
+separately at `orchestrator.py:293-303`). Fixing either alone still hung.
+
+<details><summary>Original diagnosis</summary>
 
 There is no `except SoftTimeLimitExceeded` in `worker/tasks.py`. When the limit fires
 Celery marks the *task* `FAILURE`; the *run row* keeps its last status and `is_final`
@@ -570,11 +593,22 @@ limit exists to give exactly this chance to clean up; nothing uses it.
 
 Files: `src/verifier/worker/tasks.py`.
 
+</details>
+
 ---
 
-### 20. The judge is never deferred, so `judgeworker` is dead weight
+### 20. ~~The judge is never deferred, so `judgeworker` is dead weight~~ — FIXED
 
-**Severity: high — and it is most of the 45 s overrun.**
+**Fixed in `2607f5a`, verified live: F31.** `judgeworker` received and succeeded its
+first task ever (16.5 s, `judge_ran: True`), and both runs passed through
+`deterministic_ready` before `complete` — the deterministic verdict rendering while the
+judge is still cold, which the two-phase design was built for and had never exhibited.
+
+`_dispatch` now passes `defer_judge=True`. A failed handoff falls back to the inline
+judge, because deferral would otherwise introduce a new way to hang: an unreachable
+broker would park the run at `deterministic_ready` with nothing left to finalise it.
+
+<details><summary>Original diagnosis</summary>
 
 `api/deps.py:_dispatch` calls `task.delay(run_id)` with no `defer_judge`, which defaults
 to `False`. The branch at `tasks.py:134` that sends the judge to `QUEUE_JUDGE` is
@@ -590,6 +624,8 @@ browser queue.
 the deterministic budget and puts it where the design already says it belongs.
 
 Files: `src/verifier/api/deps.py`.
+
+</details>
 
 ---
 
@@ -616,6 +652,26 @@ path is fine; the ladder just does not reject non-answers before spending a run.
 **Fix:** a minimum-plausibility gate on the captured turn before dispatch (length, and
 the absence of the sidebar's date suffix shape), and never a FAIL from a run that found
 nothing to check.
+
+**Extension half done; STILL OPEN on the backend.** The sidebar no longer reaches a run
+at all: `classifyByClassFrequency` refuses a split it cannot evidence (a class token
+balanced across 25-75% of siblings, or one side's median at least 2x the other's), and
+navigation is excluded from the group search by text-share rather than by class name.
+A recents list fails both tests -- identical classes, identical lengths -- so tier 3
+returns null and the ladder falls through to the manual trigger. `buildRequest` also
+refuses anything under 60 characters unless the user pointed at it directly. Measured on
+`extension/dev/selector-fixture.html?shape=sidebar`: 14 rows in, 0 messages out, tier
+`manual`.
+
+The date-suffix half of the fix above was deliberately NOT implemented: it encodes one
+locale and one date format and stops matching the day claude.ai renders "2 days ago".
+The length floor covers every logged case without that assumption.
+
+What remains is the second half, and it is a backend change: `deterministic_verdict`
+(`src/verifier/pipeline/aggregate.py`) still returns FAIL on any FAIL-severity finding
+however little was actually checked, and the panel relabels only the *pill* for citation
+coverage, never the verdict. A run that checked nothing can still emit the worst verdict
+in the system -- it just can no longer be reached from the sidebar.
 
 ---
 
@@ -652,6 +708,47 @@ Bug 10 remains open and this is a second way in: it is not only maintenance wind
 write a durable row for a transient state.
 
 Files: `src/verifier/repos/resolutions.py`, `src/verifier/pipeline/resolver.py`.
+
+---
+
+### 24. Embeddings never carry a `document_id`, so L3's background pool is always empty
+
+**Severity: high — the contrastive margin has never run in production.**
+
+Newly visible now that the cache is durable (F33). All 170 cached vectors have
+`document_id = NULL`:
+
+```
+embeddings with doc: 0 of 170
+```
+
+`_document_key` (`layers/l3_alignment.py:645-656`) falls back to the document's **content
+hash** when `SourceDocument.id` is unset, which it is for a freshly-fetched document.
+`PgEmbeddingRepo.put_many` then does `uuid.UUID(document_id)`, gets `ValueError`, and
+stores `NULL`. `sample_background` filters `document_id IS NOT NULL` and matches nothing.
+
+L3 handles it correctly and reports it — `background_empty: true`, `margin_skipped: true`,
+with a note saying only the absolute floor was applied — so this is safe degradation, not
+a silent failure.
+
+**Not a regression.** The in-memory repo started cold in every task and had only ever
+seen the document under test, so the pool was empty then too. What changed is that it is
+now *permanently* empty rather than incidentally so: 170 durable vectors sit in the table
+and none can be sampled.
+
+The consequence is worth stating plainly: **every live L3 verdict to date rests on the
+absolute floor alone.** Scores are unaffected (they are `max cos(claim, cited)`, which
+does not involve the margin), but the margin half of Part 4's calibration has never been
+exercised outside the offline set.
+
+**Fix:** carry the persisted row id onto the `SourceDocument` before chunking — the
+orchestrator already learns it at `orchestrator.py:610` (`stored.id`) and writes it back
+onto the resolution, so the id exists and simply never reaches L3. Failing that,
+`PgEmbeddingRepo` could store a deterministic UUID5 of the content hash rather than
+discarding a non-UUID key. The first is the real fix.
+
+Files: `src/verifier/layers/l3_alignment.py`, `src/verifier/repos/embeddings.py`,
+`src/verifier/pipeline/orchestrator.py`.
 
 ---
 
@@ -693,11 +790,22 @@ orphaned-content-script hang in bug 3).
 
 ### Smaller things spotted in the same pass
 
-- **The panel shows an error on an empty chat.** On `/new` the structural tier finds
-  the sidebar's repeated group and calls half of it an assistant turn, so the panel
-  renders "could not find the question this response answers" where it should say
-  idle. ~~Cosmetic~~ — **not cosmetic, and not limited to `/new`: see bug 21.** The same
-  misfire on `/recents` verified 14 sidebar titles and returned a hard FAIL on each.
+- ~~**The panel shows an error on an empty chat.**~~ Fixed at the root, and it was never
+  cosmetic — it was bug 21 caught one step earlier. On `/new` the structural tier found
+  the sidebar's repeated group and called half of it an assistant turn; the *first* such
+  row had no preceding "user" row so it threw and painted the Error pill, and **every
+  other row dispatched a real run**. That asymmetry is why the selector was fixed first:
+  routing the throw to idle on its own would have removed the pill and kept the
+  dispatches, turning a loud bug into a silent one.
+
+  Two changes, either of which now suffices. The ladder no longer invents a transcript
+  out of navigation chrome (bug 21 above). And "nothing to verify" is no longer an
+  error: `buildRequest`'s benign throws are tagged, and an *automatic* scan that finds
+  nothing renders nothing at all — the panel is already idle from boot, and painting
+  over it would let one misclassified node wipe a real answer's verdict off the screen.
+  Only an explicit toolbar or right-click gesture gets an explanation back. The Error
+  pill is now reserved for a broken tool: backend unreachable, contact lost, run
+  forgotten, timeout.
 - ~~**Long evidence passages are not scrollable.**~~ Fixed in the serif/light restyle:
   `.salv-evidence` is capped at `calc(var(--salv-scale) * 190px)` with `overflow-y:
   auto`, so a long retrieved passage no longer pushes the layer table below the fold.
