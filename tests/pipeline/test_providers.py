@@ -71,15 +71,26 @@ def test_a_blank_openrouter_key_raises_at_construction():
 
 
 def test_the_anthropic_judge_uses_the_bare_model_id():
-    """settings.JUDGE_MODEL is namespaced for OpenRouter; the first-party API is not."""
+    """settings.JUDGE_MODEL is namespaced for OpenRouter; the first-party API is not.
+
+    Asserted as a property rather than a literal: the configured model changes with
+    deployment, but stripping the vendor prefix is the invariant. A test pinned to a
+    model name breaks on every model change and tells you nothing about the bug it
+    was written to catch.
+    """
+    from verifier.settings import settings
+
     judge = AnthropicJudge(client=FakeAnthropicClient())
-    assert judge.model == "claude-opus-5"
     assert "/" not in judge.model
+    assert judge.model == settings.JUDGE_MODEL.split("/")[-1]
 
 
 def test_the_summariser_uses_the_configured_model_id():
+    from verifier.settings import settings
+
     summariser = AnthropicSummariser(client=FakeAnthropicClient())
-    assert summariser.model == "claude-sonnet-5"
+    assert summariser.model == settings.SUMMARISER_MODEL.split("/")[-1]
+    assert "/" not in summariser.model
 
 
 # --- request shape -----------------------------------------------------------------
@@ -92,7 +103,9 @@ async def test_the_anthropic_judge_asks_for_structured_output_and_no_temperature
     result = await judge.judge(system_prompt="the user-owned prompt", payload={})
 
     call = client.calls[0]
-    assert call["model"] == "claude-opus-5"
+    from verifier.settings import settings
+
+    assert call["model"] == settings.JUDGE_MODEL.split("/")[-1]
     assert call["system"] == "the user-owned prompt"
     assert call["output_config"]["format"]["type"] == "json_schema"
     # temperature was removed on Opus 5 / Sonnet 5 and returns a 400.

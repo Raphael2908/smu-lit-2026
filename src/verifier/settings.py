@@ -49,9 +49,17 @@ class Settings(BaseSettings):
 
     EMBEDDINGS_MODEL: str = "voyage-law-2"  # voyage-context-4 swaps in the native
     EMBEDDINGS_DIM: int = 1024  # contextual endpoint; see providers/voyage.py
-    SUMMARISER_MODEL: str = "claude-sonnet-5"
+    SUMMARISER_MODEL: str = "anthropic/claude-haiku-4.5"
+    SUMMARISER_PROVIDER: Literal["openrouter", "anthropic"] = "openrouter"
     JUDGE_PROVIDER: Literal["openrouter", "anthropic"] = "openrouter"
-    JUDGE_MODEL: str = "anthropic/claude-opus-5"
+    JUDGE_MODEL: str = "anthropic/claude-sonnet-5"
+
+    # --- Per-capability provider modes -------------------------------------------
+    # "auto" follows PROVIDER_MODE. Set individually to run, say, a real judge and
+    # summariser on OpenRouter while embeddings stay mocked for want of a Voyage key.
+    EMBEDDINGS_MODE: Literal["auto", "mock", "real"] = "auto"
+    SUMMARISER_MODE: Literal["auto", "mock", "real"] = "auto"
+    JUDGE_MODE: Literal["auto", "mock", "real"] = "auto"
     JUDGE_PROMPT_VERSION: str = "v1"
     SUMMARY_PROMPT_VERSION: str = "v1"
 
@@ -117,6 +125,23 @@ class Settings(BaseSettings):
     MOCK_L4_FAIL_BELOW: float = 0.08
     MOCK_L4_PASS_AT: float = 0.20
 
+    # L3 under the mock embedder. Measured, claim -> cited document, over 3 genuine
+    # Spandeck claims and 2 from an unrelated area of law:
+    #   genuine  cited min 0.151   margin min +0.012
+    #   foreign  cited max 0.105   margin max +0.040
+    #
+    # The absolute score separates (0.151 vs 0.105), so the floor drops to 0.12 --
+    # the real-model 0.35 fails every genuine claim.
+    #
+    # THE MARGIN DOES NOT SEPARATE and is switched off here: a genuine claim scored
+    # +0.012 while a foreign one scored +0.040, so the contrastive signal is
+    # anti-discriminative under a hashed bag-of-words with no synonymy. It is a real
+    # signal for a real embedding model and a coin flip for this one, so mock mode
+    # leans on the absolute floor alone rather than pretending otherwise.
+    MOCK_L3_ABSOLUTE_FLOOR: float = 0.12
+    MOCK_L3_MARGIN_FAIL_AT_OR_BELOW: float = -1.0
+    MOCK_L3_MARGIN_PASS_ABOVE: float = -0.99
+
     @model_validator(mode="after")
     def _apply_mock_thresholds(self) -> Settings:
         """In mock mode, use mock-calibrated thresholds unless explicitly overridden.
@@ -124,11 +149,17 @@ class Settings(BaseSettings):
         Only fields the caller did not set are replaced, so an explicit env var or
         constructor argument always wins -- tests that pin a threshold keep pinning it.
         """
-        if self.PROVIDER_MODE != "mock":
+        # Keyed on the EMBEDDER, not PROVIDER_MODE: L3/L4 thresholds describe the
+        # embedding model, so a real judge running alongside mock embeddings must
+        # still use the mock's numbers.
+        if self.capability_is_real("embeddings"):
             return self
         for field, mock_field in (
             ("L4_FAIL_BELOW", "MOCK_L4_FAIL_BELOW"),
             ("L4_PASS_AT", "MOCK_L4_PASS_AT"),
+            ("L3_ABSOLUTE_FLOOR", "MOCK_L3_ABSOLUTE_FLOOR"),
+            ("L3_MARGIN_FAIL_AT_OR_BELOW", "MOCK_L3_MARGIN_FAIL_AT_OR_BELOW"),
+            ("L3_MARGIN_PASS_ABOVE", "MOCK_L3_MARGIN_PASS_ABOVE"),
         ):
             if field not in self.model_fields_set:
                 object.__setattr__(self, field, getattr(self, mock_field))
@@ -148,6 +179,23 @@ class Settings(BaseSettings):
         if self.REPO_BACKEND == "auto":
             return not self.is_mock
         return self.REPO_BACKEND == "postgres"
+
+    def capability_is_real(self, capability: Literal["embeddings", "summariser", "judge"]) -> bool:
+        """Whether one capability should use its real provider.
+
+        PROVIDER_MODE is the default for all three, but a single global switch forces
+        an all-or-nothing choice: holding one vendor's key would otherwise mean either
+        running everything mocked, or running everything real and failing at
+        construction on the key you do not have. "auto" follows PROVIDER_MODE.
+        """
+        mode = {
+            "embeddings": self.EMBEDDINGS_MODE,
+            "summariser": self.SUMMARISER_MODE,
+            "judge": self.JUDGE_MODE,
+        }[capability]
+        if mode == "auto":
+            return not self.is_mock
+        return mode == "real"
 
     @model_validator(mode="after")
     def _require_keys_in_real_mode(self) -> Settings:

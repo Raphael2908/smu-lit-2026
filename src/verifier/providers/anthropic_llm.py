@@ -139,7 +139,11 @@ class AnthropicSummariser:
         from verifier.settings import settings
 
         self._api_key = _require_key(api_key) if client is None else (api_key or "")
-        self.model = model or settings.SUMMARISER_MODEL
+        # Same normalisation as the judge: settings.SUMMARISER_MODEL is namespaced for
+        # OpenRouter ("anthropic/claude-haiku-4.5") and the first-party API wants the
+        # bare id. Without this, switching SUMMARISER_PROVIDER to anthropic sends an
+        # unknown model id and fails at request time rather than at construction.
+        self.model = model or settings.SUMMARISER_MODEL.split("/")[-1] or "claude-haiku-4-5"
         self._client = client
         self._max_tokens = max(256, settings.SUMMARY_MAX_TOKENS * 4)
 

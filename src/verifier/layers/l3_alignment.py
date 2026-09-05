@@ -63,6 +63,12 @@ from verifier.settings import settings
 ATTRIBUTION_WINDOW_CHARS = 400
 
 
+#: How many retrieved passages to hand the judge. Enough to check a multi-claim answer,
+#: few enough that the prompt stays small and cacheable -- the judge is meant to verify
+#: specific text, not re-read the judgment.
+MAX_JUDGE_PASSAGES = 12
+
+
 class SourceGroundingLayer(BaseLayer):
     """Source documents arrive on ``LayerInput.documents``; this layer never fetches.
 
@@ -138,6 +144,7 @@ class SourceGroundingLayer(BaseLayer):
         cluster_reports: list[dict[str, object]] = []
         margins: list[float] = []
         scores: list[float] = []
+        passages: list[dict[str, object]] = []
         cache_hits = 0
         cache_misses = 0
         assessed_clusters = 0
@@ -225,6 +232,24 @@ class SourceGroundingLayer(BaseLayer):
                 if finding is not None:
                     findings.append(finding)
 
+                # Record what we matched regardless of the verdict. L5 judges
+                # faithfulness against these passages, and evidence attached only to
+                # findings means a fully PASSING L3 hands the judge nothing -- which
+                # is precisely when the judge runs. It then scores the answer while
+                # stating it has no text to check against, which is worse than not
+                # running it at all.
+                best_chunk = source_chunks[match.index] if match else None
+                if best_chunk is not None:
+                    passages.append(
+                        {
+                            "text": best_chunk.text,
+                            "citation": cluster.preferred.raw_text,
+                            "paragraph": best_chunk.paragraph_from,
+                            "score": s_cited,
+                            "source_url": document.source_url,
+                        }
+                    )
+
             cluster_reports.append(
                 {
                     "ordinal": cluster.ordinal,
@@ -237,6 +262,11 @@ class SourceGroundingLayer(BaseLayer):
             )
 
         detail: dict[str, object] = {
+            # The passages the judge will reason over. Kept ordered by descending
+            # similarity and capped, so a long judgment cannot crowd the prompt.
+            "passages": [dict(p) for p in sorted(passages, key=lambda x: -float(x["score"]))][
+                :MAX_JUDGE_PASSAGES
+            ],
             "clusters": cluster_reports,
             "claims": len(raw_claims),
             "claim_strategy": raw_claims[0].strategy,

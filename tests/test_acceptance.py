@@ -18,10 +18,18 @@ from verifier.pipeline.orchestrator import Orchestrator
 
 QUESTION = "What is the test for establishing a duty of care in negligence under Singapore law?"
 
+# Legally accurate, and it took the system itself to get it right. The first draft of
+# this fixture said the two-stage test "comprises factual foreseeability, legal
+# proximity and policy considerations". Running it against the real judge caught the
+# error: [115] states the test is "a two-stage test, comprising of, first, proximity
+# and, second, policy considerations" and expressly declines to make factual
+# foreseeability part of the legal test -- it is a threshold question. L1-L4 all
+# PASSED that draft (real case, real citation, genuinely grounded, on-question); only
+# the reasoning judge caught it, which is the entire argument for L5 in one example.
 _ANSWER = (
     "The Court of Appeal established a single two-stage test for the imposition of a duty "
-    "of care, comprising factual foreseeability, legal proximity and policy considerations, "
-    "in {citation}."
+    "of care, comprising first legal proximity and second policy considerations, with "
+    "factual foreseeability as a threshold question, in {citation}."
 )
 REAL_CITATION = _ANSWER.format(
     citation="Spandeck Engineering (S) Pte Ltd v Defence Science & Technology Agency [2007] SGCA 37"

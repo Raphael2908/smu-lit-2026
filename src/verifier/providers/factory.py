@@ -39,7 +39,7 @@ def get_browser_fetcher() -> Fetcher:
 
 @lru_cache
 def get_embedder() -> Embedder:
-    if settings.is_mock:
+    if not settings.capability_is_real("embeddings"):
         from verifier.providers.mock.embeddings import MockEmbedder
 
         return MockEmbedder()
@@ -50,18 +50,22 @@ def get_embedder() -> Embedder:
 
 @lru_cache
 def get_summariser() -> Summariser:
-    if settings.is_mock:
+    if not settings.capability_is_real("summariser"):
         from verifier.providers.mock.llm import MockSummariser
 
         return MockSummariser()
-    from verifier.providers.anthropic_llm import AnthropicSummariser
+    if settings.SUMMARISER_PROVIDER == "anthropic":
+        from verifier.providers.anthropic_llm import AnthropicSummariser
 
-    return AnthropicSummariser()
+        return AnthropicSummariser()
+    from verifier.providers.openrouter_llm import OpenRouterSummariser
+
+    return OpenRouterSummariser()
 
 
 @lru_cache
 def get_judge() -> Judge:
-    if settings.is_mock:
+    if not settings.capability_is_real("judge"):
         from verifier.providers.mock.llm import MockJudge
 
         return MockJudge()
