@@ -433,12 +433,16 @@ Files: `src/verifier/pipeline/orchestrator.py`, `src/verifier/worker/celery_app.
 
 Direct consequence of bug 14. The profile-gated `browserworker` service starts, connects
 to Redis, subscribes to `QUEUE_BROWSER` and waits forever, because nothing ever puts
-anything there. Meanwhile `api` and `worker` are now built with `INSTALL_BROWSER=true`,
-which is the thing the build arg was introduced to avoid — roughly 400MB of Chromium in
-two images that were meant to stay slim.
+anything there.
 
-Both go away when bug 14 is fixed. Kept rather than deleted so the shape of that fix is
-still visible in the compose file.
+No source currently needs it, which is the only reason this is low severity. Both
+implemented adapters declare `FetchStrategy.HTTP` — SSO included, because a headless
+browser is the one client its WAF blocks outright (bug 16 / F21). `api` and `worker` were
+briefly built with `INSTALL_BROWSER=true` for the SSO-over-browser design and are back on
+the slim image now that the measurement killed it.
+
+So the browser path is wired, tested and reachable, and nothing exercises it end to end.
+The first login-walled source — LawNet — makes both this and bug 14 live at once.
 
 Files: `docker-compose.yml`, `docker/Dockerfile`.
 
@@ -493,6 +497,112 @@ provisions endpoint the page's own JS calls, used under the same honest UA and r
 The second is the one worth investigating.
 
 Files: `src/verifier/sources/sso/client.py`, `src/verifier/sources/sso/parser.py`.
+
+---
+
+## Pending: the live end-to-end run against eLitigation
+
+**Not yet run.** Two changes are unverified outside the offline suite: source resolution
+now goes through `sources/registry.py` rather than a hardcoded `ElitigationAdapter`, and
+adapters resolve their fetcher from a declared `fetch_strategy`. 767 tests pass offline
+and `tests/pipeline/test_mock_mode_resolution.py` proves the drop-in against fixtures, but
+nothing has driven the registry against the live site through the extension.
+
+It could not be run when the code landed: eLitigation was in a maintenance window
+(F12, a fifth time) from 14:00 to 23:00 SGT on 2026-09-05.
+
+### 0. Preconditions
+
+```bash
+# eLitigation must be BACK. ~848 bytes is the maintenance page; a real judgment is ~150kB.
+curl -s -o /dev/null -w '%{http_code} %{size_download}\n' \
+  https://www.elitigation.sg/gd/s/2007_SGCA_37     # want: 200 ~150000
+```
+
+If that returns ~848 bytes, stop — the run measures nothing except F12, which is already
+recorded. `.env` needs `VOYAGE_API_KEY` and `OPENROUTER_API_KEY`; `ANTHROPIC_API_KEY` is
+blank and must stay unused (`*_PROVIDER=openrouter`).
+
+### 1. Bring the stack up — all-real, no override
+
+```bash
+docker compose down -v          # the poisoned-cache reset; see bug 10
+docker compose up -d --build
+curl -s http://127.0.0.1:8000/readyz    # want: provider_mode "real", database+redis true
+docker exec sal-verifier-api-1 env | grep MODE    # want: NO occurrence of "mock"
+```
+
+`docker-compose.override.yml` was renamed to `docker-compose.mockfetch.yml`, so compose no
+longer auto-loads it and `.env` alone now yields the all-real stack (bug 8). **If any mode
+reads `mock`, stop** — something re-created the override, and per bug 8 the run would
+report real cases as fabricated.
+
+### 2. Reload the extension — a page refresh is NOT enough
+
+Chrome does not re-read an unpacked extension's files until it is reloaded in
+`chrome://extensions` (bug 3's operational note). Reload **SAL Verifier**
+(id `ekhdmamklicmlkphpnibledeoenpdjfi`, loaded from `<repo>/extension`), then hard-reload
+the claude.ai tab. Skipping this tests whatever code was loaded last session.
+
+### 3. Drive claude.ai
+
+Open an EXISTING conversation, not `/new` — on an empty chat the structural selector tier
+misreads the sidebar and renders "could not find the question this response answers".
+
+Ask something that pulls Singapore **neutral citations**, because that is the path the
+registry now dispatches by type. Suggested prompt:
+
+> What is the test for establishing a duty of care in negligence under Singapore law?
+> Cite the leading Court of Appeal authority and quote one passage verbatim.
+
+Prefer an answer citing **only Singapore neutral citations**: an English report citation
+following a Singapore one gets absorbed into the same cluster and silently goes unchecked
+(bug 6). `autoVerify` is true, so the panel fires when the answer settles; the right-click
+context menu is the fallback if the selectors miss.
+
+**Run it twice and report the second.** Bug 7 means every other run loses its first fetch
+to a closed event loop and reports it as "the lookup failed", which is indistinguishable
+from a source outage.
+
+### 4. Capture
+
+```bash
+curl -s http://127.0.0.1:8000/v1/runs/<run_id> | python3 -m json.tool > run.json
+docker logs sal-verifier-worker-1 | tail -60
+docker exec sal-verifier-postgres-1 psql -U verifier -d verifier \
+  -c "select citation_key, status, candidates->>'detail', expires_at from citation_resolutions;"
+```
+
+Screenshot the panel in both the 380 px rail and the `⤢` full view.
+
+### 5. What would count as passing
+
+- `citation_resolutions` rows carry `domain = www.elitigation.sg` and a real
+  `document_id` — proving the registry dispatched by citation type and the document
+  reached `LayerInput.documents`.
+- Worker logs show live `elitigation.sg`, `openrouter.ai` and `api.voyageai.com` calls,
+  so no capability silently fell back to mock.
+- L1 PASS on a real citation; L3 scores rather than returning NOT_APPLICABLE; L5 runs.
+- No `CITATION_NOT_FOUND` on a real case. That is the one unrecoverable failure.
+
+**Expect verdict variance between the two runs.** Bug 4 / F17: the claim splitter is
+unseeded and uncached, and the same answer has split 14/15/16 ways and flipped the run
+between `pass` and `fail`. A difference is that, not a regression.
+
+### 6. Also worth doing in the same session
+
+- **Bug 5's measurement.** Run five or six real claude.ai answers through
+  `extract_with_llm` and diff against `extract()`. Anything the regex found and Haiku
+  missed is the bug, and it is the evidence that decides whether dropping the regex floor
+  was right. Until it exists that decision is a design judgement, which is why it is
+  absent from `docs/03-findings.md`.
+- **Confirm bug 7 empirically** — verify the same answer twice and check whether the first
+  citation of the second run reports `fetch_failed:RuntimeError`.
+- **Re-check bug 10** — after eLitigation returns, confirm no `error/maintenance` row with
+  `expires_at IS NULL` is being served in place of a live fetch.
+
+Write the results into `docs/03-findings.md` as Part 8. That file admits **measured
+evidence only**; anything unmeasured belongs here instead.
 
 ---
 
