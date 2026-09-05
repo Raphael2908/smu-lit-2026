@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "SAL Verifier",
+  "version": "0.1.0",
+  "description": "Verifies Claude's legal answers: citation existence, source trust, grounding, responsiveness and faithfulness.",
+  "permissions": ["storage", "contextMenus", "activeTab"],
+  "host_permissions": ["http://localhost:8000/*"],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_title": "Verify this response",
+    "default_icon": {
+      "16": "src/icons/icon16.png",
+      "48": "src/icons/icon48.png",
+      "128": "src/icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "src/icons/icon16.png",
+    "48": "src/icons/icon48.png",
+    "128": "src/icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": [
+        "src/config.js",
+        "src/selectors.js",
+        "src/capture.js",
+        "src/api.js",
+        "src/panel.js",
+        "src/content.js"
+      ],
+      "css": ["src/panel.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
