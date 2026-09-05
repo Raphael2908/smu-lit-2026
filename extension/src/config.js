@@ -50,6 +50,14 @@ SALV.config = {
 
   /** Verify automatically when an answer finishes streaming. */
   autoVerify: true,
+
+  /**
+   * 'panel' (380px rail) | 'full' (expanded reading view).
+   *
+   * Remembered because the choice is about the reader, not the page: someone working
+   * through findings wants the big view on every answer, not to re-open it each time.
+   */
+  panelView: 'panel',
 };
 
 /** How long to wait for chrome.storage before falling back to the defaults above. */
@@ -81,6 +89,28 @@ SALV.loadConfig = async function loadConfig() {
   } catch (err) {
     // Storage is unavailable in some contexts; defaults are always usable.
     SALV.warn('config load skipped:', (err && err.message) || err);
+  }
+  return SALV.config;
+};
+
+/**
+ * Persist a few user overrides, best effort.
+ *
+ * Deliberately fire-and-forget and deliberately un-awaited by its callers. This is a
+ * UI preference: failing to store it must never block, throw into, or slow down the
+ * interaction that set it. Same reasoning as the timeout in loadConfig -- in an
+ * orphaned content script the chrome.* bindings point at a destroyed extension context
+ * and the call may never settle at all.
+ */
+SALV.saveConfig = function saveConfig(patch) {
+  Object.assign(SALV.config, patch);
+  try {
+    const stored = { ...SALV.config };
+    void Promise.resolve(chrome.storage.sync.set({ config: stored })).catch((err) => {
+      SALV.warn('config save skipped:', (err && err.message) || err);
+    });
+  } catch (err) {
+    SALV.warn('config save skipped:', (err && err.message) || err);
   }
   return SALV.config;
 };

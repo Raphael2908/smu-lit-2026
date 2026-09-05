@@ -345,7 +345,95 @@ which is precisely ranking, the one thing cosine is supposed to survive anisotro
 Still **not** fixed by lowering the threshold. The raw-text figures are the ones Part 4
 calibrated, and they fail 0 of 4.
 
-### F15 — the documented `voyage-context-4` A/B does not exist
+#### The mechanism, measured: the summary collapses the judgment to a point
+
+The explanation above ("a large shared component") is now a number. Mean pairwise
+cosine **between Spandeck's own 43 chunks**, which is exactly the quantity ranking
+inside a document depends on:
+
+| Regime | mean pair | min pair | spread |
+|---|---|---|---|
+| Raw chunk text | 0.426 | 0.059 | **0.574** |
+| Heading path only | 0.435 | 0.071 | 0.565 |
+| Summary + heading (as shipped) | **0.894** | 0.760 | **0.106** |
+| `voyage-context-4`, raw text | **0.940** | 0.857 | **0.060** |
+
+Raw, the two least similar chunks of the judgment are nearly orthogonal. Prefixed, no
+two chunks are more than 0.24 apart: the case stops being 43 distinguishable passages
+and becomes one blurred point. That is why the paragraph an answer quotes verbatim
+falls from rank #2 to #16 — there is barely any ranking left to be right about.
+
+#### It is the summary, not the prefix. The heading path is nearly free
+
+Decomposing the two halves over the same 5 claims, background rebuilt inside each arm
+so the margin gate is measured and not assumed:
+
+| Arm | mean `s_cited` | mean `s_bg` | mean margin | min margin | FAILs |
+|---|---|---|---|---|---|
+| Raw | **0.639** | 0.232 | +0.407 | +0.120 | **0/5** |
+| Heading only | 0.626 | 0.220 | +0.407 | +0.167 | **0/5** |
+| Summary + heading | **0.490** | 0.174 | +0.317 | +0.096 | **1/5** |
+
+The heading path costs 2% of mean similarity, fails nothing, and *improves* the worst
+margin. The summary costs 23% and fails correct work. So the fix keeps one and drops
+the other — `L3_CONTEXTUAL_PREFIX`, defaulting to `"heading"`.
+
+**The margin gate was never the one firing.** The prefix suppresses `s_cited` and
+`s_bg` together, so the contrastive design cancels most of the damage exactly as
+intended; every failure in every arm is a floor failure. The earlier suspicion that
+L3's background sampling was at fault is not supported: `s_bg` sits at 0.17–0.23
+throughout and no claim comes near the margin threshold.
+
+#### Why it looked intermittent
+
+The failing claim, scored across four independent draws of the Haiku summary:
+
+| | heading | draw 1 | draw 2 | draw 3 | draw 4 |
+|---|---|---|---|---|---|
+| *"the application of a single test was a deliberate departure ..."* | **0.436** | 0.343 | 0.317 | 0.330 | 0.349 |
+
+**All four prefixed draws sit below the 0.35 floor.** The prefix does not fail this
+claim by bad luck; it fails it every time, and the summary's own variability (1,190 to
+1,617 chars) never rescues it. What *is* intermittent is whether the claim is emitted
+at all: `split_claims` is a Haiku call and its output varies between runs, so a given
+run may or may not contain the claim that trips. That is why the same answer produced
+a red one day and a green the next, and it is a separate pre-existing sensitivity, not
+something this fix introduces or removes.
+
+The claim is genuinely grounded — Spandeck discusses the English position at [27] and
+[42] and departs from it explicitly — so this was a false red throughout.
+
+#### What changed
+
+`settings.L3_CONTEXTUAL_PREFIX` selects `none` / `heading` / `summary_heading`, with
+`heading` the default. Two consequences beyond the score:
+
+- **The summariser is no longer called on the L3 path** unless the regime asks for it,
+  which takes a Haiku call off the critical path.
+- **The regime namespaces the embedding cache** (`CachedEmbedder.cache_model`).
+  Content-addressing already stops a stale vector being *read* after the regime
+  changes; it does not stop one being *sampled*, because `sample_background` selects on
+  model alone. Without the namespace, flipping this setting would contrast bare chunks
+  against prefixed background — a margin between two embedding regimes rather than two
+  documents, and a false **green**, so nothing would have gone red to reveal it. The
+  cost is a one-time re-embed per judgment (43 calls for Spandeck), and the first run
+  under a new regime correctly reports `background_empty`.
+
+### F15 — `voyage-context-4` is the same disease, not the cure
+
+Measured, now that the A/B is runnable. Its absolute scores are not comparable to the
+0.35 floor — no threshold transfers between models — but **ranking is** the thing the
+literature says survives anisotropy, and on ranking it is the worst arm tested:
+within-document chunk compression **0.940** (against raw's 0.426), and the decisive
+paragraph falling to rank #12–#38.
+
+That kills the planned "swap the env var and the problem goes away" fix. Making chunks
+attend to their neighbours *inside the model* does what stapling a shared summary on
+the front does: it pulls every chunk of a case toward the case's centroid. The manual
+prefix was never the problem in itself — contextualisation by any means is, because L3
+needs to discriminate **within** a document, not between documents.
+
+### F15a — the documented `voyage-context-4` A/B did not exist
 
 `VoyageEmbedder.contextualized_embed` and `uses_native_context` have **zero call sites
 in `src/`**. `CachedEmbedder._embed` calls `embed()` unconditionally, and
@@ -365,3 +453,82 @@ exists for that model either.
 
 The cache claim holds under measurement: the second run touching Spandeck reported
 **43 cache hits and 1 miss**, the miss being its own question.
+
+---
+
+## Part 6 — the fix, re-measured on a live claude.ai answer
+
+Part 5's A/B used claims written for the test. This one replays an answer **Claude
+actually produced in the browser**, captured by the extension, through the live
+pipeline: real `voyage-law-2`, real `anthropic/claude-sonnet-5`, real Postgres, the
+mock fetcher serving the real corpus HTML (eLitigation was in a maintenance window —
+F12, a fourth time).
+
+### F16 — the summary costs 24% on live data; the heading path costs ~1%
+
+Identical answer, identical judgment, identical thresholds. The **claim set is pinned**
+— see F17 for why that is not optional — so the prefix regime is the only variable:
+
+| Arm | failing claim `s_cited` | worst margin | vs raw |
+|---|---|---|---|
+| `none` — chunk text only | 0.282 | +0.106 | — |
+| `heading` — section path only (**shipped default**) | 0.279 | +0.105 | −1% |
+| `summary_heading` — the old behaviour | **0.214** | +0.083 | **−24%** |
+
+The 24% reproduces Part 5's offline figure (23%) on text nobody wrote for the test, and
+`none` buys nothing over `heading` — which is the whole basis for keeping the heading
+path and dropping only the summary.
+
+It also confirms which gate fires. **Every margin passes** (+0.083 to +0.106 against a
+0.02 FAIL threshold, with a real 22-chunk background pool). The floor is the only gate
+that has ever failed anything in any measurement in this document.
+
+### F17 — L3 verdicts are not reproducible, because the claim splitter is not
+
+The first attempt at the table above was meaningless and looked fine. Run per-arm
+through the orchestrator, the three arms scored **3/14, 4/16 and 4/16** claims — three
+different claim sets — and reported `pass`, `fail`, `fail`. The apparent result ("the
+shipped default wins") was an artefact of which claims each arm happened to be given.
+
+`chunk_output_claims` calls `Summariser.split_claims`, a Haiku call with no seed and no
+cache. The same 2,184-character answer split into 14, 15 and 16 claims across four runs
+in one session. Because L3's status is driven by the **worst** attributed claim, a
+single extra claim flips the layer, and with it the run's verdict.
+
+Measured consequence, on one answer verified twice through the browser:
+
+| Run | claims | attributed | L3 | verdict |
+|---|---|---|---|---|
+| First | 14 | 3 | **pass** 0.545 | warn (L1a only) |
+| Replay | 15 | 4 | **fail** 0.279 | fail |
+
+Nothing about the answer, the judgment, the thresholds or the code differed. **A green
+L3 in this system is not currently a repeatable measurement**, and any A/B run through
+the orchestrator without pinning the split is measuring the splitter.
+
+This is a pre-existing defect, not one the prefix change introduced — but it was masked
+while the prefix was failing things outright, and it is the reason F14's live failure
+looked intermittent. See `todo.md`.
+
+### The claim all three arms fail
+
+> *"The court expressly declined to treat pure economic loss as attracting a separate or
+> more restrictive control device, holding instead that the same two stages ... are
+> capable of doing the necessary limiting work."*
+
+Spandeck [115] says close to the opposite: *"It could be that a more restricted approach
+is preferable for cases of pure economic loss but this is to be done within the confines
+of a single test."* The court did not decline a more restrictive approach; it said one
+might be preferable, inside the single test.
+
+So the flag may well be a true positive. It should be held loosely: **L3 asks a
+retrieval question, not a truth question**, and a claim about what a court *declined* to
+do is a negative proposition that will match no single paragraph well even when it is
+accurate — the asymmetry arXiv:2504.16318 names and the reason this belongs to L5.
+L5 never saw it, because L3 short-circuited the judge.
+
+The open question is whether a floor calibrated on `n=5` positive assertions is the
+right instrument for meta-claims of this shape. It is recorded here rather than fixed,
+because lowering a floor to admit one claim is exactly the "tuning around the bug"
+Part 4 forbids.
+

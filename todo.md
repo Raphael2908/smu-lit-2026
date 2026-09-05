@@ -7,48 +7,48 @@ context, not as outstanding work.
 
 ## Bugs to fix
 
-### 1. The contextual prefix fails correct legal work — CONFIRMED, not fixed
+### 1. ~~The contextual prefix fails correct legal work~~ — FIXED
 
-**Severity: high — measured failing a correct answer on a live run.**
+Diagnosed, measured and fixed. See `docs/03-findings.md` F14.
 
-No longer a suspicion. See `docs/03-findings.md` F14.
+**The cause was the summary, not "the prefix".** Mean pairwise cosine between
+Spandeck's own 43 chunks — the quantity ranking inside a document depends on:
 
-**Live.** A correct answer citing `[2007] SGCA 37` and quoting paragraph [115]
-verbatim: L1 scored the quote **1.000**, L4 scored **0.751**, and **L3 failed it** at
-0.325 against the 0.35 floor. The failing claim was the quoted sentence itself, and the
-chunk containing [115] was not retrieved at all.
-
-**A/B against real `voyage-law-2`**, four grounded claims, 43 chunks, prefix on vs raw:
-
-| | Prefixed (as shipped) | Raw |
+| | mean pair | spread |
 |---|---|---|
-| Mean max cos | 0.503 | **0.621** |
-| Claims below the 0.35 floor | **1 of 4** | **0 of 4** |
-| The quoted paragraph's own chunk | 0.304, rank **#11** | **0.431**, rank **#4** |
+| Raw text | 0.426 | **0.574** |
+| Heading path only | 0.435 | 0.565 |
+| Summary + heading (shipped) | **0.894** | **0.106** |
+| `voyage-context-4` | **0.940** | **0.060** |
 
-The summary is 1,370 chars (~342 tokens) and is byte-identical across all 43 chunks, so
-it adds a large shared component to every document vector with no counterpart in the
-query vector — claims are embedded bare. It both lowers absolute similarity and
-compresses the differences *between* chunks, which is why it damages L3's verdict and
-L5's evidence by the same mechanism.
+The ~1,500-char summary is byte-identical across every chunk, so prefixing it leaves no
+two chunks of the judgment more than 0.24 apart. The heading path is short and differs
+per chunk, so it disambiguates instead. Over 5 claims: heading costs 2% of mean
+similarity and fails nothing; summary costs 23% and fails a correctly grounded claim in
+**4 of 4** independent summary draws (0.317–0.349 against the 0.35 floor, versus 0.436
+with heading only).
 
-**Still do not fix this by lowering the threshold.** The raw-text figures are the ones
-Part 4 calibrated, and they fail 0 of 4.
+**Two corrections to what this file used to say.** The margin gate was never the one
+firing — the prefix suppresses `s_cited` and `s_bg` together and the contrastive design
+cancels most of it, so every failure was a *floor* failure. And the intermittency was
+not the summary's variability: all four draws fail. It was `split_claims`, which is a
+Haiku call whose output varies, so a run may or may not contain the claim that trips.
 
-**The fix, when it is taken:** stop prefixing on the L3 document path. Note there is no
-switch for it today — `get_document_summary` returns `""` only when `summariser is
-None`, and no production path produces that, so the "config 1 vs config 2" A/B in the
-old plan was never runnable in-process.
+**Fixed:** `settings.L3_CONTEXTUAL_PREFIX` (`none` / `heading` / `summary_heading`,
+default `heading`). The summariser is no longer called on the L3 path unless the regime
+uses it, and the regime namespaces the embedding cache so two regimes cannot mix in the
+background pool — that mixing would have been a false *green*, so nothing would have
+gone red to reveal it.
 
-**Correction to what this file used to say:** `EmbeddingsProvider.contextualized_embed`
-does not exist. `VoyageEmbedder.contextualized_embed` and `uses_native_context` do, and
-have **zero call sites in `src/`** — `CachedEmbedder._embed` always calls `embed()` and
-`_embed_source` always prefixes. `EMBEDDINGS_MODEL=voyage-context-4` would today send
-chunks to the ordinary endpoint *and still prefix them by hand*. The one-env-var A/B is
-unimplemented, and that model has no calibrated thresholds either.
+**`voyage-context-4` is not the alternative.** Now measured: within-document
+compression 0.940, decisive paragraph at rank #12–#38. Contextualisation inside the
+model does the same damage as contextualisation by string concatenation, because L3
+needs to discriminate *within* a document, not between documents. See F15.
 
-Files: `src/verifier/semantic/contextualise.py`, `src/verifier/layers/l3_alignment.py`,
-`src/verifier/providers/voyage.py`.
+**Left open:** the A/B is n=5 claims over one judgment with 22 background chunks from
+2 documents. Same caveat class as Part 4 — enough to condemn the summary prefix, not a
+benchmark. Re-running it after any change to `EMBEDDINGS_MODEL` is mandatory, and the
+harness is not committed yet.
 
 ---
 
@@ -87,50 +87,154 @@ layers are model-independent, but **L5's reliability is bounded by retrieval qua
 
 ---
 
-### 3. The Chrome extension does not inject — code defects fixed, load pending
+### 3. ~~The Chrome extension does not inject~~ — FIXED, confirmed loaded
 
-**Severity: high for the demo.**
+Verified live on `https://claude.ai`: the panel mounts, captures the prompt and
+response, calls the API, polls, and renders all five layers with per-layer status,
+score and timing, deterministic findings with source links, the citations list and the
+judge section. It verified a real Claude answer end to end against the Docker stack
+(29.8 s, cache 43/44, $0.0435).
 
-Ruled out by direct inspection: the manifest parses with no BOM, all 11 referenced
-paths exist case-correctly, the icons are valid PNGs at their declared sizes, all seven
-JS files pass `node --check`, there is no ES-module syntax anywhere, load order is
-correct, and there is no build step to have skipped. CORS already allows
-`https://claude.ai` and `chrome-extension://`.
+The three code defects diagnosed earlier were the cause and are fixed: `background.js`
+hardcoding `localhost` behind a sticky fallback, `boot()` awaiting `chrome.storage`
+before `panel.mount()` in an orphaned content script, and `console.debug` hiding every
+diagnostic behind Chrome's Verbose level.
 
-Three real defects, now fixed:
-
-1. **`background.js` still hardcoded `http://localhost:8000`.** Commit `402f537` fixed
-   `config.js` and missed the proxy. `api.js` falls back to the background worker the
-   first time a direct fetch fails and **the fallback is sticky**, so from that moment
-   every request went to `localhost` → `::1` while uvicorn was bound to `127.0.0.1` —
-   the bug that was already fixed, surviving on the path where it presents as an
-   intermittently dead backend.
-2. **`boot()` awaited `SALV.loadConfig()` before `panel.mount()`.** In an orphaned
-   content script — the extension reloaded while a claude.ai tab stayed open, which
-   happens on every edit — `chrome.storage.sync.get` **never settles**. It does not
-   reject, so `try/catch` catches nothing and boot parks forever: no panel, no error,
-   no output. That is exactly the reported symptom, and the same signature as the
-   page-context `fetch` that "hung rather than resolving or rejecting". The panel now
-   mounts before anything is awaited, and the storage read races a 1 s timeout.
-3. **Diagnosis was blocked by invisible logging.** `SALV.log` used `console.debug`,
-   which Chrome hides unless the level is set to Verbose — so "no console output" was
-   never evidence of anything. `SALV.banner` (`console.info`) now announces the script
-   at boot.
-
-Also widened `matches` and the context menu to `https://*.claude.ai/*`.
-
-**Remaining:** Chrome 152 removed `--load-extension` and `chrome://` pages cannot be
-driven by automation, so the extension has to be loaded by hand:
-`chrome://extensions` → Developer mode → **Load unpacked** → the `extension/`
-directory (the one holding `manifest.json`). Hard-reload the claude.ai tab afterwards —
-content scripts do not retro-inject into tabs that were already open.
-
-Files: `extension/src/background.js`, `extension/src/content.js`,
-`extension/src/config.js`, `extension/manifest.json`.
+**One operational note worth keeping.** Chrome does not re-read an unpacked extension's
+files until the extension is reloaded in `chrome://extensions`; a page reload is not
+enough. Editing `panel.css` and refreshing claude.ai shows the OLD stylesheet, which
+looks exactly like a CSS change that did not work.
 
 ---
 
-### 4. `make seed-lists` reports success while writing nowhere durable
+### 4. L3 verdicts are not reproducible, because the claim splitter is not
+
+**Severity: high — the same answer verified twice gives different verdicts.**
+
+`chunk_output_claims` calls `Summariser.split_claims`, a Haiku call with no seed and no
+cache. The same 2,184-char answer split into 14, 15 and 16 claims across four runs in
+one session. L3's status is driven by the **worst** attributed claim, so one extra
+claim flips the layer and with it the run.
+
+Measured on one real claude.ai answer verified twice, nothing else changed:
+
+| Run | claims | attributed | L3 | verdict |
+|---|---|---|---|---|
+| First | 14 | 3 | **pass** 0.545 | warn |
+| Replay | 15 | 4 | **fail** 0.279 | fail |
+
+It also silently corrupts any A/B run through the orchestrator: comparing the three
+`L3_CONTEXTUAL_PREFIX` arms gave 3/14, 4/16 and 4/16 claims — three different claim
+sets — and a clean-looking table that measured the splitter, not the prefix. F16's
+numbers are only meaningful because the split is pinned across arms.
+
+Pre-existing, not introduced by the prefix change, but it was masked while the prefix
+was failing things outright, and it is why F14's live failure looked intermittent.
+
+**Next step, cheapest first:**
+- Cache the split on `sha256(ai_output) + model + prompt_version`, exactly as
+  `document_summaries` caches the document summary. A re-verification of the same
+  answer then cannot drift, which is most of the problem.
+- Set `temperature=0` on the split call if the provider exposes it.
+- Report `claim_strategy` and the claim count in the panel, so a verdict that rests on
+  4 claims rather than 3 is visible rather than inferred.
+- Longer term, the deterministic `window_claims` fallback is reproducible by
+  construction. It is worth measuring whether it is good enough to be the default.
+
+Files: `src/verifier/semantic/chunking.py`, `src/verifier/providers/*_llm.py`,
+`src/verifier/repos/documents.py` (the summary cache is the pattern to copy).
+
+---
+
+### 5. The L3 floor may be wrong for negative and meta claims
+
+**Severity: medium — one confirmed instance, not yet a pattern.**
+
+All three prefix arms fail this claim from a real Claude answer:
+
+> *"The court expressly declined to treat pure economic loss as attracting a separate or
+> more restrictive control device ..."*
+
+Spandeck [115] says close to the opposite, so it may be a true positive. But L3 asks a
+**retrieval** question, and a claim about what a court *declined* to do is a negative
+proposition that matches no single paragraph well even when accurate — the asymmetry
+arXiv:2504.16318 names, and the reason faithfulness belongs to L5. Here L3 short-
+circuited the judge, so the layer that could actually rule on it never ran.
+
+The floor is calibrated on `n=5` positive assertions. Whether it is the right instrument
+for meta-claims is untested.
+
+**Do not fix by lowering the floor** — that is the tuning-around-a-bug Part 4 forbids.
+Widen the calibration set with negative and meta claims first and find out whether they
+form a separable regime.
+
+---
+
+### 6. A maintenance-window resolution is cached permanently
+
+**Severity: high — one outage poisons the cache for every later run.**
+
+Found during the first real-stack run. eLitigation was in a maintenance window (F12,
+third occurrence). The neutral-citation URL fetch correctly detected it, the search
+fallback then matched the case name against the maintenance page, and the run stored:
+
+```
+citation_key   | status   | method | confidence | expires_at
+sgca:2007:37   | resolved | search | 1.0        | NULL
+```
+
+`documents` stayed empty, so the row says **resolved** while no text exists. Every
+later run reuses it and reports `CITATION_UNVERIFIED — exists, but its text was not
+available`, and it will keep doing so after eLitigation comes back, because
+`expires_at` is NULL and nothing invalidates it.
+
+The verdict direction is safe (WARN, never FAIL — the F12 rule holds). The defect is
+that a *transient* source state was written to a *durable* cache with no expiry, and
+the only way out today is deleting the row by hand.
+
+**Next step:** do not cache a resolution whose document has no usable text, or give
+SOURCE_UNAVAILABLE resolutions a short `expires_at`. The column already exists and is
+never populated.
+
+Files: `src/verifier/repos/resolutions.py`, `src/verifier/pipeline/resolver.py`.
+
+---
+
+### 7. The Docker image does not ship `tests/corpus`, so mock mode cannot verify in a container
+
+**Severity: medium — the compose file's own promise is untrue.**
+
+`docker-compose.yml` opens with "The whole stack boots with an empty .env in
+PROVIDER_MODE=mock." It boots, but it cannot verify anything: `MockFetcher` reads
+`tests/corpus/*.html` via `parents[4] / "tests" / "corpus"`, and the image copies only
+`src`, `alembic`, `pyproject.toml` and `README.md`. Every citation resolves to nothing.
+
+Verified by running the acceptance pair inside the `api` container: both returned
+`CITATION_UNVERIFIED`. The same script run natively, against the same Postgres, passed.
+
+**Next step:** COPY `tests/corpus` into the image (it is ~500 kB), or mount it in
+compose for the mock profile.
+
+Files: `docker/Dockerfile`, `docker-compose.yml`.
+
+---
+
+### 8. There is no `FETCHER_MODE`
+
+**Severity: low — but it is what made bug 5 hard to work around.**
+
+`EMBEDDINGS_MODE`, `SUMMARISER_MODE` and `JUDGE_MODE` can each be set independently of
+`PROVIDER_MODE`. The fetcher cannot: `get_http_fetcher()` keys on `settings.is_mock`,
+which is the global switch. So "real models, local corpus" — the exact configuration
+used for every calibration run in `docs/03-findings.md` Parts 4 and 5, and the only way
+to exercise L3/L5 while eLitigation is down — requires flipping the global to `mock`
+and setting the other three back to `real`.
+
+Files: `src/verifier/providers/factory.py`, `src/verifier/settings.py`.
+
+---
+
+### 9. `make seed-lists` reports success while writing nowhere durable
 
 **Severity: medium — cosmetic today, misleading tomorrow.**
 
@@ -150,43 +254,39 @@ Files: `src/verifier/repos/lists.py` (missing), `src/verifier/repos/pg.py`.
 
 ## QoL improvements
 
-### The panel is unreadable in dark mode
+### ~~The panel is unreadable in dark mode~~ — FIXED
 
-**Severity: medium — the verdict is correct and nobody can read it.**
+The dark-mode block overrode surfaces and left the **ink** at its light-mode values.
+`.salv-finding-msg` stayed `#23262e` on a `#1f222a` card — a contrast ratio of
+**1.05:1**, i.e. invisible — while the pills and links were overridden and looked
+correct, so the panel read as working.
 
-Found while driving the extension on live claude.ai. `panel.css` defines the whole
-palette as a light theme — 32 hardcoded `color:` rules — and its
-`@media (prefers-color-scheme: dark)` block overrides only **nine** selectors, almost
-all of them backgrounds. Every text colour therefore keeps its light-mode value on a
-dark panel. Measured in the browser against the panel's own `#191b21`:
+Measured, before and after, in dark mode:
 
-| Element | Size | Contrast | WCAG AA (4.5:1) |
-|---|---|---|---|
-| `.salv-finding-msg` — *the finding itself* | 12px | **1.05** | ✗ |
-| `.salv-section-title` ("LAYERS") | 11px | 2.19 | ✗ |
-| `.salv-code` (`CLAIM_NOT_GROUNDED_IN_SOURCE`) | 10px | 2.69 | ✗ |
-| `.salv-summary` (timing, cache) | 11px | 3.57 | ✗ |
-| `.salv-section-note` | 11px | 4.17 | ✗ |
-| `.salv-layer-meta` / `.salv-duration` / `.salv-score` | 10px | 4.48 | ✗ |
-| `.salv-layer-name` | 12px | 14.31 | ✓ |
-| `.salv-shortcircuit` | 12px | 8.67 | ✓ |
+| | before | after |
+|---|---|---|
+| Finding body on its card | **1.05** | **12.37** |
+| Unresolved citation | 1.79 | 7.89 |
+| Code / meta labels | 4.14 | 6.21 |
+| Worst pair anywhere, either theme | — | **5.23** (AA is 4.5) |
 
-Eight of ten sampled styles fail AA, and the worst is the one that matters most:
-`.salv-finding-msg { color: #23262e }` on `#191b21` is **1.05:1** — the sentence
-explaining *why* an answer was failed is effectively invisible. In the live run the
-panel correctly reported "Nothing in [2007] SGCA 37 closely matches this claim (best
-passage similarity 0.326, floor 0.35)" and a reader simply could not see it.
+Fixed by making every colour a custom property and having the dark block redefine
+**only tokens** — no selector in it styles anything, so light and dark cannot drift
+apart again. Semantic inks are lightened rather than reused: `#8f1d1d` on a dark card
+is 1.79:1 however correct the hue.
 
-That is worse than an ugly panel. This tool exists to tell a lawyer why an answer was
-rejected; a verdict nobody can read is a verdict that will be ignored, and an accuracy
-tool that gets ignored has failed at the only thing it does.
+Type was also raised for the actual readers — lawyers reading dense findings with
+paragraph pinpoints, not developers skimming a debug overlay. Body 13→15 px, finding
+text 12→14 px, evidence 11→13 px, meta 10→12 px, all driven by a single
+`--salv-scale` multiplier so nothing drifts out of proportion.
 
-**The fix:** replace the hardcoded hexes with CSS custom properties on `#salv-panel`,
-and redefine only those variables inside the dark block — so a colour can never again
-be defined in one theme and forgotten in the other. Re-check every token against 4.5:1,
-and raise the 10px metadata sizes while there. Not a repaint; a token pass.
+**Full-screen reading view** added: `⤢` in the header expands the 380 px rail to a
+centred, max-1100 px sheet and raises the same `--salv-scale` to 1.15. The choice is
+remembered in `chrome.storage` — written best-effort and applied only *after* mount,
+because the panel's existence must never depend on a storage round trip (that was the
+orphaned-content-script hang in bug 3).
 
-Files: `extension/src/panel.css`.
+---
 
 ### Smaller things spotted in the same pass
 
@@ -207,7 +307,9 @@ Files: `extension/src/panel.css`.
   75/90 figures separate the regimes cleanly on one judgment, which is not the same as
   being right across the corpus.
 - **Every number is model-specific.** Changing `EMBEDDINGS_MODEL` invalidates all of
-  them.
+  them — and so does changing `L3_CONTEXTUAL_PREFIX`, which decides what text is
+  embedded before any threshold sees it. The current figures are calibrated against
+  `heading`.
 
 ## Deferred by scope decision
 

@@ -47,16 +47,26 @@ GROUNDED_OUTPUT = (
 )
 
 
-async def seed_background(repo, documents) -> None:
+async def seed_background(repo, documents, *, prefix: str = "heading") -> None:
     """Populate the shared cache with OTHER judgments, spanning other areas of law.
 
     A background pool accidentally seeded with the query's own topic collapses every
     margin and makes correct work look ungrounded, so the fixtures are deliberately
     from criminal and landlord-and-tenant law.
+
+    ``prefix`` must match the layer's regime. Vectors embedded under a different
+    ``L3_CONTEXTUAL_PREFIX`` are deliberately invisible to it (see
+    ``CachedEmbedder.cache_model``), so seeding under the wrong one leaves L3 on a cold
+    cache -- which it reports rather than hides, but which silently stops the margin
+    being the thing under test.
     """
-    embedder = CachedEmbedder(MockEmbedder(), repo)
+    embedder = CachedEmbedder(MockEmbedder(), repo, cache_namespace=prefix)
     for document in documents:
-        chunks = build_chunks(chunk_source_document(document), document_id=document.id)
+        chunks = build_chunks(
+            chunk_source_document(document),
+            document_id=document.id,
+            include_heading=prefix != "none",
+        )
         await embedder.embed_chunks(chunks, input_type=INPUT_TYPE_DOCUMENT, document_id=document.id)
 
 
@@ -561,3 +571,154 @@ async def test_an_oversized_chunk_is_split_into_its_own_numbered_paragraphs():
             singles += 1
 
     assert singles, "the split must yield at least one exactly-labelled paragraph"
+
+
+# --- which text gets embedded -------------------------------------------------------
+#
+# settings.L3_CONTEXTUAL_PREFIX selects WHAT is embedded, never a threshold. The
+# summary variant is kept runnable because docs/03-findings.md F14 is an A/B and an
+# A/B whose arms cannot both be built is not reproducible -- the old plan's "config 1
+# vs config 2" was never runnable in-process, which is why the prefix survived a
+# release with a measured 23% cost.
+
+
+class RecordingSummariser:
+    """Records whether it was asked for anything, so 'no LLM on this path' is provable."""
+
+    model = "recording-summariser"
+
+    def __init__(self) -> None:
+        self.summarise_calls = 0
+        self.split_calls = 0
+
+    async def summarise_document(self, doc) -> str:
+        self.summarise_calls += 1
+        return "A long document summary standing in for the ~1,500-char real one. " * 20
+
+    async def split_claims(self, text: str) -> list[str]:
+        self.split_calls += 1
+        return []
+
+
+def _embed_inputs(embedder) -> list[str]:
+    return [text for call in embedder.inputs for text in call]
+
+
+class InputRecordingEmbedder:
+    """Captures the exact strings sent to the model -- the only thing that decides a
+    vector, and the thing every prefix argument in this module ultimately controls."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.model = inner.model
+        self.dim = inner.dim
+        self.inputs: list[list[str]] = []
+
+    async def embed(self, texts, *, input_type=None):
+        self.inputs.append(list(texts))
+        return await self._inner.embed(texts, input_type=input_type)
+
+
+async def _run_with_prefix(prefix: str, summariser: RecordingSummariser):
+    repo = InMemoryEmbeddingRepo()
+    await seed_background(repo, [drugs_document(), tenancy_document()], prefix=prefix)
+    cluster = spandeck_cluster(GROUNDED_OUTPUT)
+    resolutions, documents = cited(cluster, spandeck_document())
+    embedder = InputRecordingEmbedder(MockEmbedder())
+    layer = SourceGroundingLayer(
+        embedder=embedder,
+        summariser=summariser,
+        doc_repo=None,
+        embedding_repo=repo,
+        contextual_prefix=prefix,
+    )
+    result = await layer.run(
+        layer_input(
+            ai_output=GROUNDED_OUTPUT,
+            clusters=(cluster,),
+            resolutions=resolutions,
+            documents=documents,
+        )
+    )
+    return result, embedder
+
+
+async def test_the_default_regime_never_embeds_the_document_summary():
+    """The F14 fix. The summary collapsed Spandeck's 43 chunks to a mean pairwise
+    cosine of 0.894 -- one blurred point -- and failed a correctly grounded claim."""
+    summariser = RecordingSummariser()
+    result, embedder = await _run_with_prefix("heading", summariser)
+
+    sent = _embed_inputs(embedder)
+    assert sent, "the source must still be embedded"
+    assert not any("Document summary:" in text for text in sent)
+    assert any("Section:" in text for text in sent), "the heading path is kept: it costs 2%"
+    assert result.detail["retrieval"]["contextual_prefix"] == "heading"
+
+
+async def test_the_default_regime_costs_no_summariser_call():
+    """Dropping the summary from the vector also takes a Haiku call off L3's critical
+    path. If this regresses, the latency table in docs/01-architecture.md is wrong."""
+    summariser = RecordingSummariser()
+    await _run_with_prefix("heading", summariser)
+    assert summariser.summarise_calls == 0
+
+    summariser = RecordingSummariser()
+    await _run_with_prefix("summary_heading", summariser)
+    assert summariser.summarise_calls == 1, "the A/B arm must still be runnable"
+
+
+async def test_each_regime_embeds_a_different_string():
+    for prefix, expect_summary, expect_heading in [
+        ("none", False, False),
+        ("heading", False, True),
+        ("summary_heading", True, True),
+    ]:
+        _, embedder = await _run_with_prefix(prefix, RecordingSummariser())
+        sent = _embed_inputs(embedder)
+        assert any("Document summary:" in t for t in sent) is expect_summary, prefix
+        assert any("Section:" in t for t in sent) is expect_heading, prefix
+
+
+async def test_a_run_never_contrasts_against_another_regimes_vectors():
+    """Content-addressing stops a stale vector being READ; it does not stop one being
+    SAMPLED, because sample_background selects on model alone. Without the namespace a
+    bare-chunk run would contrast against prefixed background -- a margin between two
+    embedding regimes rather than between two documents.
+
+    The direction of that error is a false GREEN (a bare claim scores low against
+    prefixed chunks, so the margin inflates), which is exactly why it needs a mechanism
+    and not vigilance: nothing would have gone red to reveal it.
+    """
+    repo = InMemoryEmbeddingRepo()
+    # A pool that exists ONLY under the summary regime.
+    await seed_background(repo, [drugs_document(), tenancy_document()], prefix="summary_heading")
+    cluster = spandeck_cluster(GROUNDED_OUTPUT)
+    resolutions, documents = cited(cluster, spandeck_document())
+
+    async def run(prefix: str):
+        return await SourceGroundingLayer(
+            embedder=MockEmbedder(),
+            summariser=RecordingSummariser(),
+            doc_repo=None,
+            embedding_repo=repo,
+            contextual_prefix=prefix,
+        ).run(
+            layer_input(
+                ai_output=GROUNDED_OUTPUT,
+                clusters=(cluster,),
+                resolutions=resolutions,
+                documents=documents,
+            )
+        )
+
+    heading = await run("heading")
+    assert heading.detail.get("background_empty") is True, (
+        "the summary regime's vectors must be invisible to a heading-regime run"
+    )
+    assert heading.detail["retrieval"]["contextual_prefix"] == "heading"
+
+    # ... and the regime that DID write them still sees them.
+    summary = await run("summary_heading")
+    assert summary.detail.get("background_empty") is None
+    assert summary.detail["clusters"][0]["background"] > 0

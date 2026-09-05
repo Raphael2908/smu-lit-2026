@@ -4,9 +4,89 @@
  * Every rule is scoped under #salv-panel except the ::highlight() ones, which must be
  * page-level to paint page ranges. `all: initial` on the root blunts inheritance from
  * claude.ai without needing shadow DOM (which cannot host the highlight rules).
+ *
+ * TWO THINGS ARE LOAD-BEARING HERE AND BOTH WERE GOT WRONG ONCE.
+ *
+ * 1. EVERY COLOUR IS A TOKEN. The dark-mode block used to override the panel's
+ *    background and a handful of containers while leaving the TEXT colours at their
+ *    light-mode values -- `.salv-finding-msg` stayed #23262e (near-black) on a #1f222a
+ *    surface. The finding bodies, which are the entire product, were invisible in dark
+ *    mode while the pills and links looked fine, so the panel read as working. A theme
+ *    that redefines surfaces without redefining ink is not a theme. Tokens make that
+ *    class of bug unrepresentable: dark mode below redefines ONLY custom properties,
+ *    and no rule outside the token blocks may name a literal colour.
+ *
+ * 2. THE TYPE SCALE IS ONE NUMBER. Readers are lawyers reading dense findings with
+ *    paragraph pinpoints, not developers skimming a debug overlay. Everything sizes off
+ *    --salv-scale, so "make it bigger" is one property and nothing drifts out of
+ *    proportion. Expanding to full screen raises the same number rather than
+ *    introducing a second set of sizes.
  */
 
 #salv-panel {
+  /* --- type scale ------------------------------------------------------------ */
+  /* One multiplier drives every size in the panel. See note 2 above. */
+  --salv-scale: 1;
+  --salv-fs-base: calc(var(--salv-scale) * 15px);
+  --salv-fs-body: calc(var(--salv-scale) * 14px);
+  --salv-fs-small: calc(var(--salv-scale) * 13px);
+  --salv-fs-meta: calc(var(--salv-scale) * 12px);
+
+  /* --- light palette --------------------------------------------------------- */
+  /* Dark mode redefines these and nothing else. */
+  --salv-bg: #ffffff;
+  --salv-surface: #fafbfd;
+  --salv-surface-header: #f7f8fb;
+  --salv-surface-raised: #ffffff;
+
+  --salv-fg: #16181d;
+  /* Body copy inside findings. The single most important colour in the panel. */
+  --salv-fg-body: #23262e;
+  --salv-fg-muted: #5a6274;
+  --salv-fg-subtle: #626a7d;
+
+  --salv-border: #d8dce4;
+  --salv-border-soft: #e6e9f0;
+  --salv-border-faint: #eceff5;
+  --salv-rule: #cdd3df;
+
+  --salv-pass-bg: #e6f6ec;
+  --salv-pass-fg: #10653a;
+  --salv-pass-br: #bfe6cd;
+  --salv-fail-bg: #fdeaea;
+  --salv-fail-fg: #8f1d1d;
+  --salv-fail-br: #f4c4c4;
+  --salv-warn-bg: #fdf3e0;
+  --salv-warn-fg: #86590c;
+  --salv-warn-br: #f2ddb4;
+  --salv-error-bg: #f1e8fb;
+  --salv-error-fg: #5b2c8d;
+  --salv-error-br: #ddcaf2;
+  --salv-muted-bg: #eef0f5;
+  --salv-muted-fg: #555d6e;
+  --salv-muted-br: #dfe3ec;
+
+  /* "we could not look" -- deliberately its own colour, not a second warn. */
+  --salv-unver-bg: #eceef4;
+  --salv-unver-fg: #33394a;
+  --salv-unver-br: #9aa3b8;
+
+  --salv-note-bg: #fdf7ec;
+  --salv-note-fg: #6d5417;
+  --salv-note-br: #e0a93c;
+
+  --salv-llm-bg: #faf7ff;
+  --salv-llm-br: #7b5cc4;
+  --salv-llm-absent-bg: #f8f5fe;
+  --salv-llm-absent-fg: #5b3d92;
+  --salv-llm-absent-br: #c9b6ea;
+
+  --salv-det-br: #2f3b52;
+  --salv-link: #1a5fb4;
+  --salv-link-hover: #12447f;
+  --salv-cache: #1f7a4d;
+  --salv-shadow: rgba(16, 20, 30, 0.18);
+
   all: initial;
   position: fixed;
   top: 16px;
@@ -17,13 +97,13 @@
   display: flex;
   flex-direction: column;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 13px;
-  line-height: 1.45;
-  color: #16181d;
-  background: #ffffff;
-  border: 1px solid #d8dce4;
+  font-size: var(--salv-fs-base);
+  line-height: 1.5;
+  color: var(--salv-fg);
+  background: var(--salv-bg);
+  border: 1px solid var(--salv-border);
   border-radius: 10px;
-  box-shadow: 0 10px 34px rgba(16, 20, 30, 0.18);
+  box-shadow: 0 10px 34px var(--salv-shadow);
   overflow: hidden;
 }
 
@@ -40,37 +120,73 @@
   display: none;
 }
 
+/* --- expanded reading view ----------------------------------------------------- */
+/*
+ * The panel is a 380px rail because it sits beside an answer the reader is also
+ * reading. That is the wrong shape for actually working through the findings on a long
+ * answer -- a lawyer checking twenty passages against paragraph pinpoints wants the
+ * page, not a sidebar. Full view widens it, centres it, and raises the ONE type scale
+ * variable, so nothing needs a second set of sizes to stay in proportion.
+ *
+ * Capped at 1100px: findings are prose, and prose set across a 27-inch monitor is a
+ * different readability problem from the one being fixed.
+ */
+#salv-panel[data-view="full"] {
+  --salv-scale: 1.15;
+  top: 24px;
+  right: 24px;
+  left: 24px;
+  bottom: 24px;
+  width: auto;
+  max-width: 1100px;
+  margin: 0 auto;
+  max-height: none;
+  border-radius: 12px;
+}
+
+#salv-panel[data-view="full"] .salv-body {
+  padding: 16px 22px 22px;
+}
+
 /* --- header ------------------------------------------------------------------ */
 #salv-panel .salv-header {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border-bottom: 1px solid #e6e9f0;
-  background: #f7f8fb;
+  border-bottom: 1px solid var(--salv-border-soft);
+  background: var(--salv-surface-header);
+  flex: none;
 }
 
 #salv-panel .salv-title {
   font-weight: 650;
-  font-size: 13px;
+  font-size: var(--salv-fs-base);
   letter-spacing: 0.01em;
   flex: 1;
 }
 
 #salv-panel .salv-toggle {
-  width: 22px;
-  height: 22px;
-  border: 1px solid #dfe3ec;
+  width: calc(var(--salv-scale) * 24px);
+  height: calc(var(--salv-scale) * 24px);
+  border: 1px solid var(--salv-muted-br);
   border-radius: 5px;
-  background: #fff;
-  color: #4a5262;
-  font-size: 13px;
+  background: var(--salv-surface-raised);
+  color: var(--salv-fg-muted);
+  font-size: var(--salv-fs-body);
   line-height: 1;
   cursor: pointer;
+  flex: none;
 }
 
 #salv-panel .salv-toggle:hover {
-  background: #eef1f7;
+  background: var(--salv-muted-bg);
+  color: var(--salv-fg);
+}
+
+#salv-panel .salv-toggle:focus-visible {
+  outline: 2px solid var(--salv-link);
+  outline-offset: 1px;
 }
 
 /* --- verdict + status pills -------------------------------------------------- */
@@ -79,7 +195,7 @@
   display: inline-block;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--salv-fs-meta);
   font-weight: 600;
   text-transform: lowercase;
   letter-spacing: 0.02em;
@@ -87,45 +203,46 @@
 }
 
 #salv-panel .salv-pill-sm {
-  font-size: 10px;
+  font-size: calc(var(--salv-scale) * 11px);
   padding: 1px 6px;
 }
 
 #salv-panel [data-kind="pass"] {
-  background: #e6f6ec;
-  color: #10653a;
-  border-color: #bfe6cd;
+  background: var(--salv-pass-bg);
+  color: var(--salv-pass-fg);
+  border-color: var(--salv-pass-br);
 }
 
 #salv-panel [data-kind="fail"] {
-  background: #fdeaea;
-  color: #8f1d1d;
-  border-color: #f4c4c4;
+  background: var(--salv-fail-bg);
+  color: var(--salv-fail-fg);
+  border-color: var(--salv-fail-br);
 }
 
-#salv-panel [data-kind="warn"] {
-  background: #fdf3e0;
-  color: #86590c;
-  border-color: #f2ddb4;
+#salv-panel [data-kind="warn"],
+#salv-panel [data-kind="verifying"] {
+  background: var(--salv-warn-bg);
+  color: var(--salv-warn-fg);
+  border-color: var(--salv-warn-br);
 }
 
 #salv-panel [data-kind="error"] {
-  background: #f1e8fb;
-  color: #5b2c8d;
-  border-color: #ddcaf2;
+  background: var(--salv-error-bg);
+  color: var(--salv-error-fg);
+  border-color: var(--salv-error-br);
 }
 
-#salv-panel [data-kind="verifying"] {
-  background: #fdf3e0;
-  color: #86590c;
-  border-color: #f2ddb4;
+#salv-panel [data-kind="unverified"] {
+  background: var(--salv-unver-bg);
+  color: var(--salv-unver-fg);
+  border-color: var(--salv-unver-br);
 }
 
 #salv-panel [data-kind="idle"],
 #salv-panel [data-kind="muted"] {
-  background: #eef0f5;
-  color: #555d6e;
-  border-color: #dfe3ec;
+  background: var(--salv-muted-bg);
+  color: var(--salv-muted-fg);
+  border-color: var(--salv-muted-br);
 }
 
 /* --- body -------------------------------------------------------------------- */
@@ -135,31 +252,31 @@
 }
 
 #salv-panel .salv-summary {
-  font-size: 11px;
-  color: #6a7285;
+  font-size: var(--salv-fs-meta);
+  color: var(--salv-fg-muted);
   margin-bottom: 8px;
   font-variant-numeric: tabular-nums;
 }
 
 #salv-panel .salv-hint,
 #salv-panel .salv-empty {
-  color: #6a7285;
-  font-size: 12px;
+  color: var(--salv-fg-muted);
+  font-size: var(--salv-fs-small);
   padding: 2px 0;
 }
 
 #salv-panel .salv-note {
   margin-top: 6px;
   padding: 6px 8px;
-  border-left: 3px solid #e0a93c;
-  background: #fdf7ec;
-  font-size: 12px;
-  color: #6d5417;
+  border-left: 3px solid var(--salv-note-br);
+  background: var(--salv-note-bg);
+  font-size: var(--salv-fs-small);
+  color: var(--salv-note-fg);
 }
 
 #salv-panel .salv-error {
-  color: #8f1d1d;
-  font-size: 12px;
+  color: var(--salv-fail-fg);
+  font-size: var(--salv-fs-small);
   padding: 2px 0;
   word-break: break-word;
 }
@@ -168,31 +285,103 @@
 #salv-panel .salv-shortcircuit {
   margin: 6px 0 10px;
   padding: 8px 10px;
-  border: 1px solid #f4c4c4;
+  border: 1px solid var(--salv-fail-br);
   border-radius: 7px;
-  background: #fdeaea;
-  color: #7e1e1e;
-  font-size: 12px;
+  background: var(--salv-fail-bg);
+  color: var(--salv-fail-fg);
+  font-size: var(--salv-fs-small);
+}
+
+/* --- coverage banner ---------------------------------------------------------- */
+/*
+ * The headline: what could and could not be checked, ABOVE the layer table.
+ *
+ * A run where nothing resolved used to present as a mild `warn` with a grey
+ * `not_applicable` beside L3. Both true, and together completely misleading -- "we
+ * found small problems" and "we verified nothing at all" looked identical at a glance.
+ * The verdict does not change (only positive evidence of non-existence may fail a
+ * run, F12), so the REPORT has to carry the weight instead. Hence a block that cannot
+ * be skimmed past, sized off the same --salv-scale as everything else.
+ */
+#salv-panel .salv-banner {
+  margin: 6px 0 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--salv-unver-br);
+  border-left-width: 4px;
+  background: var(--salv-unver-bg);
+  color: var(--salv-unver-fg);
+}
+
+#salv-panel .salv-banner[data-kind="fail"] {
+  border-color: var(--salv-fail-br);
+  background: var(--salv-fail-bg);
+  color: var(--salv-fail-fg);
+}
+
+#salv-panel .salv-banner[data-kind="partial"] {
+  border-color: var(--salv-warn-br);
+  background: var(--salv-warn-bg);
+  color: var(--salv-warn-fg);
+}
+
+#salv-panel .salv-banner-title {
+  display: block;
+  font-size: var(--salv-fs-base);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin-bottom: 3px;
+}
+
+#salv-panel .salv-banner-body {
+  font-size: var(--salv-fs-small);
+  line-height: 1.5;
+}
+
+#salv-panel .salv-banner-list {
+  list-style: none;
+  margin-top: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+#salv-panel .salv-banner-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: var(--salv-fs-small);
+}
+
+/* The citation itself is the thing to read, so it is set apart from the reason. */
+#salv-panel .salv-banner-cite {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#salv-panel .salv-banner-why {
+  opacity: 0.85;
 }
 
 #salv-panel .salv-section {
   margin-top: 12px;
   padding-top: 10px;
-  border-top: 1px solid #eceff5;
+  border-top: 1px solid var(--salv-border-faint);
 }
 
 #salv-panel .salv-section-title {
-  font-size: 11px;
+  font-size: var(--salv-fs-meta);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #4a5262;
+  color: var(--salv-fg-muted);
   margin-bottom: 6px;
 }
 
 #salv-panel .salv-section-note {
-  font-size: 11px;
-  color: #757d90;
+  font-size: var(--salv-fs-meta);
+  color: var(--salv-fg-subtle);
   margin-bottom: 6px;
 }
 
@@ -206,27 +395,27 @@
 
 #salv-panel .salv-layer-code {
   font-weight: 700;
-  font-size: 11px;
-  color: #8a91a2;
-  width: 20px;
+  font-size: var(--salv-fs-meta);
+  color: var(--salv-fg-subtle);
+  width: calc(var(--salv-scale) * 22px);
 }
 
 #salv-panel .salv-layer-name {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--salv-fs-body);
 }
 
 #salv-panel .salv-layer-meta {
   display: flex;
   gap: 6px;
   align-items: center;
-  font-size: 10px;
-  color: #7b8295;
+  font-size: var(--salv-fs-meta);
+  color: var(--salv-fg-subtle);
   font-variant-numeric: tabular-nums;
 }
 
 #salv-panel .salv-cache {
-  color: #1f7a4d;
+  color: var(--salv-cache);
 }
 
 /* --- findings ---------------------------------------------------------------- */
@@ -240,8 +429,8 @@
 #salv-panel .salv-finding {
   padding: 8px 9px;
   border-radius: 7px;
-  border: 1px solid #e4e8f0;
-  background: #fafbfd;
+  border: 1px solid var(--salv-border-soft);
+  background: var(--salv-surface);
 }
 
 /*
@@ -250,13 +439,13 @@
  * claim. A user should never have to read a label to know which is which.
  */
 #salv-panel .salv-finding[data-source="deterministic"] {
-  border-left: 3px solid #2f3b52;
+  border-left: 3px solid var(--salv-det-br);
 }
 
 #salv-panel .salv-finding[data-source="llm"] {
   border-style: dashed;
-  border-left: 3px dashed #7b5cc4;
-  background: #faf7ff;
+  border-left: 3px dashed var(--salv-llm-br);
+  background: var(--salv-llm-bg);
 }
 
 #salv-panel .salv-finding-locatable {
@@ -272,46 +461,47 @@
 
 #salv-panel .salv-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  color: #5c6478;
+  font-size: var(--salv-fs-meta);
+  color: var(--salv-fg-subtle);
 }
 
+/* The sentence the reader is actually here for. */
 #salv-panel .salv-finding-msg {
-  font-size: 12px;
-  color: #23262e;
+  font-size: var(--salv-fs-body);
+  color: var(--salv-fg-body);
 }
 
 #salv-panel .salv-evidence {
   margin: 6px 0 2px;
-  padding: 5px 8px;
-  border-left: 2px solid #cdd3df;
-  background: #fff;
-  font-size: 11px;
-  color: #3d4453;
+  padding: 6px 9px;
+  border-left: 2px solid var(--salv-rule);
+  background: var(--salv-surface-raised);
+  font-size: var(--salv-fs-small);
+  color: var(--salv-fg-body);
 }
 
 #salv-panel .salv-para {
   display: block;
   margin-top: 3px;
   font-style: normal;
-  font-size: 10px;
-  color: #7b8295;
+  font-size: var(--salv-fs-meta);
+  color: var(--salv-fg-subtle);
 }
 
 #salv-panel .salv-evidence-meta {
-  font-size: 10px;
-  color: #7b8295;
+  font-size: var(--salv-fs-meta);
+  color: var(--salv-fg-subtle);
   margin-top: 4px;
   font-variant-numeric: tabular-nums;
 }
 
 #salv-panel .salv-judge-absent {
   padding: 8px 10px;
-  border: 1px dashed #c9b6ea;
+  border: 1px dashed var(--salv-llm-absent-br);
   border-radius: 7px;
-  background: #f8f5fe;
-  color: #5b3d92;
-  font-size: 12px;
+  background: var(--salv-llm-absent-bg);
+  color: var(--salv-llm-absent-fg);
+  font-size: var(--salv-fs-small);
 }
 
 /* --- citations --------------------------------------------------------------- */
@@ -320,7 +510,7 @@
   align-items: center;
   gap: 6px;
   padding: 4px 0;
-  font-size: 12px;
+  font-size: var(--salv-fs-body);
 }
 
 #salv-panel .salv-citation-key {
@@ -331,20 +521,20 @@
 }
 
 #salv-panel .salv-unresolved {
-  font-size: 11px;
-  color: #8f1d1d;
+  font-size: var(--salv-fs-small);
+  color: var(--salv-fail-fg);
   font-style: italic;
 }
 
 #salv-panel .salv-link {
-  font-size: 11px;
-  color: #1a5fb4;
+  font-size: var(--salv-fs-small);
+  color: var(--salv-link);
   text-decoration: underline;
   word-break: break-all;
 }
 
 #salv-panel .salv-link:hover {
-  color: #12447f;
+  color: var(--salv-link-hover);
 }
 
 /* --- page highlights ---------------------------------------------------------- */
@@ -369,51 +559,67 @@
   background-color: rgba(90, 120, 220, 0.38);
 }
 
+/* --- dark palette -------------------------------------------------------------- */
+/*
+ * TOKENS ONLY. Every value below is a redefinition of a custom property declared on
+ * #salv-panel above; no selector here styles anything. If a rule that is not a token
+ * redefinition ever appears in this block, the light and dark themes have started to
+ * diverge and the invisible-text bug is back.
+ *
+ * The semantic inks are LIGHTENED rather than reused: #8f1d1d on a #1f222a card is
+ * about 2:1, which is unreadable however correct the hue is.
+ */
 @media (prefers-color-scheme: dark) {
   #salv-panel {
-    color: #e8eaf0;
-    background: #191b21;
-    border-color: #333846;
-    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
-  }
+    --salv-bg: #191b21;
+    --salv-surface: #1f222a;
+    --salv-surface-header: #21242c;
+    --salv-surface-raised: #14161b;
 
-  #salv-panel .salv-header {
-    background: #21242c;
-    border-bottom-color: #333846;
-  }
+    --salv-fg: #e8eaf0;
+    --salv-fg-body: #dfe3ec;
+    --salv-fg-muted: #b6bdcc;
+    --salv-fg-subtle: #9aa2b4;
 
-  #salv-panel .salv-toggle {
-    background: #262a33;
-    border-color: #3a4050;
-    color: #c3c8d4;
-  }
+    --salv-border: #333846;
+    --salv-border-soft: #333846;
+    --salv-border-faint: #2b3038;
+    --salv-rule: #3a4050;
 
-  #salv-panel .salv-finding {
-    background: #1f222a;
-    border-color: #333846;
-  }
+    --salv-pass-bg: #16301f;
+    --salv-pass-fg: #7ddba3;
+    --salv-pass-br: #2c5c3d;
+    --salv-fail-bg: #35191a;
+    --salv-fail-fg: #ff9b9b;
+    --salv-fail-br: #6b2f30;
+    --salv-warn-bg: #33280f;
+    --salv-warn-fg: #f0c674;
+    --salv-warn-br: #6a5423;
+    --salv-error-bg: #271b38;
+    --salv-error-fg: #cbb0f2;
+    --salv-error-br: #4a3d6b;
+    --salv-muted-bg: #262a33;
+    --salv-muted-fg: #c3c8d4;
+    --salv-muted-br: #3a4050;
 
-  #salv-panel .salv-finding[data-source="llm"] {
-    background: #221f2c;
-  }
+    --salv-unver-bg: #23262f;
+    --salv-unver-fg: #d3d8e4;
+    --salv-unver-br: #6a7488;
 
-  #salv-panel .salv-evidence {
-    background: #191b21;
-    border-left-color: #3a4050;
-    color: #c3c8d4;
-  }
+    --salv-note-bg: #2b2413;
+    --salv-note-fg: #e8cf94;
+    --salv-note-br: #a17b1f;
 
-  #salv-panel .salv-section {
-    border-top-color: #2b3038;
-  }
+    --salv-llm-bg: #221f2c;
+    --salv-llm-br: #9d84e0;
+    --salv-llm-absent-bg: #241f31;
+    --salv-llm-absent-fg: #cbb8f0;
+    --salv-llm-absent-br: #4a3d6b;
 
-  #salv-panel .salv-judge-absent {
-    background: #241f31;
-    border-color: #4a3d6b;
-    color: #cbb8f0;
-  }
-
-  #salv-panel .salv-link {
-    color: #7fb0f5;
+    --salv-det-br: #8892a8;
+    --salv-link: #7fb0f5;
+    --salv-link-hover: #a6c9fa;
+    --salv-cache: #5fcf95;
+    --salv-shadow: rgba(0, 0, 0, 0.5);
   }
 }

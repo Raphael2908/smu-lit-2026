@@ -35,13 +35,42 @@ INPUT_TYPE_DOCUMENT = "document"
 class CachedEmbedder:
     """An :class:`Embedder` wrapper that reads through an :class:`EmbeddingRepo`."""
 
-    def __init__(self, embedder: Embedder, repo: EmbeddingRepo | None = None) -> None:
+    def __init__(
+        self,
+        embedder: Embedder,
+        repo: EmbeddingRepo | None = None,
+        *,
+        cache_namespace: str | None = None,
+    ) -> None:
         self._embedder = embedder
         self._repo = repo
+        self._cache_namespace = (cache_namespace or "").strip()
 
     @property
     def model(self) -> str:
+        """The real model name, as reported on every ``EmbeddingResult``."""
         return self._embedder.model
+
+    @property
+    def cache_model(self) -> str:
+        """The cache's identity: the model AND the regime its vectors were made under.
+
+        Content-addressing on ``embed_input_sha256`` already stops a stale vector being
+        READ after the prefix regime changes -- the hash simply misses. It does not stop
+        the stale vector being SAMPLED, because ``sample_background`` selects on model
+        alone. Without a namespace, flipping ``L3_CONTEXTUAL_PREFIX`` would leave L3
+        contrasting freshly-embedded bare chunks against a background of prefixed ones,
+        and a margin between two different embedding regimes measures the regimes rather
+        than the claim.
+
+        The direction of that error happens to be a false GREEN, which is exactly why it
+        needs a mechanism rather than vigilance: nothing would have gone red to reveal it.
+
+        Cost of the namespace is a one-time re-embed of each judgment under the new
+        regime -- 43 calls for Spandeck -- which is the honest price of changing what
+        gets embedded.
+        """
+        return f"{self.model}#{self._cache_namespace}" if self._cache_namespace else self.model
 
     @property
     def dim(self) -> int:
@@ -112,7 +141,7 @@ class CachedEmbedder:
 
         cached: dict[str, list[float]] = {}
         if use_repo:
-            cached = await self._repo.get_many(self.model, unique_hashes)
+            cached = await self._repo.get_many(self.cache_model, unique_hashes)
 
         miss_hashes = [h for h in unique_hashes if h not in cached]
         by_hash = dict(zip(hashes, inputs, strict=True))
@@ -135,7 +164,7 @@ class CachedEmbedder:
             if use_repo:
                 # ``document_id`` is what lets sample_background exclude this document's
                 # own vectors from L3's contrastive baseline.
-                await self._repo.put_many(self.model, fresh, document_id=document_id)
+                await self._repo.put_many(self.cache_model, fresh, document_id=document_id)
 
         lookup = {**cached, **fresh}
         return EmbeddingResult(
@@ -158,6 +187,6 @@ class CachedEmbedder:
         if self._repo is None:
             return []
         vectors = await self._repo.sample_background(
-            self.model, limit, exclude_document_id=exclude_document_id
+            self.cache_model, limit, exclude_document_id=exclude_document_id
         )
         return [l2_normalise(v) for v in vectors]

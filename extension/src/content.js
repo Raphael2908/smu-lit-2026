@@ -288,6 +288,10 @@
     SALV.banner('content script running on', location.host);
     await SALV.loadConfig();
     setBadge('idle');
+    // Applied AFTER the mount above, never before it: restoring a remembered view is
+    // a nicety and the panel must already be on the page by the time we ask storage
+    // anything at all.
+    panel.setView(SALV.config.panelView, false);
 
     if (!panel.highlightsSupported()) {
       SALV.log('CSS.highlights unavailable; findings will be listed but not painted');

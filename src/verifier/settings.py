@@ -97,6 +97,31 @@ class Settings(BaseSettings):
     L3_ABSOLUTE_FLOOR: float = 0.35
     L3_BACKGROUND_SIZE: int = 200
 
+    # --- L3 contextual prefix. MEASURED, not a preference. See docs/03-findings.md F14.
+    #
+    #   "none"             chunk text only
+    #   "heading"          "Section: A > B" + text                        (default)
+    #   "summary_heading"  "Document summary: ..." + section + text       (what shipped)
+    #
+    # The summary runs ~1,500 chars and is byte-identical across every chunk of a
+    # judgment, so it dominates the vector and, worse, it dominates it the SAME way
+    # every time. Mean pairwise cosine between Spandeck's own 43 chunks:
+    #
+    #     raw 0.426 | heading 0.435 | summary+heading 0.894 | voyage-context-4 0.940
+    #
+    # At 0.894 the 43 passages are one blurred point. Ranking inside the document is
+    # all L3 scores and all of L5's evidence retrieval, so collapsing it breaks both:
+    # the paragraph an answer quotes VERBATIM falls from rank #2 to #16, and a
+    # correctly grounded claim falls from 0.392 to 0.325, under the 0.35 floor.
+    #
+    # The heading path costs 2% of mean similarity and fails nothing; the summary
+    # costs 23% and fails correct legal work. Hence: keep one, drop the other.
+    #
+    # This is deliberately NOT a threshold and must not be tuned to move a verdict.
+    # It selects which text is embedded; the thresholds in Part 4 are calibrated
+    # against raw-ish chunk text and stay where they are.
+    L3_CONTEXTUAL_PREFIX: Literal["none", "heading", "summary_heading"] = "heading"
+
     # --- L3 retrieval breadth. NOT a threshold: no verdict depends on these. ------
     # L3 SCORES on max cos(claim, chunks) and always will -- every figure in
     # docs/03-findings.md Part 4 is calibrated against that maximum, so widening the
