@@ -806,6 +806,35 @@ orphaned-content-script hang in bug 3).
   Only an explicit toolbar or right-click gesture gets an explanation back. The Error
   pill is now reserved for a broken tool: backend unreachable, contact lost, run
   forgotten, timeout.
+
+- ~~**Pending layers reported as `Skipped`.**~~ Mid-run `state.layers` is empty, and
+  `layerRow` fell back to `'skipped'` for any layer without a result — so all five rows
+  read `Skipped` while the run was still in flight. `skipped` is a *terminal*
+  `LayerStatus` meaning the layer was deliberately not run, which is what fail-fast does
+  to L5; using it for *not started yet* told the reader five layers had looked and
+  declined at a moment when none had reported. It is the same objection `statusLabel`
+  already makes to softening `not_applicable` into "skipped", in the other direction.
+  A pending row now carries the run's elapsed time instead, measured client-side from
+  dispatch (the backend's `timings` only fill in as the run completes) and ticking off
+  pollRun's existing 400 ms re-render with no timer. `render` also stops claiming "No
+  deterministic problems found" before anything has been checked.
+
+- ~~**A stale verdict survived navigation.**~~ `renderIdle` was called exactly once, at
+  boot, and there was no history listener anywhere — so SPA-navigating from a checked
+  answer to a new chat left the previous conversation's verdict on screen. The debounced
+  body observer now compares `location.pathname` and resets on change, above the
+  `autoVerify` guard so it still fires for someone who has automatic verification off.
+  `popstate` is wired too but is only for back/forward: it does not fire on
+  `history.pushState`, which is what "New chat" actually does.
+
+  Three latent races had to go with it, or the reset half-works intermittently, which is
+  worse than not fixing it. `pollRun` only checked `cancelled` at the top of its loop, so
+  an in-flight poll resolving after navigation repainted the old verdict ~400 ms later;
+  `watchForCompletion` never checked `isConnected`, so a node mid-settle at navigation
+  verified against a conversation that had left the screen; and `verifyNode` cancelled
+  the active run *before* knowing the node was verifiable at all — which, combined with
+  the dedupe early-return, left `active` permanently non-null after `pollRun` exited
+  without clearing it.
 - ~~**Long evidence passages are not scrollable.**~~ Fixed in the serif/light restyle:
   `.salv-evidence` is capped at `calc(var(--salv-scale) * 190px)` with `overflow-y:
   auto`, so a long retrieved passage no longer pushes the layer table below the fold.
