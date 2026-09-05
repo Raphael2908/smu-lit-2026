@@ -28,12 +28,27 @@ SALV.config = {
    *   2. A content-script `EventSource` runs against claude.ai's page CSP, which can
    *      block `connect-src` to localhost -- a failure that looks like "the backend is
    *      down" and is not something to debug on stage.
-   *   3. A run is <=20 s, so 400 ms polling is <=50 requests to a process on the same
-   *      machine. The cost of being boring here is nil.
+   *   3. Polling a process on the same machine is cheap: even a worst-case run is a
+   *      few hundred requests over loopback. The cost of being boring here is nil.
    */
   pollIntervalMs: 400,
-  /** Give up on a run that never reaches a terminal state. */
-  pollTimeoutMs: 45000,
+  /**
+   * Give up on a run that never reaches a terminal state.
+   *
+   * MUST EXCEED THE SERVER'S OWN BUDGET, or the client calls a healthy run a failure.
+   * The server allows RUN_SOFT_LIMIT_S (150) for the deterministic phase and then
+   * JUDGE_SOFT_LIMIT_S (90) for the judge on its own queue, so 240 s is the longest a
+   * run can legitimately take; this sits just past it.
+   *
+   * 45 s was the old value and matched the old RUN_SOFT_LIMIT. Raising the server
+   * budget to fit a measured 46 s cold run without raising this one would have moved
+   * the false timeout from the worker to the panel and changed nothing the user sees:
+   * a cold run takes ~79 s and completes, and the panel used to give up at 45 s and
+   * report "The verification timed out" over a verdict that was already on its way.
+   * A warm run is ~26 s (docs/03-findings.md F30), so this only ever bites the first
+   * run to touch a given judgment.
+   */
+  pollTimeoutMs: 240000,
 
   /**
    * Streaming-completion debounce. Verifying a half-written answer is the main

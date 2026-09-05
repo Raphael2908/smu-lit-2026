@@ -629,6 +629,27 @@ Files: `src/verifier/api/deps.py`.
 
 ---
 
+### 25. ~~The panel gives up at 45 s, so a healthy cold run reads as a timeout~~ — FIXED
+
+**Found by running it.** Raising `RUN_SOFT_LIMIT_S` to 150 (bug 18/19/20 work) moved the
+false timeout from the worker to the panel rather than removing it:
+`extension/src/config.js` still had `pollTimeoutMs: 45000`, matching the *old* server
+budget. A cold run takes ~79 s and completes, and the panel abandoned it at 45 s and
+rendered "The verification timed out" over a verdict already on its way.
+
+Now 240000, derived from the server's own budget rather than picked: `RUN_SOFT_LIMIT_S`
+(150) for the deterministic phase plus `JUDGE_SOFT_LIMIT_S` (90) for the judge on its own
+queue is the longest a run can legitimately take. The stale comment claiming "a run is
+<=20 s" went with it.
+
+**Reload the extension in `chrome://extensions` for this to take effect** — Chrome does
+not re-read an unpacked extension's files on a page refresh (bug 3's operational note).
+
+The general lesson is worth keeping: a client timeout and a server timeout are one
+setting in two files, and changing either alone just relocates the failure.
+
+---
+
 ### 21. The extension verifies the sidebar, and calls it a FAIL
 
 **Severity: high — this is a false red on text the user never asked about.**
