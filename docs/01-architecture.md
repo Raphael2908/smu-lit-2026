@@ -100,6 +100,23 @@ expired login-walled session, and a source outage all produce WARN. This is not
 politeness — it is the difference between a tool lawyers trust and one they turn off.
 See `docs/03-findings.md` F12 for the near-miss that made this concrete.
 
+**But WARN must not be allowed to read as "fine."** A run in which no citation could be
+checked used to present as a mild warn with a grey `not_applicable` beside L3 — both
+statements true, and together misleading, because "we found small problems" and "we
+verified nothing at all" looked identical at a glance. The verdict is unchanged; the
+*report* now carries the weight:
+
+| Situation | Verdict | What the panel leads with |
+|---|---|---|
+| Source reachable, no such judgment | **FAIL** | **Fabricated citation**, named in full |
+| Source unreachable / report-only / session expired | WARN | **Nothing was verified** — `0 of N` checked, each one named with why |
+| Some checked, some not | WARN | `M of N verified`, the rest named |
+
+The unverified state is given its own label and colour rather than a second shade of
+warn, because it is a different fact: not a small problem, but an absence of evidence in
+either direction. `L3 NOT_APPLICABLE` means the layer received no document to score —
+it is not a failed check and must never be aggregated as one.
+
 ## The invariant
 
 ```python

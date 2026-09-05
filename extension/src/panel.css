@@ -66,6 +66,11 @@
   --salv-muted-fg: #555d6e;
   --salv-muted-br: #dfe3ec;
 
+  /* "we could not look" -- deliberately its own colour, not a second warn. */
+  --salv-unver-bg: #eceef4;
+  --salv-unver-fg: #33394a;
+  --salv-unver-br: #9aa3b8;
+
   --salv-note-bg: #fdf7ec;
   --salv-note-fg: #6d5417;
   --salv-note-br: #e0a93c;
@@ -227,6 +232,12 @@
   border-color: var(--salv-error-br);
 }
 
+#salv-panel [data-kind="unverified"] {
+  background: var(--salv-unver-bg);
+  color: var(--salv-unver-fg);
+  border-color: var(--salv-unver-br);
+}
+
 #salv-panel [data-kind="idle"],
 #salv-panel [data-kind="muted"] {
   background: var(--salv-muted-bg);
@@ -279,6 +290,78 @@
   background: var(--salv-fail-bg);
   color: var(--salv-fail-fg);
   font-size: var(--salv-fs-small);
+}
+
+/* --- coverage banner ---------------------------------------------------------- */
+/*
+ * The headline: what could and could not be checked, ABOVE the layer table.
+ *
+ * A run where nothing resolved used to present as a mild `warn` with a grey
+ * `not_applicable` beside L3. Both true, and together completely misleading -- "we
+ * found small problems" and "we verified nothing at all" looked identical at a glance.
+ * The verdict does not change (only positive evidence of non-existence may fail a
+ * run, F12), so the REPORT has to carry the weight instead. Hence a block that cannot
+ * be skimmed past, sized off the same --salv-scale as everything else.
+ */
+#salv-panel .salv-banner {
+  margin: 6px 0 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--salv-unver-br);
+  border-left-width: 4px;
+  background: var(--salv-unver-bg);
+  color: var(--salv-unver-fg);
+}
+
+#salv-panel .salv-banner[data-kind="fail"] {
+  border-color: var(--salv-fail-br);
+  background: var(--salv-fail-bg);
+  color: var(--salv-fail-fg);
+}
+
+#salv-panel .salv-banner[data-kind="partial"] {
+  border-color: var(--salv-warn-br);
+  background: var(--salv-warn-bg);
+  color: var(--salv-warn-fg);
+}
+
+#salv-panel .salv-banner-title {
+  display: block;
+  font-size: var(--salv-fs-base);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin-bottom: 3px;
+}
+
+#salv-panel .salv-banner-body {
+  font-size: var(--salv-fs-small);
+  line-height: 1.5;
+}
+
+#salv-panel .salv-banner-list {
+  list-style: none;
+  margin-top: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+#salv-panel .salv-banner-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: var(--salv-fs-small);
+}
+
+/* The citation itself is the thing to read, so it is set apart from the reason. */
+#salv-panel .salv-banner-cite {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#salv-panel .salv-banner-why {
+  opacity: 0.85;
 }
 
 #salv-panel .salv-section {
@@ -518,6 +601,10 @@
     --salv-muted-bg: #262a33;
     --salv-muted-fg: #c3c8d4;
     --salv-muted-br: #3a4050;
+
+    --salv-unver-bg: #23262f;
+    --salv-unver-fg: #d3d8e4;
+    --salv-unver-br: #6a7488;
 
     --salv-note-bg: #2b2413;
     --salv-note-fg: #e8cf94;

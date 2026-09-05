@@ -211,6 +211,156 @@ globalThis.SALV = globalThis.SALV || {};
     return item;
   }
 
+  /**
+   * NOT_FOUND is the only status that is evidence of fabrication.
+   *
+   * The source was reachable and reported no such judgment. Everything else --
+   * a maintenance window, a network error, an expired login, a report-only citation
+   * the full-text index cannot resolve (F7) -- means WE COULD NOT LOOK, which is not
+   * the same fact and must never be rendered as though it were. See docs/03-findings
+   * F12: a naive rule once classified the maintenance page as a fabricated citation,
+   * which would report every real Singapore case as invented for the duration of an
+   * outage.
+   */
+  const FABRICATED = 'not_found';
+
+  const UNCHECKED_REASON = {
+    unresolvable: 'report-only citation; the full-text index cannot resolve it (F7)',
+    unauthenticated: 'the source is login-walled and the session has expired',
+    ambiguous: 'search returned hits but none confidently this case',
+    error: 'the lookup failed',
+  };
+
+  /**
+   * A citation a lawyer can read, from whatever the resolution actually carries.
+   *
+   * `title` and `case_name` come off the FETCHED PAGE, so they are exactly null in the
+   * cases this banner exists for -- an unreachable source, a fabricated citation. The
+   * fallback therefore cannot be the raw `citation_key`: naming the thing that failed
+   * as `sgca:2007:37` is not naming it. The key format is a lossless encoding of the
+   * neutral citation (`<court>:<year>:<number>`, or `raw:<text>` when any part is
+   * missing), so it inverts cleanly back to the form the answer was written in.
+   */
+  function citationLabel(key, res) {
+    if (res && res.title) return res.title;
+    if (typeof key !== 'string') return String(key);
+    if (key.startsWith('raw:')) {
+      // Written back as-is; the key lower-cased it, which mangles "SLR(R)".
+      return key.slice(4).toUpperCase().replace(/\bSLR\(R\)/g, 'SLR(R)');
+    }
+    const parts = key.split(':');
+    if (parts.length === 3) return `[${parts[1]}] ${parts[0].toUpperCase()} ${parts[2]}`;
+    return key;
+  }
+
+  function citationCoverage(state) {
+    const resolutions = state.resolutions || {};
+    const verified = [];
+    const fabricated = [];
+    const unchecked = [];
+    for (const [key, res] of Object.entries(resolutions)) {
+      const label = citationLabel(key, res);
+      const status = res && res.status;
+      if (status === 'resolved') verified.push({ key, label, res });
+      else if (status === FABRICATED) fabricated.push({ key, label, res });
+      else unchecked.push({ key, label, res, status });
+    }
+    return { verified, fabricated, unchecked, total: Object.keys(resolutions).length };
+  }
+
+  /**
+   * The headline a reader needs BEFORE the layer table.
+   *
+   * A run where nothing could be checked used to present as a mild `warn` with a grey
+   * `not_applicable` beside L3 -- technically correct and completely misleading, because
+   * "we found small problems" and "we verified nothing at all" look the same at a
+   * glance. The verdict stays WARN (only positive evidence of non-existence may fail a
+   * run), but the panel must not let that be mistaken for a clean bill of health.
+   *
+   * Fabrication gets the opposite treatment: named, in full, at the top.
+   */
+  function coverageBanner(state) {
+    const { verified, fabricated, unchecked, total } = citationCoverage(state);
+    if (!total) return null;
+
+    if (fabricated.length) {
+      const box = el('div', 'salv-banner', '');
+      box.setAttribute('data-kind', 'fail');
+      box.appendChild(
+        el(
+          'strong',
+          'salv-banner-title',
+          fabricated.length === 1 ? 'Fabricated citation' : `${fabricated.length} fabricated citations`
+        )
+      );
+      box.appendChild(
+        el(
+          'p',
+          'salv-banner-body',
+          'The source was reachable and reported no such judgment. This is positive ' +
+            'evidence the authority does not exist.'
+        )
+      );
+      const list = el('ul', 'salv-banner-list');
+      for (const item of fabricated) {
+        const li = el('li', 'salv-banner-item');
+        li.appendChild(el('span', 'salv-banner-cite', item.label));
+        li.appendChild(el('span', 'salv-banner-why', 'does not exist'));
+        list.appendChild(li);
+      }
+      box.appendChild(list);
+      return box;
+    }
+
+    if (!verified.length) {
+      const box = el('div', 'salv-banner', '');
+      box.setAttribute('data-kind', 'unverified');
+      box.appendChild(el('strong', 'salv-banner-title', 'Nothing was verified'));
+      box.appendChild(
+        el(
+          'p',
+          'salv-banner-body',
+          `0 of ${total} citation${total === 1 ? '' : 's'} could be checked. This is NOT ` +
+            'evidence that they are wrong — and NOT evidence that they are right. ' +
+            'Check them yourself before relying on this answer.'
+        )
+      );
+      box.appendChild(uncheckedList(unchecked));
+      return box;
+    }
+
+    if (unchecked.length) {
+      const box = el('div', 'salv-banner', '');
+      box.setAttribute('data-kind', 'partial');
+      box.appendChild(
+        el('strong', 'salv-banner-title', `${verified.length} of ${total} citations verified`)
+      );
+      box.appendChild(
+        el(
+          'p',
+          'salv-banner-body',
+          `${unchecked.length} could not be checked. Unchecked is not the same as wrong.`
+        )
+      );
+      box.appendChild(uncheckedList(unchecked));
+      return box;
+    }
+    return null;
+  }
+
+  function uncheckedList(unchecked) {
+    const list = el('ul', 'salv-banner-list');
+    for (const item of unchecked) {
+      const li = el('li', 'salv-banner-item');
+      li.appendChild(el('span', 'salv-banner-cite', item.label));
+      li.appendChild(
+        el('span', 'salv-banner-why', UNCHECKED_REASON[item.status] || 'could not be checked')
+      );
+      list.appendChild(li);
+    }
+    return list;
+  }
+
   function citationRow(key, resolution) {
     const row = el('div', 'salv-citation');
     row.appendChild(el('span', 'salv-citation-key', resolution.case_name || key));
@@ -309,7 +459,20 @@ globalThis.SALV = globalThis.SALV || {};
   function render(state, ctx) {
     mount();
     const verdict = state.verdict || 'pending';
-    setVerdict(verdict, verdict === 'pass' ? 'pass' : verdict === 'fail' ? 'fail' : verdict === 'warn' ? 'warn' : 'verifying');
+    const kind =
+      verdict === 'pass' ? 'pass' : verdict === 'fail' ? 'fail' : verdict === 'warn' ? 'warn' : 'verifying';
+
+    // A run that checked nothing is relabelled "not verified" -- never downgraded, and
+    // never applied over a FAIL. "warn" on its own reads as "small problems found",
+    // which is the opposite of "we could not look". The VERDICT is untouched: this is
+    // the pill saying what actually happened, not a fourth verdict.
+    const cov = citationCoverage(state);
+    const nothingChecked = cov.total > 0 && !cov.verified.length && !cov.fabricated.length;
+    if (nothingChecked && verdict !== 'fail') {
+      setVerdict('not verified', 'unverified');
+    } else {
+      setVerdict(verdict, kind);
+    }
     bodyEl.replaceChildren();
 
     const segments = ctx && ctx.segments;
@@ -330,6 +493,12 @@ globalThis.SALV = globalThis.SALV || {};
     if (state.cost_usd) bits.push(`$${Number(state.cost_usd).toFixed(4)}`);
     summary.textContent = bits.join(' · ');
     if (bits.length) bodyEl.appendChild(summary);
+
+    // Coverage first, above the layer table: what could and could not be checked is
+    // the reader's first question, and a grey `not_applicable` three rows down is not
+    // an answer to it.
+    const coverage = coverageBanner(state);
+    if (coverage) bodyEl.appendChild(coverage);
 
     if (state.short_circuited) {
       const banner = el('div', 'salv-shortcircuit');
