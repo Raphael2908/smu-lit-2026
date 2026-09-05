@@ -322,3 +322,56 @@ async def test_the_prompt_version_is_recorded_for_provenance():
 
     assert result.detail["prompt_version"] == "v7"
     assert judge.last_payload["prompt_version"] == "v7"
+
+
+# --- what reaches the judge ---------------------------------------------------------
+
+
+def test_the_harvest_ranks_by_score_rather_than_by_arrival():
+    """The cap used to be applied to arrival order.
+
+    The orchestrator populates ``state.layers`` L4, L1, L3, so it hands this function
+    L1's results FIRST. L1's ``best_match_text`` is a by-product of checking a quotation,
+    not a retrieval result -- and under an arrival-ordered cap it could displace the
+    passages L3 actually ranked, which is the judge reading the wrong evidence for a
+    structural reason nobody would ever see.
+    """
+    from verifier.contracts.findings import Evidence, Finding
+
+    l1 = LayerResult(
+        layer=Layer.L1_EXISTENCE,
+        status=LayerStatus.PASS,
+        findings=(
+            Finding(
+                id="f1",
+                layer=Layer.L1_EXISTENCE,
+                code=FindingCode.QUOTE_INEXACT,
+                severity=Severity.WARN,
+                message="quote",
+                evidence=Evidence(best_match_text="an incidental quote match", score=0.2),
+            ),
+        ),
+    )
+    l3 = LayerResult(
+        layer=Layer.L3_GROUNDING,
+        status=LayerStatus.PASS,
+        detail={"passages": [{"text": "the passage L3 ranked highest", "score": 0.9}]},
+    )
+
+    # L1 first, exactly as the orchestrator supplies them.
+    passages = passages_from_layer_results([l1, l3])
+
+    assert passages[0].text == "the passage L3 ranked highest"
+
+
+def test_a_passage_spanning_several_paragraphs_is_labelled_with_its_range():
+    """A chunk is a merge of paragraphs. Labelling one "at [187]" when it also carries
+    [188]-[190] invites the judge to attribute a proposition to a paragraph it was
+    never shown, and provenance a reader cannot check is worse than none."""
+    single = RetrievedPassage(text="body", citation="[2007] SGCA 37", paragraph=115)
+    spanning = RetrievedPassage(
+        text="body", citation="[2007] SGCA 37", paragraph=187, paragraph_to=190
+    )
+
+    assert "at [115]" in single.render()
+    assert "at [187]-[190]" in spanning.render()

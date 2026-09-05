@@ -92,8 +92,11 @@ _RUBRIC_CODES: dict[str, FindingCode] = {
 #: Keep the prompt bounded. A judgment is ~84k chars (F9); a handful of retrieved
 #: paragraphs is what makes the faithfulness call checkable by a human reading the
 #: panel, and keeps the request small enough to be worth caching.
-MAX_PASSAGES = 12
-MAX_PASSAGE_CHARS = 1800
+#:
+#: Both budgets live in settings and are read AT CALL TIME, not bound at import.
+#: They used to be module constants here duplicating a second pair in
+#: l3_alignment.py, and two caps in two files is how evidence gets silently truncated
+#: between the layer that retrieves it and the layer that reads it.
 
 
 @dataclass(frozen=True)
@@ -105,16 +108,33 @@ class RetrievedPassage:
     paragraph: int | None = None
     score: float | None = None
     source_url: str | None = None
+    #: Last paragraph of the passage, when it spans several. Present because a chunk is
+    #: a MERGE of paragraphs: labelling one "at [187]" when it also contains [188]-[190]
+    #: invites the judge to attribute a proposition to the wrong paragraph, and the
+    #: whole purpose of passing provenance is that a human can check it.
+    paragraph_to: int | None = None
 
     def render(self) -> str:
+        from verifier.settings import settings
+
         head = self.citation or "source"
         if self.paragraph is not None:
-            head = f"{head} at [{self.paragraph}]"
+            span = (
+                f"[{self.paragraph}]"
+                if self.paragraph_to is None or self.paragraph_to == self.paragraph
+                else f"[{self.paragraph}]-[{self.paragraph_to}]"
+            )
+            head = f"{head} at {span}"
         if self.source_url:
             head = f"{head} <{self.source_url}>"
         body = self.text.strip()
-        if len(body) > MAX_PASSAGE_CHARS:
-            body = body[:MAX_PASSAGE_CHARS].rstrip() + " ..."
+        # A backstop, not the mechanism. L3 now splits an over-long chunk into its own
+        # paragraphs and ranks them, so what the judge loses is chosen by relevance
+        # rather than by byte offset; this only catches a passage that arrived from
+        # somewhere else already too long.
+        budget = settings.JUDGE_PASSAGE_MAX_CHARS
+        if len(body) > budget:
+            body = body[:budget].rstrip() + " ..."
         return f"{head}\n{body}"
 
 
@@ -176,9 +196,11 @@ def _render_findings(findings: Sequence[Finding]) -> str:
 
 
 def _render_passages(passages: Sequence[RetrievedPassage]) -> str:
+    from verifier.settings import settings
+
     if not passages:
         return "(no passages were retrieved for this answer)"
-    return "\n\n".join(p.render() for p in passages[:MAX_PASSAGES])
+    return "\n\n".join(p.render() for p in passages[: settings.MAX_JUDGE_PASSAGES])
 
 
 def _render_citations(citations: Sequence[str]) -> str:
@@ -461,6 +483,21 @@ class _PassageHarvest:
         self.seen.add(key)
         self.passages.append(passage)
 
+    def ranked(self, limit: int) -> tuple[RetrievedPassage, ...]:
+        """Best-scoring first, then cap.
+
+        The cap used to be applied to ARRIVAL order, and the orchestrator hands this
+        function L1's results before L3's (``state.layers`` is populated L4, L1, L3).
+        So L1's quote evidence -- a by-product of checking a quotation, not a retrieval
+        result -- could displace the passages L3 actually ranked. An unscored passage
+        sorts last rather than first, because "no score" is not a good score.
+        """
+        order = sorted(
+            enumerate(self.passages),
+            key=lambda item: (-(item[1].score if item[1].score is not None else -1.0), item[0]),
+        )
+        return tuple(passage for _, passage in order[:limit])
+
 
 def passages_from_layer_results(results: Iterable[LayerResult]) -> tuple[RetrievedPassage, ...]:
     """Harvest the passages L3 actually retrieved, from its result.
@@ -469,7 +506,12 @@ def passages_from_layer_results(results: Iterable[LayerResult]) -> tuple[Retriev
     the ``Evidence.best_match_text`` on its findings. The second is a fallback, not a
     design: a layer that reports what it matched is showing its working, which is the
     whole point of ``Evidence``.
+
+    Collection order does not survive: the result is ranked by score before the cap,
+    so which layer happened to be harvested first cannot decide what the judge reads.
     """
+    from verifier.settings import settings
+
     harvest = _PassageHarvest()
     for result in results:
         for raw in result.detail.get("passages", ()) or ():
@@ -482,6 +524,7 @@ def passages_from_layer_results(results: Iterable[LayerResult]) -> tuple[Retriev
                         text=str(text),
                         citation=_opt_str(raw.get("citation")),
                         paragraph=_opt_int(raw.get("paragraph")),
+                        paragraph_to=_opt_int(raw.get("paragraph_to")),
                         score=_opt_float(raw.get("score")),
                         source_url=_opt_str(raw.get("source_url")),
                     )
@@ -498,7 +541,7 @@ def passages_from_layer_results(results: Iterable[LayerResult]) -> tuple[Retriev
                         source_url=finding.evidence.source_url,
                     )
                 )
-    return tuple(harvest.passages[:MAX_PASSAGES])
+    return harvest.ranked(settings.MAX_JUDGE_PASSAGES)
 
 
 def _opt_str(value: object) -> str | None:
