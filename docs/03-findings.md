@@ -680,3 +680,173 @@ is a FAIL. **A real statute, quoted correctly, reported as fabricated.**
 rather than a finding, and L3 returns NOT_APPLICABLE, so the failure cannot occur. The
 honest description of SSO coverage today is: **an Act can be confirmed to exist, and can
 never be checked for what it says.** See `todo.md` bug 17.
+
+---
+
+## Part 8 — the live end-to-end run against eLitigation
+
+Run on 2026-09-05 from 15:31 to 16:00 SGT, once eLitigation came back
+(`200`, 153,370 bytes for `2007_SGCA_37`, against the ~848-byte maintenance page of
+F12). The stack was all-real and unmodified: `PROVIDER_MODE=real`, no `*_MODE` reading
+`mock` in either `api` or `worker`, `docker-compose.mockfetch.yml` not loaded, and the
+running image verified byte-identical to `HEAD` by comparing an `md5` of every `.py`
+under `src/` inside the container against the working tree. The database was empty at
+the start (0 resolutions, 0 documents, 0 runs), so nothing below is served from a
+pre-existing cache.
+
+### F23 — the source registry dispatches correctly against the live site
+
+This is what the run existed to test, and it passes. Four Singapore neutral citations
+were resolved through `sources/registry.py`, each to a real judgment:
+
+| `citation_key` | type | status | method | conf | document | chars |
+|---|---|---|---|---|---|---|
+| `sgca:2007:37` | neutral | resolved | search | 1.0 | yes | 112,762 |
+| `sgca:2013:29` | neutral | resolved | url | 1.0 | yes | 130,864 |
+| `sgca:2021:28` | neutral | resolved | url | 1.0 | yes | 19,929 |
+| `sghc:2020:32` | neutral | resolved | url | 1.0 | yes | 14,885 |
+
+Every row carries `domain = www.elitigation.sg` and `fetch_strategy = http`, so the
+adapter was selected by citation type and its fetcher resolved from the declared
+strategy, which is exactly the drop-in `tests/pipeline/test_mock_mode_resolution.py`
+proves offline. Worker logs show live calls to `elitigation.sg`, `openrouter.ai` and
+`api.voyageai.com` in the same run, so no capability silently fell back to mock.
+
+The last three rows are the same `[2013] SGCA 29`, `[2021] SGCA 28` and `[2020] SGHC 32`
+that bug 8 recorded being reported to a user as *"3 fabricated citations"* under the
+mock-fetcher override. Against the live source they resolve, with documents. That
+closes the loop on bug 8's diagnosis: the override was the defect, not the pipeline.
+
+### F24 — the pipeline is correct, and does not fit in its own time budget
+
+Executed in-process, with no Celery time limit, on the Spandeck answer:
+
+| | |
+|---|---|
+| L0 extract | pass, 1,978 ms |
+| L1 existence | **pass, score 1.0**, 14 ms |
+| L2 source trust | pass, 0 ms |
+| L3 grounding | **pass, score 0.537**, 43,392 ms |
+| L4 responsiveness | pass, score 0.745, 7,346 ms |
+| L5 judge | **pass, score 1.0**, 7,402 ms |
+| verdict | **pass**, `$0.0338`, **53.4 s** |
+
+L3 scores rather than returning NOT_APPLICABLE, and its top passage is Spandeck [72] at
+0.744 — the paragraph that actually states the single-test holding — labelled with a
+`paragraph`/`paragraph_to` range and a live `source_url`, which is F13's fix working on
+real data. No `CITATION_NOT_FOUND` on any real case.
+
+**But 53.4 s does not fit in `RUN_SOFT_LIMIT = 45`.** Through Celery the same work is
+killed by `SoftTimeLimitExceeded` every time — observed on 4 of 4 runs dispatched through
+the API. The pipeline is right; the budget it is given is wrong.
+
+### F25 — the durable embedding cache is never wired in, so no run is ever warm
+
+Measured, after a **fully successful** run:
+
+```
+chunks              0
+text_embeddings     0
+document_summaries  0
+cache          hits 0   misses 171
+```
+
+`PgEmbeddingRepo` is implemented and constructed by `build_pg_repos()`, and nothing ever
+reads it. `layers/registry.py:build_layer` constructs `SourceGroundingLayer()` and
+`ResponsivenessLayer()` **with no arguments**, so `embedding_repo` resolves through
+`semantic/defaults.py:default_embedding_repo()`, which returns an
+`InMemoryEmbeddingRepo`. Grepping the tree confirms `embedding_repo` is never passed
+anywhere: the only occurrences are the defaults inside L3 and L4 themselves.
+
+Three consequences, and they compound:
+
+1. Every run re-embeds the whole judgment. That ~40 s is what makes F24's 53.4 s exceed
+   a 45 s budget, so **the cache that would fix the timeout is the thing that is broken**.
+2. L3's contrastive background pool is whatever one process has seen, not the corpus.
+   Part 4's margin is calibrated against a pool that does not survive a restart.
+3. The `$0.034` per run never amortises.
+
+This is the same defect, and the same shape, as *"Documents never written to durable
+storage — the cache claim was false beyond one process"* in the fixed table. That fix
+landed for `documents`; it did not land for embeddings, chunks or summaries. Documents
+now persist (4 rows above), which is what made the gap visible.
+
+### F26 — the judge is never deferred, so `judgeworker` is dead weight
+
+`api/deps.py:_dispatch` calls `task.delay(run_id)` with no `defer_judge`, which defaults
+to `False`. So the branch at `worker/tasks.py:134` that sends
+`TASK_JUDGE_VERIFICATION` to `QUEUE_JUDGE` is unreachable from the API, and the judge —
+budgeted `JUDGE_SOFT_LIMIT = 90` on its own queue — instead runs inline inside the
+deterministic task's 45 s. Confirmed live: `judgeworker` subscribes to `judge`, reports
+ready, and never receives a task; `redis-cli llen judge` is 0 while a run is mid-flight.
+
+Dispatching the judge by hand for a stalled run finalised it in one poll, which is the
+positive control: the deferred path works and is simply never taken. This is bug 15's
+shape — a profile-gated worker waiting on a queue nothing writes to — arriving at the
+judge queue rather than the browser queue.
+
+### F27 — a killed task leaves the run `pending` forever
+
+There is no `except SoftTimeLimitExceeded` anywhere in `worker/tasks.py`. When the limit
+fires, Celery marks the *task* `FAILURE` and the *run row* keeps whatever status it last
+wrote — `pending` if the deterministic phase had not finished, `deterministic_ready` if
+it had. `is_final` stays `false`, so `GET /v1/runs/{id}` reports the run as still
+working, indefinitely. Three of the four API-dispatched runs are still `pending` in the
+table.
+
+The client is what conceals this: the panel has its own timeout and renders
+**"The verification timed out."** So the failure is visible to a user but invisible to
+the API, and the row is indistinguishable from a run still in progress.
+
+### F28 — a truncated embeddings response takes L3 down with no retry
+
+One run in four died differently:
+
+```
+L3 could not complete: Response payload is not completed:
+<ContentLengthError: 400, message='Not enough data to satisfy content length
+header (received 27699 of 707298 bytes)'>
+```
+
+A Voyage response was cut off at 4% of its declared length. There is no retry, so a
+single truncated batch errors the whole layer. The verdict degraded to `warn` with a
+`LAYER_ERROR` finding rather than failing anything, which is the safe direction and is
+the F12 rule holding — but L3 contributed nothing to that run, and the run still cost a
+judge call.
+
+### F29 — the extension verifies the sidebar, and calls it a FAIL
+
+Driving the panel on live claude.ai produced 14 runs of `complete | fail` whose
+`ai_output` is not an answer at all:
+
+```
+"Probability problem answer verification  Aug 22"
+"Continent selection requirement  Aug 24"
+"Runtime error in two-sum cement bag solution  Aug 26"
+```
+
+Those are **sidebar conversation titles with their dates**. The structural selector tier
+finds the recents list's repeated group and classifies it as an assistant turn. todo.md
+records this for `/new` and calls it cosmetic; it is neither. It fires on `/recents`
+too, and a run over a 40-character title finds no citations and no grounding, which
+resolves to a hard **FAIL** — the single worst verdict the system can emit, on text the
+user never asked about.
+
+The real answer was captured correctly in the same session (`[2007] SGCA 37`, Spandeck),
+so the capture path works; the tier ladder just does not reject non-answers before
+spending a run on them.
+
+### What this run establishes, and what it does not
+
+Established: the registry dispatches by citation type against the live source; adapters
+resolve their fetcher from `fetch_strategy`; documents reach `LayerInput.documents`; L1
+passes a real citation, L3 scores it, L5 runs; and a correct Singapore answer verifies
+**pass** end to end for $0.034.
+
+Not established: any of it through the deployed worker. F24–F27 mean that as shipped,
+every cold run through the API or the extension times out. The one clean `pass` above
+was obtained by running the pipeline in-process, outside Celery's limit, which is a
+measurement of the pipeline and explicitly not a measurement of the product.
+
+`n = 1` judgment and one answer. Enough to confirm the registry and to condemn the time
+budget; not a benchmark.

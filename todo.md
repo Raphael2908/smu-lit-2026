@@ -500,109 +500,158 @@ Files: `src/verifier/sources/sso/client.py`, `src/verifier/sources/sso/parser.py
 
 ---
 
-## Pending: the live end-to-end run against eLitigation
+## ~~Pending: the live end-to-end run against eLitigation~~ — RUN, 2026-09-05
 
-**Not yet run.** Two changes are unverified outside the offline suite: source resolution
-now goes through `sources/registry.py` rather than a hardcoded `ElitigationAdapter`, and
-adapters resolve their fetcher from a declared `fetch_strategy`. 767 tests pass offline
-and `tests/pipeline/test_mock_mode_resolution.py` proves the drop-in against fixtures, but
-nothing has driven the registry against the live site through the extension.
+**Run and written up as `docs/03-findings.md` Part 8 (F23–F29).** eLitigation was back
+(`200`, 153,370 bytes) and the stack was all-real and unmodified — the running image was
+verified byte-identical to `HEAD` before the run, and the database was empty at the start.
 
-It could not be run when the code landed: eLitigation was in a maintenance window
-(F12, a fifth time) from 14:00 to 23:00 SGT on 2026-09-05.
+**The thing under test passes.** Four Singapore neutral citations resolved through
+`sources/registry.py` to real judgments, every row carrying `domain = www.elitigation.sg`
+and `fetch_strategy = http` (F23). Three of them are the same `[2013] SGCA 29`,
+`[2021] SGCA 28` and `[2020] SGHC 32` that bug 8 saw reported as *fabricated* under the
+mock override — against the live source they resolve, with documents, which closes bug
+8's diagnosis. A correct Singapore answer verifies **pass** end to end, L1 1.0 / L3 0.537
+/ L5 1.0, for `$0.0338` (F24). L3's top passage is Spandeck [72] with a paragraph range
+and a live URL, so F13's fix works on real data.
 
-### 0. Preconditions
+**But not through the deployed worker.** The run takes 53.4 s against a
+`RUN_SOFT_LIMIT` of 45, so every one of 4 API-dispatched runs was killed by
+`SoftTimeLimitExceeded`. The clean `pass` was obtained in-process, outside Celery — a
+measurement of the pipeline, explicitly not of the product. Bugs 18–22 below are what
+that exposed; they are ordered by what has to be fixed first.
 
-```bash
-# eLitigation must be BACK. ~848 bytes is the maintenance page; a real judgment is ~150kB.
-curl -s -o /dev/null -w '%{http_code} %{size_download}\n' \
-  https://www.elitigation.sg/gd/s/2007_SGCA_37     # want: 200 ~150000
+Two runbook side-quests are **not** done and are still worth doing: bug 5's recall
+measurement for the Haiku extractor, and a deliberate re-check of bug 7 (no
+`fetch_failed:RuntimeError` was observed, but `sgca:2007:37` did fall back to `search`
+where the direct URL had worked moments earlier, which is that bug's fingerprint).
+
+---
+
+### 18. Nothing reads the durable embedding cache, so no run is ever warm
+
+**Severity: critical — it is the root cause of the timeout, and it is a one-line wiring bug.**
+
+After a **fully successful** run: `chunks` 0, `text_embeddings` 0, `document_summaries`
+0, `cache hits 0 / misses 171`. `PgEmbeddingRepo` is implemented and constructed by
+`build_pg_repos()`, and **nothing ever reads it**. `layers/registry.py:build_layer`
+constructs `SourceGroundingLayer()` and `ResponsivenessLayer()` with no arguments, so
+`embedding_repo` falls through to `semantic/defaults.py:default_embedding_repo()` —
+an `InMemoryEmbeddingRepo`. `embedding_repo` is never passed anywhere in the tree.
+
+So every run re-embeds the whole judgment (~40 s), which is precisely what pushes a
+53.4 s run past a 45 s budget: **the cache that would fix the timeout is the broken
+thing.** It also means L3's contrastive background pool is whatever one process has
+seen rather than the corpus, so Part 4's margin is calibrated against a pool that does
+not survive a restart.
+
+Same shape as the already-fixed "Documents never written to durable storage". That fix
+landed for `documents` and not for embeddings — documents persisting is what made this
+visible.
+
+Files: `src/verifier/layers/registry.py`, `src/verifier/semantic/defaults.py`.
+
+---
+
+### 19. A killed task leaves the run `pending` forever
+
+**Severity: high — the API reports a dead run as still working.**
+
+There is no `except SoftTimeLimitExceeded` in `worker/tasks.py`. When the limit fires
+Celery marks the *task* `FAILURE`; the *run row* keeps its last status and `is_final`
+stays `false`, so `GET /v1/runs/{id}` says `pending` indefinitely. Three of four runs
+are still `pending` in the table.
+
+The panel's own timeout is what conceals it — the user sees "The verification timed
+out" while the API still claims the run is in flight.
+
+**Fix:** catch `SoftTimeLimitExceeded` and write a terminal `error` state. The soft
+limit exists to give exactly this chance to clean up; nothing uses it.
+
+Files: `src/verifier/worker/tasks.py`.
+
+---
+
+### 20. The judge is never deferred, so `judgeworker` is dead weight
+
+**Severity: high — and it is most of the 45 s overrun.**
+
+`api/deps.py:_dispatch` calls `task.delay(run_id)` with no `defer_judge`, which defaults
+to `False`. The branch at `tasks.py:134` that sends the judge to `QUEUE_JUDGE` is
+therefore unreachable from the API, and a judge budgeted `JUDGE_SOFT_LIMIT = 90` on its
+own queue runs inline inside the deterministic task's 45. Confirmed live: `judgeworker`
+subscribes to `judge`, reports ready, receives nothing, and `llen judge` is 0 mid-run.
+
+Dispatching the judge by hand finalised a stalled run in one poll — the deferred path
+works and is simply never taken. This is bug 15 at the judge queue instead of the
+browser queue.
+
+**Fix:** pass `defer_judge=True` from `_dispatch`. That alone takes ~7–13 s of judge off
+the deterministic budget and puts it where the design already says it belongs.
+
+Files: `src/verifier/api/deps.py`.
+
+---
+
+### 21. The extension verifies the sidebar, and calls it a FAIL
+
+**Severity: high — this is a false red on text the user never asked about.**
+
+Driving the panel on live claude.ai produced **14** runs of `complete | fail` whose
+`ai_output` is a sidebar conversation title and its date:
+
+```
+"Probability problem answer verification  Aug 22"
+"Continent selection requirement  Aug 24"
+"Runtime error in two-sum cement bag solution  Aug 26"
 ```
 
-If that returns ~848 bytes, stop — the run measures nothing except F12, which is already
-recorded. `.env` needs `VOYAGE_API_KEY` and `OPENROUTER_API_KEY`; `ANTHROPIC_API_KEY` is
-blank and must stay unused (`*_PROVIDER=openrouter`).
+The structural tier finds the recents list's repeated group and calls it an assistant
+turn. This file already records the symptom under QoL as cosmetic and limited to `/new`.
+It is neither: it fires on `/recents`, and a run over a 40-character title finds no
+citations and no grounding, which resolves to a hard **FAIL** — the worst verdict the
+system emits. The real answer was captured correctly in the same session, so the capture
+path is fine; the ladder just does not reject non-answers before spending a run.
 
-### 1. Bring the stack up — all-real, no override
+**Fix:** a minimum-plausibility gate on the captured turn before dispatch (length, and
+the absence of the sidebar's date suffix shape), and never a FAIL from a run that found
+nothing to check.
 
-```bash
-docker compose down -v          # the poisoned-cache reset; see bug 10
-docker compose up -d --build
-curl -s http://127.0.0.1:8000/readyz    # want: provider_mode "real", database+redis true
-docker exec sal-verifier-api-1 env | grep MODE    # want: NO occurrence of "mock"
+---
+
+### 22. A truncated embeddings response takes L3 down with no retry
+
+**Severity: medium — safe direction, but the layer is lost and the run still pays.**
+
+```
+L3 could not complete: Response payload is not completed:
+<ContentLengthError: 400, 'Not enough data to satisfy content length header
+(received 27699 of 707298 bytes)'>
 ```
 
-`docker-compose.override.yml` was renamed to `docker-compose.mockfetch.yml`, so compose no
-longer auto-loads it and `.env` alone now yields the all-real stack (bug 8). **If any mode
-reads `mock`, stop** — something re-created the override, and per bug 8 the run would
-report real cases as fabricated.
+A Voyage response was cut off at 4% of its declared length. One truncated batch errors
+the whole layer, because nothing retries. The verdict degraded to `warn` with a
+`LAYER_ERROR` finding rather than failing anything — the F12 rule holding — but L3
+contributed nothing and the run still bought a judge call.
 
-### 2. Reload the extension — a page refresh is NOT enough
+**Fix:** retry a truncated/short read, the same way any transport error should be
+retried. Worth pairing with bug 18, since a warm cache makes the batch smaller.
 
-Chrome does not re-read an unpacked extension's files until it is reloaded in
-`chrome://extensions` (bug 3's operational note). Reload **SAL Verifier**
-(id `ekhdmamklicmlkphpnibledeoenpdjfi`, loaded from `<repo>/extension`), then hard-reload
-the claude.ai tab. Skipping this tests whatever code was loaded last session.
+---
 
-### 3. Drive claude.ai
+### 23. `citation_resolutions.document_id` can end up NULL for a resolved row
 
-Open an EXISTING conversation, not `/new` — on an empty chat the structural selector tier
-misreads the sidebar and renders "could not find the question this response answers".
+**Severity: medium — bug 10's shape, reached by a different route.**
 
-Ask something that pulls Singapore **neutral citations**, because that is the path the
-registry now dispatches by type. Suggested prompt:
+`sgca:2007:37` was written by one run as `method=url` with a document, then rewritten by
+a later run as `method=search` with `document_id` NULL while the document row still
+existed and was used by that same run. A `resolved` row pointing at no document is
+exactly bug 10's poisoned state, and `expires_at` is NULL, so it is permanent.
 
-> What is the test for establishing a duty of care in negligence under Singapore law?
-> Cite the leading Court of Appeal authority and quote one passage verbatim.
+Bug 10 remains open and this is a second way in: it is not only maintenance windows that
+write a durable row for a transient state.
 
-Prefer an answer citing **only Singapore neutral citations**: an English report citation
-following a Singapore one gets absorbed into the same cluster and silently goes unchecked
-(bug 6). `autoVerify` is true, so the panel fires when the answer settles; the right-click
-context menu is the fallback if the selectors miss.
-
-**Run it twice and report the second.** Bug 7 means every other run loses its first fetch
-to a closed event loop and reports it as "the lookup failed", which is indistinguishable
-from a source outage.
-
-### 4. Capture
-
-```bash
-curl -s http://127.0.0.1:8000/v1/runs/<run_id> | python3 -m json.tool > run.json
-docker logs sal-verifier-worker-1 | tail -60
-docker exec sal-verifier-postgres-1 psql -U verifier -d verifier \
-  -c "select citation_key, status, candidates->>'detail', expires_at from citation_resolutions;"
-```
-
-Screenshot the panel in both the 380 px rail and the `⤢` full view.
-
-### 5. What would count as passing
-
-- `citation_resolutions` rows carry `domain = www.elitigation.sg` and a real
-  `document_id` — proving the registry dispatched by citation type and the document
-  reached `LayerInput.documents`.
-- Worker logs show live `elitigation.sg`, `openrouter.ai` and `api.voyageai.com` calls,
-  so no capability silently fell back to mock.
-- L1 PASS on a real citation; L3 scores rather than returning NOT_APPLICABLE; L5 runs.
-- No `CITATION_NOT_FOUND` on a real case. That is the one unrecoverable failure.
-
-**Expect verdict variance between the two runs.** Bug 4 / F17: the claim splitter is
-unseeded and uncached, and the same answer has split 14/15/16 ways and flipped the run
-between `pass` and `fail`. A difference is that, not a regression.
-
-### 6. Also worth doing in the same session
-
-- **Bug 5's measurement.** Run five or six real claude.ai answers through
-  `extract_with_llm` and diff against `extract()`. Anything the regex found and Haiku
-  missed is the bug, and it is the evidence that decides whether dropping the regex floor
-  was right. Until it exists that decision is a design judgement, which is why it is
-  absent from `docs/03-findings.md`.
-- **Confirm bug 7 empirically** — verify the same answer twice and check whether the first
-  citation of the second run reports `fetch_failed:RuntimeError`.
-- **Re-check bug 10** — after eLitigation returns, confirm no `error/maintenance` row with
-  `expires_at IS NULL` is being served in place of a live fetch.
-
-Write the results into `docs/03-findings.md` as Part 8. That file admits **measured
-evidence only**; anything unmeasured belongs here instead.
+Files: `src/verifier/repos/resolutions.py`, `src/verifier/pipeline/resolver.py`.
 
 ---
 
@@ -647,7 +696,8 @@ orphaned-content-script hang in bug 3).
 - **The panel shows an error on an empty chat.** On `/new` the structural tier finds
   the sidebar's repeated group and calls half of it an assistant turn, so the panel
   renders "could not find the question this response answers" where it should say
-  idle. Cosmetic, but it is the first thing a demo audience sees.
+  idle. ~~Cosmetic~~ — **not cosmetic, and not limited to `/new`: see bug 21.** The same
+  misfire on `/recents` verified 14 sidebar titles and returned a hard FAIL on each.
 - ~~**Long evidence passages are not scrollable.**~~ Fixed in the serif/light restyle:
   `.salv-evidence` is capped at `calc(var(--salv-scale) * 190px)` with `overflow-y:
   auto`, so a long retrieved passage no longer pushes the layer table below the fold.
