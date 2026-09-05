@@ -34,6 +34,13 @@ cancels most of it, so every failure was a *floor* failure. And the intermittenc
 not the summary's variability: all four draws fail. It was `split_claims`, which is a
 Haiku call whose output varies, so a run may or may not contain the claim that trips.
 
+> **Partly fixed.** The *fragmentation* half is closed: a claim under
+> `L3_CLAIM_MIN_CHARS` is restored to the sentence it was cut from, two fragments of one
+> sentence collapse to one, and the prompt now says what self-contained means (F18). The
+> *non-determinism* this paragraph describes is NOT fixed — `split_claims` still has no
+> seed and no cache, so claim counts still vary run to run. Pinning the split, or caching
+> it on the answer hash, is the outstanding work.
+
 **Fixed:** `settings.L3_CONTEXTUAL_PREFIX` (`none` / `heading` / `summary_heading`,
 default `heading`). The summariser is no longer called on the L3 path unless the regime
 uses it, and the regime namespaces the embedding cache so two regimes cannot mix in the
@@ -300,6 +307,15 @@ orphaned-content-script hang in bug 3).
 
 ## Calibration debt
 
+- **Widen the L3 calibration set.** `make l3` scores 3 genuine and 4 foreign claims
+  against one judgment. Enough to rank configurations — it caught a change that improved
+  every score while narrowing the gap (F19) — and nowhere near enough to state a
+  threshold. Every genuine claim is from Spandeck; no second judgment, no second area of
+  law.
+- **Measure the false-PASS side deliberately.** The foreign claims are from other areas
+  of law. The harder negative is a claim about the *same* area that the cited judgment
+  happens not to decide, and nothing here covers that.
+
 - **Widen the threshold samples.** L4 is calibrated on `n=11`, L3 on `n=5`. Enough to
   replace a demonstrably wrong threshold with a measured one; not enough to quote a
   confidence interval. See `docs/03-findings.md` Part 4.
@@ -341,6 +357,9 @@ orphaned-content-script hang in bug 3).
 | `response_format` overriding the judge prompt's own output contract | installing the user's prompt |
 | L5 crashing on `None` scores for unpopulated rubric dimensions | installing the user's prompt |
 | L4's 0.50 threshold failing 3 of 5 correct answers | real `voyage-law-2` |
+| The claim splitter cutting a sentence into a fragment that says the second stage of nothing — 0.313 against 0.649 for the sentence itself (F18) | restoring foreign claims to the calibration set |
+| Self-contained claims failing to locate, so half of them were never attributed and never scored | measuring the fix for the line above |
+| Two findings both numbered F13 | writing up F18 |
 | The judge given one passage per claim, truncated at a byte offset, labelled with the wrong paragraph | first full e2e |
 | The harvest cap applied to arrival order, so L1 evidence displaced L3's ranking | reading the orchestrator's layer order |
 | `background.js` still on `localhost` after the 127.0.0.1 fix — on the sticky proxy path | grepping the extension |

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from verifier.contracts.citations import Span
 from verifier.contracts.documents import Paragraph, SourceDocument
 from verifier.contracts.enums import ChunkKind
+from verifier.extraction import patterns
 from verifier.providers.base import Summariser
 from verifier.settings import settings
 
@@ -194,21 +195,36 @@ def chunk_source_document(
     *,
     target_tokens: int | None = None,
     overlap_tokens: int | None = None,
+    strategy: str | None = None,
 ) -> list[RawChunk]:
-    """Merge a judgment's paragraphs into chunks that fit the embedding context window.
+    """Cut a judgment into retrieval units.
 
-    Paragraphs are merged greedily, and a new chunk is forced whenever the heading path
-    changes: a chunk that spans two sections of a judgment would be prefixed with a
-    heading path that is true of only half of it, which is worse than a short chunk.
+    ``strategy="grouped"`` merges paragraphs greedily up to the retrieval target;
+    ``strategy="paragraph"`` emits one unit per paragraph and merges only stubs
+    forward. In both, a new chunk is forced whenever the heading path changes: a chunk
+    spanning two sections would carry a heading path true of only half of it.
+
+    ``CHUNK_TARGET_TOKENS`` caps a unit in both modes; what the strategy changes is
+    when a unit is CLOSED. That number came from F9 -- a judgment is ~21k tokens
+    against a 16k context, so chunking is mandatory -- which answers "what fits the
+    model", not "what should a one-sentence claim be compared against". Grouping to the
+    ceiling answered only the first question, and gave a median unit of ~6 paragraphs.
 
     Falls back to splitting the raw ``doc.text`` when the document carries no parsed
     paragraphs, so a source that was fetched but not marked up is still assessable
     rather than silently scoring zero.
     """
+    strategy = strategy or settings.CHUNK_STRATEGY
+    per_paragraph = strategy == "paragraph"
     target_tokens = target_tokens or settings.CHUNK_TARGET_TOKENS
     overlap_tokens = settings.CHUNK_OVERLAP_TOKENS if overlap_tokens is None else overlap_tokens
-    budget = _budget_chars(target_tokens)
     overlap = _budget_chars(overlap_tokens) if overlap_tokens else 0
+
+    budget = _budget_chars(target_tokens)
+    # The only difference between the modes: when the accumulator is closed. Grouping
+    # fills it to the budget; paragraph mode closes it as soon as it holds enough text
+    # to be worth embedding, so a stub rides along with the paragraph after it.
+    min_chars = settings.CHUNK_MIN_CHARS if per_paragraph else budget
 
     paragraphs = [p for p in doc.paragraphs if p.kind in _CONTENT_KINDS and p.text.strip()]
     if not paragraphs:
@@ -232,7 +248,7 @@ def chunk_source_document(
                     heading_path=current_path,
                     paragraph_from=min(numbers) if numbers else None,
                     paragraph_to=max(numbers) if numbers else None,
-                    strategy="paragraph",
+                    strategy=strategy,
                 )
             )
         acc.clear()
@@ -246,6 +262,11 @@ def chunk_source_document(
             flush()
         acc.paragraphs.append(para)
         acc.chars += len(text) + 2
+        # Paragraph mode closes the unit as soon as it carries enough text to be worth
+        # embedding. A stub therefore rides along with the paragraph after it rather
+        # than becoming a chunk of its own.
+        if per_paragraph and acc.chars >= min_chars:
+            flush()
     flush()
 
     _assert_within_budget(chunks, budget)
@@ -348,7 +369,13 @@ def _locate_sequential(haystack: str, needles: list[str]) -> list[Span | None]:
     return spans
 
 
-def locate_claim(haystack: str, claim: str, *, min_score: float = 70.0) -> Span | None:
+def locate_claim(
+    haystack: str,
+    claim: str,
+    *,
+    min_score: float = 70.0,
+    min_sentence_score: float = 65.0,
+) -> Span | None:
     """Map a model-produced claim back to offsets in the AI output.
 
     ``split_claims`` returns atomic claims that are usually, but not always, verbatim
@@ -367,9 +394,99 @@ def locate_claim(haystack: str, claim: str, *, min_score: float = 70.0) -> Span 
     from rapidfuzz import fuzz
 
     alignment = fuzz.partial_ratio_alignment(claim, haystack)
-    if alignment is None or alignment.score < min_score:
-        return None
-    return Span(start=alignment.dest_start, end=alignment.dest_end)
+    if alignment is not None and alignment.score >= min_score:
+        return Span(start=alignment.dest_start, end=alignment.dest_end)
+
+    # Sentence fallback, on token overlap rather than alignment.
+    #
+    # ``partial_ratio`` penalises a claim for words the answer does not contain, and a
+    # self-contained claim is FULL of them: the splitter is asked to resolve pronouns
+    # and restate the subject, so "The test is premised on proximity" comes back as
+    # "The two-stage test for the imposition of a duty of care in negligence in
+    # Singapore is premised on proximity". Measured on one answer, that dropped three
+    # of six claims below the threshold -- and a claim with no span cannot be attributed
+    # to a citation, so it is silently never scored. Asking for better claims must not
+    # cost us the ability to place them.
+    #
+    # ``token_set_ratio`` compares the shared tokens and ignores the surplus, which is
+    # exactly the relation here. On the same answer the right sentence won by 31 to 51
+    # points where the claim was a restatement, and by 8 to 17 where two claims came
+    # from one sentence -- correct in both cases.
+    #
+    # Returning None stays the safe answer: an unlocated claim is skipped and counted in
+    # ``retrieval.claims_unattributed``, whereas a wrong span attributes it to the wrong
+    # citation and scores it against a document it never referred to.
+    best_span: Span | None = None
+    best_score = min_sentence_score
+    for start, end in _sentence_spans(haystack):
+        score = fuzz.token_set_ratio(claim, haystack[start:end])
+        if score >= best_score:
+            best_score, best_span = score, Span(start=start, end=end)
+    return best_span
+
+
+def _sentence_spans(text: str) -> list[tuple[int, int]]:
+    """Sentence boundaries, from the same ``SENTENCE_BREAK`` the extractor uses, so a
+    claim and a citation are judged against one notion of a sentence throughout."""
+    starts = [0]
+    for match in patterns.SENTENCE_BREAK.finditer(text):
+        starts.append(match.end())
+    starts.append(len(text))
+    spans = []
+    for index in range(len(starts) - 1):
+        start, end = starts[index], len(text[: starts[index + 1]].rstrip())
+        if end > start:
+            spans.append((start, end))
+    return spans
+
+
+def sentence_containing(text: str, span: Span) -> Span | None:
+    """The sentence of ``text`` that wholly contains ``span``, if there is one."""
+    for start, end in _sentence_spans(text):
+        if start <= span.start and span.end <= end:
+            return Span(start=start, end=end)
+    return None
+
+
+def expand_fragments(text: str, claims: list[RawChunk], *, min_chars: int) -> list[RawChunk]:
+    """Restore a claim the splitter cut below the point where it can be checked.
+
+    The prompt asks for self-contained claims; a prompt is a request. When the model
+    returns a fragment anyway, the unit the AUTHOR actually asserted is the sentence,
+    and scoring our own artefact instead is what produced a false FAIL at 0.313 against
+    a sentence that scores 0.649 (docs/03-findings.md F18).
+
+    Only claims we can LOCATE are expanded. A claim the model paraphrased away from the
+    text has no sentence to expand to, and inventing one would be worse than leaving it
+    short. Duplicates are collapsed: two fragments of one sentence are one claim.
+    """
+    out: list[RawChunk] = []
+    seen: set[str] = set()
+    for claim in claims:
+        text_out, span_out = claim.text, claim.span
+        if len(claim.text) < min_chars and claim.span is not None:
+            sentence = sentence_containing(text, claim.span)
+            if sentence is not None and sentence.end > sentence.start:
+                candidate = text[sentence.start : sentence.end].strip()
+                # Never shrink a claim, and never expand into something enormous: a
+                # runaway sentence is not a better retrieval unit than the fragment.
+                if len(claim.text) < len(candidate) <= min_chars * 8:
+                    text_out, span_out = candidate, sentence
+        key = text_out.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            RawChunk(
+                ordinal=len(out),
+                kind=claim.kind,
+                text=text_out,
+                heading_path=claim.heading_path,
+                span=span_out,
+                strategy=claim.strategy,
+            )
+        )
+    return out
 
 
 async def chunk_output_claims(
@@ -412,4 +529,5 @@ async def chunk_output_claims(
                     strategy="claims",
                 )
             )
+    chunks = expand_fragments(text, chunks, min_chars=settings.L3_CLAIM_MIN_CHARS)
     return chunks or window_claims(text, target_tokens=target_tokens)

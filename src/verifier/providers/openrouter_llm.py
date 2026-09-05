@@ -497,9 +497,25 @@ propagates into every retrieval decision made about it."""
 
 _CLAIM_SYSTEM = """You split legal writing into atomic factual claims.
 
-Return a JSON array of strings and nothing else. Each element is one self-contained
-assertion, quoted verbatim from the input where possible. Do not merge two assertions,
-do not invent any, and do not add commentary."""
+Return a JSON array of strings and nothing else. Each element is one assertion, quoted
+verbatim from the input where possible. Do not merge two assertions, do not invent any,
+and do not add commentary.
+
+Every claim must STAND ALONE. A reader who sees only that one string, with no access to
+the rest of the answer, must be able to tell what is being asserted about what. In
+particular:
+
+- Never cut a qualifying clause away from the proposition it qualifies. Splitting
+  "Policy considerations are applied only at the second stage, once a prima facie duty
+  of care has been established" into "Policy considerations are applied only at the
+  second stage" produces a string that does not say the second stage OF WHAT. Keep it
+  as one claim.
+- Resolve pronouns and bare demonstratives against the sentence they came from: "it",
+  "this test", "the court" become the thing they refer to.
+- Prefer one longer self-contained claim over two fragments. Splitting is only useful
+  where each half is separately checkable against a source.
+
+A fragment that cannot be checked on its own is worse than no split at all."""
 
 
 class OpenRouterSummariser:

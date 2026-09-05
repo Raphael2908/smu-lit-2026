@@ -92,6 +92,20 @@ class Settings(BaseSettings):
     L1_SOFT_404_MAX_BYTES: int = 10_000  # real judgment ~150kB, soft-404 ~3.5kB (F3)
     L1_PARTY_MATCH_MIN: float = 85.0
 
+    #: A claim shorter than this is expanded to the sentence it was cut from.
+    #:
+    #: The splitter is a model call and the prompt asking for self-contained claims is a
+    #: request, not a guarantee. It cut "Policy considerations are applied only at the
+    #: second stage, once a prima facie duty of care has been established" in half, and
+    #: L3 scored the first 58 characters at 0.313 against a 0.35 floor while the whole
+    #: sentence scores 0.649 (docs/03-findings.md F18). The fragment does not say the
+    #: second stage OF WHAT, so it was never a proposition the answer made.
+    #:
+    #: Same principle as L1_MIN_QUOTE_CHARS from the other direction: below some length
+    #: a unit is too thin to carry a reliable signal. There a short quotation matches
+    #: anything; here a short claim matches nothing in particular.
+    L3_CLAIM_MIN_CHARS: int = 80
+
     L3_MARGIN_FAIL_AT_OR_BELOW: float = 0.02
     L3_MARGIN_PASS_ABOVE: float = 0.08
     L3_ABSOLUTE_FLOOR: float = 0.35
@@ -168,7 +182,55 @@ class Settings(BaseSettings):
     L4_MIN_ANSWER_TOKENS: int = 20  # "Yes." scores erratically -> WARN, not FAIL
 
     # --- Chunking ---
-    CHUNK_TARGET_TOKENS: int = 1800  # voyage-law-2 ctx is 16k; a judgment is ~21k (F9)
+    # How a source judgment is cut into retrieval units.
+    #
+    # "grouped" merges paragraphs greedily up to CHUNK_TARGET_TOKENS. "paragraph"
+    # emits one unit per paragraph, merging only the stubs ("I agree.") forward.
+    #
+    # The distinction matters because 1,800 was chosen as a CEILING and then used as a
+    # TARGET. F9 established that a judgment (~21k tokens) does not fit voyage-law-2's
+    # 16k context, so chunking is mandatory -- but "fits the model" and "is the right
+    # size to retrieve against a one-sentence claim" are different questions, and only
+    # the first one was ever answered. Measured on Spandeck: 43 grouped chunks, median
+    # 2,042 chars and ~6 paragraphs each, against a median paragraph of 338 chars.
+    # Default chosen for EVIDENCE PRECISION, not for scores. Against real voyage-law-2
+    # on the fixed calibration set (scripts/l3_probe.py), at prefix_mode=none:
+    #
+    #   strategy     genuine min   foreign max   GAP
+    #   grouped         0.640         0.254     +0.386
+    #   paragraph       0.700         0.320     +0.380
+    #
+    # Every score rises and the gap does not -- finer chunks match unrelated material
+    # better too. So this buys no discrimination, and must not be justified as though
+    # it did. What it buys is the passage L5 reasons over: the unit for [83] is [83-83]
+    # rather than [83-86], provenance is exact so "at [N]" names the text actually
+    # supplied, and paragraph [115] moves from rank #3 to #1. L5's reliability is
+    # bounded by retrieval quality, and that bound is what this moves.
+    #
+    # It is also the regime Part 4's L3 thresholds were derived in, since those were
+    # measured against raw paragraphs.
+    #
+    # Costs ~4x the vectors per document (170 chunks vs 43 on Spandeck), paid once per
+    # judgment and cached forever. Revert with CHUNK_STRATEGY=grouped.
+    CHUNK_STRATEGY: Literal["grouped", "paragraph"] = "paragraph"
+    #: Caps a unit in BOTH modes -- an oversized single paragraph is still split
+    #: here, because at that size it is no longer a good retrieval unit either.
+    #: What "paragraph" changes is when a unit is CLOSED, not how large one may be.
+    CHUNK_TARGET_TOKENS: int = 1800
+
+    #: Below this, a paragraph is merged into the next one instead of standing alone.
+    #: Judgments are full of "I agree." and "The appeal is dismissed." -- embedded by
+    #: themselves those are noise that can out-rank substantive text, the same reason
+    #: L1 refuses to score a quotation under L1_MIN_QUOTE_CHARS.
+    #:
+    #: A section boundary still wins over it: merging across a heading change would
+    #: give the chunk a heading path true of only half its text. So a short fragment at
+    #: the end of a section is emitted short rather than joined to the next section --
+    #: 7 of Spandeck's 170 paragraph-mode chunks. Kept rather than dropped: they are
+    #: real text from a source we are verifying against, and a max-over-chunks score is
+    #: only harmed by a short chunk if it out-ranks a substantive one.
+    CHUNK_MIN_CHARS: int = 200
+
     CHUNK_OVERLAP_TOKENS: int = 100
     SUMMARY_MAX_TOKENS: int = 250
 

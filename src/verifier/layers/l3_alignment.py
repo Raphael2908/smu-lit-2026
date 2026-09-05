@@ -72,6 +72,12 @@ ATTRIBUTION_WINDOW_CHARS = 400
 PARAGRAPHS_PER_OVERSIZED_CHUNK = 2
 
 
+#: How deep a ranking to record per claim. Reporting only, never scored: it exists so a
+#: reader can see WHERE the paragraph they expected landed, which is invisible from a
+#: single max. Deep enough to show a near-miss, short enough not to bloat every run.
+RANKED_CHUNKS_REPORTED = 8
+
+
 class SourceGroundingLayer(BaseLayer):
     """Source documents arrive on ``LayerInput.documents``; this layer never fetches.
 
@@ -93,6 +99,7 @@ class SourceGroundingLayer(BaseLayer):
         margin_pass_above: float | None = None,
         absolute_floor: float | None = None,
         background_size: int | None = None,
+        chunk_strategy: str | None = None,
         passages_per_claim: int | None = None,
         contextual_prefix: str | None = None,
     ) -> None:
@@ -114,6 +121,10 @@ class SourceGroundingLayer(BaseLayer):
         self.background_size = (
             settings.L3_BACKGROUND_SIZE if background_size is None else background_size
         )
+        #: How the source is cut into retrieval units. Injectable for the same reason
+        #: as contextual_prefix: it changes the score, so it has to be measurable
+        #: without editing source. See settings.CHUNK_STRATEGY.
+        self.chunk_strategy = settings.CHUNK_STRATEGY if chunk_strategy is None else chunk_strategy
         # Retrieval breadth, NOT a threshold. It widens what the judge may read and
         # changes no verdict this layer reaches -- see settings.L3_PASSAGES_PER_CLAIM.
         self.passages_per_claim = (
@@ -172,6 +183,7 @@ class SourceGroundingLayer(BaseLayer):
         cache_misses = 0
         assessed_clusters = 0
         background_seen = False
+        claim_scores: list[dict[str, object]] = []
         attributed_total = 0
         split_applied = False
 
@@ -251,6 +263,35 @@ class SourceGroundingLayer(BaseLayer):
                 if margin is not None:
                     margins.append(margin)
 
+                # Every claim's numbers, whatever the verdict. Findings are emitted
+                # only on FAIL and WARN, so without this a PASSING claim's score is
+                # invisible -- which makes a regime or threshold change unmeasurable
+                # from outside the layer, and leaves the panel unable to show why a
+                # green L3 is green. ``ranked_chunks`` is what reveals a decisive
+                # paragraph sitting just below the retrieval cut-off.
+                claim_scores.append(
+                    {
+                        "claim": claim.text,
+                        "cluster_ordinal": cluster.ordinal,
+                        "citation": cluster.preferred.raw_text,
+                        "s_cited": s_cited,
+                        "s_background": s_background,
+                        "margin": margin,
+                        "ranked_chunks": [
+                            {
+                                "rank": rank,
+                                "score": candidate.score,
+                                "paragraph_from": source_chunks[candidate.index].paragraph_from,
+                                "paragraph_to": source_chunks[candidate.index].paragraph_to,
+                            }
+                            for rank, candidate in enumerate(
+                                top_k(vector, source_result.vectors, k=RANKED_CHUNKS_REPORTED),
+                                start=1,
+                            )
+                        ],
+                    }
+                )
+
                 finding = self._assess(
                     data=data,
                     cluster=cluster,
@@ -302,6 +343,10 @@ class SourceGroundingLayer(BaseLayer):
             # The passages the judge will reason over, best first.
             "passages": kept,
             "clusters": cluster_reports,
+            # Per-claim numbers for every assessed claim, passing or failing.
+            "claim_scores": claim_scores,
+            #: Which chunking produced these scores. Recorded because it changes them.
+            "chunk_strategy": self.chunk_strategy,
             "claims": len(raw_claims),
             "claim_strategy": raw_claims[0].strategy,
             "assessed_clusters": assessed_clusters,
@@ -453,7 +498,7 @@ class SourceGroundingLayer(BaseLayer):
             summary = await contextualise.get_document_summary(
                 document, summariser=self._summariser, doc_repo=self._doc_repo
             )
-        raw_chunks = chunk_source_document(document)
+        raw_chunks = chunk_source_document(document, strategy=self.chunk_strategy)
         chunks = contextualise.build_chunks(
             raw_chunks,
             summary=summary,

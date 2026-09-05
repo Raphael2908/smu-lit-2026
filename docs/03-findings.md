@@ -18,7 +18,7 @@ distinction matters more than usual in a project whose pitch is rigour.
 | F9 | A judgment does not fit one embedding call | Body 83,808 chars ≈ **21K tokens** vs voyage-law-2's 16K context — chunking is mandatory |
 | F10 | `SGHC(A)` becomes `SGHCA` in the URL | Parenthesised court suffixes are stripped, not encoded |
 | **F12** | **There is a THIRD page state: site maintenance** | Discovered when eLitigation went down mid-build. See below — this one is dangerous |
-| **F13** | **The corpus has a house citation style: the SAL *SLR Style Guide* (2021)** | Read directly. It is the spec for what the extractor must recognise — see below |
+| **F13a** | **The corpus has a house citation style: the SAL *SLR Style Guide* (2021)** | Read directly. It is the spec for what the extractor must recognise — see below |
 
 ### F12 — the maintenance page, and why it nearly caused a catastrophic false positive
 
@@ -48,7 +48,7 @@ The general rule this instantiates: **"cannot verify" is never "fabricated."** I
 applies equally to report-only citations (F7), an expired login-walled session, and a
 source outage. Only positive evidence of non-existence may fail a run.
 
-### F13 — the corpus has a house citation style, and it is a specification
+### F13a — the corpus has a house citation style, and it is a specification
 
 Source: **SAL, *SLR Style Guide* (2021 ed)**, read directly
 ([SMU research guide copy](https://researchguides.smu.edu.sg/ld.php?content_id=50481427)).
@@ -531,4 +531,70 @@ The open question is whether a floor calibrated on `n=5` positive assertions is 
 right instrument for meta-claims of this shape. It is recorded here rather than fixed,
 because lowering a floor to admit one claim is exactly the "tuning around the bug"
 Part 4 forbids.
+
+### F18 — the claim splitter cuts propositions the answer never made
+
+F17 measured the splitter's *variability*: 14, 15 and 16 claims for one answer, and a
+verdict that follows whichever set arrives. This is the other half — what the splitter
+does to a claim when it does split it.
+
+It cut one sentence in two and L3 scored the halves separately:
+
+| unit | `grouped` | `paragraph` |
+|---|---|---|
+| fragment: *"Policy considerations are applied only at the second stage"* | **0.313** | 0.390 |
+| fragment: *"… once a prima facie duty of care has been established"* | 0.637 | 0.690 |
+| **the sentence the answer actually contains** | **0.649** | **0.700** |
+
+The whole sentence clears the 0.35 floor in **every** configuration, including the
+shipped `summary_heading` one at 0.449. Paragraph **[83]** states the claim almost
+verbatim — *"Assuming a positive answer to the preliminary question of factual
+foreseeability and the first stage of the legal proximity test, a prima facie duty of
+care arises. Policy considerations should then be applied…"* — and was ranked **#1
+throughout**. Retrieval was never wrong.
+
+The fragment does not say the second stage *of what*. L3 was asked to ground a
+proposition with its referent cut away, which is the same defect L1a exists to catch
+from the other side.
+
+**Fixed** by a sharpened prompt plus a deterministic guard, because a prompt is a
+request: a claim under `L3_CLAIM_MIN_CHARS` is restored to the sentence it was located
+in, and two fragments of one sentence collapse to one claim. After the fix the answer
+passes in every configuration, **including the original prefixed-and-grouped one** —
+the control showing the prefix and the chunking were neither necessary nor sufficient
+for the failure that was attributed to them.
+
+`make l3 ARGS="--scenario f14"` re-runs it.
+
+### F19 — a genuine-only claim set cannot tell an improvement from an inflation
+
+Every L3 A/B so far scored claims taken from an answer written to be correct. That
+measures the **false-FAIL rate** and nothing else: a change that raises every
+similarity passes it while buying no discrimination, because the claims that should
+score low rose with the rest. Part 4 did this correctly and the later runs dropped it.
+
+`scripts/l3_probe.py` now carries a fixed calibration set — three genuine claims, each
+verified present in a named Spandeck paragraph, and four foreign ones (true Singapore
+law this judgment does not decide, from other areas because an easy off-topic negative
+flatters any configuration). The reported number is the **GAP**: genuine min − foreign
+max.
+
+| arm | mean | below floor | **GAP** |
+|---|---|---|---|
+| `none` / `grouped` | 0.557 | 1 of 10 | **+0.386** |
+| `none` / `paragraph` | 0.612 | 0 of 10 | **+0.380** |
+| `summary_heading` / `grouped` | 0.406 | 4 of 10 | +0.248 |
+| `summary_heading` / `paragraph` | 0.397 | 4 of 10 | +0.237 |
+
+Dropping the summary is worth **+0.138 of gap** — discrimination, not inflation, and a
+stronger justification than the mean scores F14 quoted.
+
+**Paragraph granularity is worth none of it** (+0.386 → +0.380). Finer chunks match
+unrelated material better too: the foreign maximum rises 0.254 → 0.320. It is kept for
+the passage L5 reasons over — the unit for [83] becomes [83-83] rather than [83-86],
+provenance becomes exact, and the quoted paragraph [115] moves from rank #3 to #1 — and
+because it is the regime Part 4's thresholds were derived in. Not for its scores.
+
+**Ranking those four arms by mean, or by floor failures, gets the second row wrong.**
+That is the finding.
 
