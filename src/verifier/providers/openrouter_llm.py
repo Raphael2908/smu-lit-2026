@@ -180,13 +180,91 @@ def parse_judge_payload(text: str) -> tuple[dict[str, Any] | None, str]:
     return parse_json_payload(text)
 
 
+#: The dimensions the ACTIVE prompt scores. Binary, unlike the legacy 0-4 set.
+BINARY_DIMENSIONS = ("correctness", "material_completeness")
+
+
+def _binary_verdict(obj: dict[str, Any]) -> tuple[bool, JudgeRubric, list[str]] | None:
+    """Read a binary verdict, from the top level or from inside ``rubric``.
+
+    WHY THIS RUNG EXISTS. The active prompt asks for prose verdict lines, so
+    ``parse_native_verdict`` normally wins and this is never reached. But a model that
+    answers in JSON instead -- which several do, unprompted -- produced
+    ``{"correctness": 0, "material_completeness": 0, "defects": [...]}``, and the legacy
+    validator below rejected it for lacking a ``rubric`` object of four 0-4 scores that
+    the current prompt never asks for. The verdict was discarded, L5 fell open, and a
+    conviction was recorded as a pass. Observed live on claude-sonnet-5.
+
+    A dimension is only read when present; scoring nothing is not scoring zero.
+    """
+    for source in (obj, obj.get("rubric") if isinstance(obj.get("rubric"), dict) else None):
+        if not isinstance(source, dict):
+            continue
+        if not any(dim in source for dim in BINARY_DIMENSIONS):
+            continue
+        scores: dict[str, int] = {}
+        for dim in BINARY_DIMENSIONS:
+            if dim not in source:
+                continue
+            try:
+                value = int(source[dim])
+            except (TypeError, ValueError) as exc:
+                raise JudgeValidationError(f"{dim} is not an integer") from exc
+            if value not in (0, 1):
+                raise JudgeValidationError(f"{dim} must be 0 or 1, got {value}")
+            scores[dim] = value
+        if len(scores) != len(BINARY_DIMENSIONS):
+            missing = [d for d in BINARY_DIMENSIONS if d not in scores]
+            raise JudgeValidationError(f"binary verdict is missing {missing[0]!r}")
+        passed_raw = obj.get("passed")
+        if isinstance(passed_raw, bool):
+            passed = passed_raw
+        else:
+            # Both dimensions must hold, matching coerce_judge_result's native path.
+            passed = all(v == 1 for v in scores.values())
+        return passed, JudgeRubric(**scores), _reasons_from(obj)
+    return None
+
+
+def _reasons_from(obj: dict[str, Any]) -> list[str]:
+    """Pull the stated defects out, whatever the model chose to call the field."""
+    for key in ("reasons", "defects", "errors", "incorrect_propositions"):
+        raw = obj.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return [raw.strip()]
+        if isinstance(raw, list):
+            out: list[str] = []
+            for item in raw:
+                if isinstance(item, str) and item.strip():
+                    out.append(item.strip())
+                elif isinstance(item, dict):
+                    parts = [
+                        str(v).strip()
+                        for k, v in item.items()
+                        if k in ("type", "defect", "description", "explanation", "detail")
+                        and str(v).strip()
+                    ]
+                    if parts:
+                        out.append(" - ".join(parts))
+            if out:
+                return out
+    return []
+
+
 def validate_judge_object(obj: dict[str, Any]) -> tuple[bool, JudgeRubric, list[str]]:
     """Validate a parsed object into ``(passed, rubric, reasons)``.
 
     Tolerant where tolerance is safe (a string "3", a missing ``reasons``) and strict
     where it is not (a missing or out-of-range rubric dimension). A rubric we cannot
     trust must become JUDGE_UNPARSEABLE, not a fabricated score.
+
+    The BINARY shape is tried first because it is what the active prompt asks for; the
+    0-4 block below serves a differently prompted judge.
     """
+    binary = _binary_verdict(obj)
+    if binary is not None:
+        return binary
+
     rubric_raw = obj.get("rubric")
     if not isinstance(rubric_raw, dict):
         raise JudgeValidationError("missing object field 'rubric'")
@@ -343,7 +421,7 @@ class OpenRouterJudge:
         model: str | None = None,
         base_url: str = OPENROUTER_URL,
         timeout: float = 90.0,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         from verifier.settings import settings
@@ -357,7 +435,10 @@ class OpenRouterJudge:
         self.model = model or settings.JUDGE_MODEL
         self._base_url = base_url
         self._timeout = timeout
-        self._max_tokens = max_tokens
+        # Read from settings, not a literal default. A judge cut off mid-verdict is
+        # reported as unparseable and L5 fails open, so an output budget that is too
+        # small does not look like a truncation -- it looks like an acquittal.
+        self._max_tokens = settings.JUDGE_MAX_TOKENS if max_tokens is None else max_tokens
         self._client = client
 
     def _headers(self) -> dict[str, str]:

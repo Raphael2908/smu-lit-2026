@@ -24,6 +24,7 @@ Two structural rules this layer enforces:
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Iterable, Sequence
@@ -308,6 +309,11 @@ class FaithfulnessJudgeLayer(BaseLayer):
                 "rubric": _rubric_dict(result.rubric),
                 "reasons": list(result.reasons),
                 "passages_supplied": len(self.context.retrieved_passages),
+                # The per-seat ballot, when a council answered. A panel verdict with the
+                # votes discarded is unauditable: 5-0 and 3-2 are the same verdict and
+                # very different evidence, and a reader deciding how much weight to give
+                # a finding needs to see which it was -- and which seats said nothing.
+                **({"ballot": _ballot(result)} if _ballot(result) else {}),
             },
         )
 
@@ -394,6 +400,23 @@ class FaithfulnessJudgeLayer(BaseLayer):
                 )
             )
         return findings
+
+
+def _ballot(result: JudgeResult) -> dict[str, object] | None:
+    """The council's per-seat record, if this verdict came from one.
+
+    Read from ``raw_response`` rather than a new field because ``JudgeResult`` is a
+    frozen contract shared with every single-model provider, and a council is the only
+    thing that has a ballot. A malformed record is dropped rather than raised on: the
+    verdict is already decided by this point, and no display concern may change it.
+    """
+    if not result.parse_path.startswith("council") or not result.raw_response:
+        return None
+    try:
+        record = json.loads(result.raw_response)
+    except (ValueError, TypeError):
+        return None
+    return record if isinstance(record, dict) else None
 
 
 def _fail_threshold(dimension: str) -> int:
