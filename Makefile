@@ -35,7 +35,12 @@ dev: docker-check env ## Primary dev path: postgres+redis in Docker, api+worker 
 	docker compose up -d postgres redis
 	uv run alembic upgrade head
 	@echo "Now run in two shells:"
-	@echo "  uv run uvicorn verifier.api.app:app --reload --port 8000"
+	@echo "  uv run uvicorn verifier.api.app:app --reload --host 0.0.0.0 --port 8000"
+	@echo "     (The extension calls 127.0.0.1, never 'localhost'. On a dual-stack"
+	@echo "      machine 'localhost' resolves to ::1 first and an IPv4-bound server is"
+	@echo "      simply not there -- curl falls back to IPv4 and succeeds, Chrome does"
+	@echo "      not, so it fails only in the browser and looks like a dead backend."
+	@echo "      Do not 'fix' this with --host :: -- that binds IPv6 ONLY on macOS.)"
 	@echo "  uv run celery -A verifier.worker.celery_app.celery_app worker -Q default,maintenance -l info"
 
 up: docker-check env ## Full stack in Docker
