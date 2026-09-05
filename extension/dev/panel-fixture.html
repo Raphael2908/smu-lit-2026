@@ -1,0 +1,148 @@
+<!doctype html>
+<!--
+  Panel review harness. NOT SHIPPED: this file is outside `content_scripts` in
+  manifest.json, so Chrome never loads it into a page.
+
+  There is no JS test suite in this repo, so the panel is reviewed by eye -- and the
+  states worth reviewing (a fabricated citation, a run that verified nothing, the judge
+  shown as explicitly absent) are the ones that are hardest to produce on a live run.
+  This renders all of them from fixtures with no backend, no Docker and no claude.ai.
+
+  Open it directly:  open extension/dev/panel-fixture.html
+  Query flags:       ?theme=dark   ?view=full
+
+  panel.js is a self-contained IIFE that calls no chrome.* API on any render path, so
+  the stubs below are the entire dependency surface. What you see here is what
+  claude.ai shows: every rule is scoped under #salv-panel and `all: initial` blocks the
+  host page's cascade either way.
+-->
+<meta charset="utf-8">
+<title>SAL Verifier panel — fixtures</title>
+<link rel="stylesheet" href="../src/panel.css">
+<style>
+  body { margin: 0; padding: 24px; background: #e9e6e0; font: 13px system-ui, sans-serif; }
+  body.dark { background: #14120f; }
+  h2 { font: 600 11px system-ui; letter-spacing: .06em; text-transform: uppercase;
+       color: #6b655c; margin: 0 0 8px; }
+  body.dark h2 { color: #8a837a; }
+  .grid { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  .cell { width: 380px; }
+  /* Un-fix the clones so they lay out in a grid instead of stacking at top right. */
+  .cell #salv-panel { position: static !important; width: 380px !important;
+                      max-height: none !important; inset: auto !important; }
+</style>
+<div class="grid" id="grid"></div>
+
+<script>
+  // The entire dependency surface of panel.js.
+  globalThis.SALV = {
+    config: { panelView: 'panel', panelTheme: 'light' },
+    saveConfig(patch) { Object.assign(SALV.config, patch); },
+    log() {}, banner() {}, warn() {},
+  };
+</script>
+<script src="../src/panel.js"></script>
+<script>
+// Fixtures shaped from tests/contracts/schema_snapshot.json (RunState, LayerResult,
+// Finding, Evidence, Resolution). Preview only -- nothing here ships.
+const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache_hits: cache || 0 });
+
+  const LONG = 'The appellant submits that the doctrine of common mistake operates to render the contract void ab initio. In our judgment that submission cannot be sustained on the authorities. A common mistake as to quality will only avoid a contract where it renders the subject matter essentially and radically different from that which the parties believed it to be, and the burden of establishing that state of affairs lies squarely on the party asserting it. Nothing in the evidence before the Judge came close to discharging that burden, and we are unable to accept that the parties were labouring under any operative mistake at the moment of contracting. We would add, for completeness, that the point was not pleaded below.';
+
+    const FIXTURES = {
+    'Pass — everything checked': {
+      verdict: 'pass',
+      timings: { total_ms: 8420 }, cache: { hits: 3, misses: 1 }, cost_usd: 0.0182,
+      layers: { L1: L('pass', 1.0, 210, 2), L2: L('pass', 1.0, 95), L3: L('pass', 0.61, 3180, 1), L4: L('pass', 0.58, 1240), L5: L('pass', null, 3690) },
+      findings: [],
+      resolutions: {
+        'sgca:2007:37': { status: 'resolved', case_name: 'Chwee Kin Keong v Digilandmall.com Pte Ltd', domain: 'elitigation.sg', url: 'https://www.elitigation.sg/gd/s/2007_SGCA_37' },
+        'sgca:2013:43': { status: 'resolved', case_name: 'Sembcorp Marine Ltd v PPL Holdings Pte Ltd', domain: 'elitigation.sg', url: 'https://www.elitigation.sg/gd/s/2013_SGCA_43' },
+      },
+    },
+
+    'Fail — fabricated citation': {
+      verdict: 'fail', short_circuited: true,
+      short_circuit_reason: 'L1b found a citation the source reports does not exist, so the judge was never consulted.',
+      timings: { total_ms: 4110 }, cache: { hits: 1, misses: 2 },
+      layers: { L1: L('fail', 0.0, 980), L2: L('pass', 1.0, 88), L3: L('skipped', null, 0), L4: L('pass', 0.55, 1190), L5: null },
+      findings: [
+        { source: 'deterministic', severity: 'fail', code: 'L1B_CITATION_NOT_FOUND',
+          message: 'The answer cites [2018] SGCA 12 as authority for the proposition that a unilateral mistake known to the other party voids the contract. eLitigation was reachable and reports no such judgment.',
+          evidence: { source_url: 'https://www.elitigation.sg/gd/s/2018_SGCA_12', http_status: 404 } },
+        { source: 'deterministic', severity: 'warn', code: 'L1A_UNSUPPORTED_ASSERTION',
+          message: 'The sentence beginning "It is well established that..." asserts a rule of law with no citation in scope.',
+          evidence: {} },
+      ],
+      resolutions: {
+        'sgca:2018:12': { status: 'not_found', case_name: null },
+        'sgca:2007:37': { status: 'resolved', case_name: 'Chwee Kin Keong v Digilandmall.com Pte Ltd', domain: 'elitigation.sg', url: 'https://www.elitigation.sg/gd/s/2007_SGCA_37' },
+      },
+    },
+
+    'Nothing was verified': {
+      verdict: 'warn',
+      timings: { total_ms: 6050 }, cache: { hits: 0, misses: 3 },
+      layers: { L1: L('warn', null, 3020), L2: L('pass', 1.0, 91), L3: L('not_applicable', null, 0), L4: L('pass', 0.52, 1310), L5: L('pass', null, 1620) },
+      findings: [],
+      resolutions: {
+        'sgca:2007:37': { status: 'unauthenticated', case_name: null },
+        'sghc:2019:214': { status: 'unresolvable', case_name: null },
+        'raw:[2011] 3 slr(r) 540': { status: 'ambiguous', case_name: null },
+      },
+    },
+
+    'Partial — judge advisory, long evidence': {
+      verdict: 'warn',
+      timings: { total_ms: 12980 }, cache: { hits: 2, misses: 4 }, cost_usd: 0.0341,
+      layers: { L1: L('pass', 1.0, 240, 1), L2: L('warn', 0.5, 102), L3: L('warn', 0.279, 4820, 1), L4: L('pass', 0.61, 1450), L5: L('warn', null, 6310) },
+      findings: [
+        { source: 'deterministic', severity: 'warn', code: 'L3_CLAIM_NOT_GROUNDED',
+          message: 'The claim that the court "expressly declined to follow Bell v Lever Brothers" scores below the grounding floor against every passage retrieved from the cited judgment.',
+          evidence: { best_match_text: LONG, best_match_paragraph: 47, score: 0.279, threshold: 0.35, margin: -0.071, source_url: 'https://www.elitigation.sg/gd/s/2007_SGCA_37' } },
+        { source: 'llm', severity: 'warn', code: 'JUDGE_FAILED_CONTEXTUAL_ACCURACY',
+          message: 'The answer presents the holding as settled law of general application. The judgment confines it to contracts formed by automated systems and says so twice.',
+          evidence: { best_match_paragraph: 104 } },
+      ],
+      resolutions: {
+        'sgca:2007:37': { status: 'resolved', case_name: 'Chwee Kin Keong v Digilandmall.com Pte Ltd', domain: 'elitigation.sg', url: 'https://www.elitigation.sg/gd/s/2007_SGCA_37' },
+        'sghc:2019:214': { status: 'unresolvable', case_name: null },
+      },
+      errors: [],
+    },
+  };
+
+  const params = new URLSearchParams(location.search);
+  const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
+  const view = params.get('view') === 'full' ? 'full' : 'panel';
+  if (theme === 'dark') document.body.classList.add('dark');
+
+  const grid = document.getElementById('grid');
+  // Hold the singleton by reference: after the first clone, getElementById('salv-panel')
+  // finds a clone rather than the live panel.
+  const live = SALV.panel.mount();
+
+  function snapshot(label, render) {
+    render();
+    live.setAttribute('data-theme', theme);
+    live.setAttribute('data-view', view);
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    const h = document.createElement('h2');
+    h.textContent = label;
+    // The id travels with the clone on purpose: every rule in panel.css is scoped to
+    // #salv-panel, and a CSS id selector matches every element carrying that id.
+    cell.append(h, live.cloneNode(true));
+    grid.appendChild(cell);
+  }
+
+  snapshot('Idle', () => SALV.panel.renderIdle());
+  snapshot('Verifying (follow-up)', () => SALV.panel.renderVerifying({ isFollowup: true }));
+  snapshot('Error', () => SALV.panel.renderError(
+    'Could not reach the verifier at http://127.0.0.1:8000. Is it running? (Failed to fetch)'));
+  for (const [label, state] of Object.entries(FIXTURES)) {
+    snapshot(label, () => SALV.panel.render(state, {}));
+  }
+  live.remove();   // only the clones remain
+  document.title = `SAL Verifier panel — ${theme} / ${view}`;
+</script>
