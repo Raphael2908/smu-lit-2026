@@ -32,7 +32,24 @@ class EmbeddingRepo(Protocol):
     query touching a given case pays nothing."""
 
     async def get_many(self, model: str, input_hashes: list[str]) -> dict[str, list[float]]: ...
-    async def put_many(self, model: str, vectors: dict[str, list[float]]) -> None: ...
+    async def put_many(
+        self,
+        model: str,
+        vectors: dict[str, list[float]],
+        document_id: str | None = None,
+    ) -> None:
+        """Write embeddings through to the cache.
+
+        ``document_id`` attributes vectors to their source document so that
+        ``sample_background`` can exclude them. Without it a claim's own vector can
+        land in a later run's background pool and be compared against itself, driving
+        a perfectly grounded claim to a strongly negative margin.
+
+        Query-side vectors (claims, questions) are unique per run and must not be
+        cached at all -- see semantic/embed.py.
+        """
+        ...
+
     async def sample_background(
         self, model: str, limit: int, exclude_document_id: str | None = None
     ) -> list[list[float]]:

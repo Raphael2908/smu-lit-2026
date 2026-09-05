@@ -1089,6 +1089,17 @@
         "title": "AttributionMethod",
         "type": "string"
       },
+      "ChunkKind": {
+        "enum": [
+          "body",
+          "quote",
+          "heading",
+          "claim",
+          "window"
+        ],
+        "title": "ChunkKind",
+        "type": "string"
+      },
       "CitationCluster": {
         "description": "One logical reference, however many forms it was written in.\n\n'Spandeck ... v DSTA [2007] 4 SLR(R) 100; [2007] SGCA 37' is three extracted\ncitations but ONE cluster with one resolution attempt. This is what rescues\nreport-only citations (F7): in practice they travel with a resolvable sibling.\nResolution preference: neutral -> case name -> report.",
         "properties": {
@@ -1306,6 +1317,49 @@
         "title": "FetchStrategy",
         "type": "string"
       },
+      "Paragraph": {
+        "description": "A numbered paragraph of a judgment.\n\neLitigation marks these up cleanly (Judg-1, Judg-Quote-1, Judg-Heading-*), which\ngives us paragraph chunking, a heading hierarchy and pinpoint lookup for free (F5).",
+        "properties": {
+          "heading_path": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Heading Path",
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/$defs/ChunkKind"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "paragraph_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paragraph Number"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ordinal",
+          "kind",
+          "text"
+        ],
+        "title": "Paragraph",
+        "type": "object"
+      },
       "Resolution": {
         "description": "The outcome of trying to turn a citation into a real document.",
         "properties": {
@@ -1451,6 +1505,156 @@
         "title": "ResolutionStatus",
         "type": "string"
       },
+      "SourceDocument": {
+        "properties": {
+          "case_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Case Name"
+          },
+          "cited_authorities": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Cited Authorities",
+            "type": "array"
+          },
+          "coram": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Coram"
+          },
+          "court": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Court"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "fetch_strategy": {
+            "$ref": "#/$defs/FetchStrategy"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Http Status"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Id"
+          },
+          "is_soft_404": {
+            "default": false,
+            "title": "Is Soft 404",
+            "type": "boolean"
+          },
+          "neutral_citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Neutral Citation"
+          },
+          "paragraphs": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/Paragraph"
+            },
+            "title": "Paragraphs",
+            "type": "array"
+          },
+          "parallel_citations": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Parallel Citations",
+            "type": "array"
+          },
+          "source_url": {
+            "title": "Source Url",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "text_sha256": {
+            "default": "",
+            "title": "Text Sha256",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Year"
+          }
+        },
+        "required": [
+          "source_url",
+          "domain",
+          "fetch_strategy",
+          "exists"
+        ],
+        "title": "SourceDocument",
+        "type": "object"
+      },
       "Span": {
         "description": "Character offsets into the AI output, so the UI can highlight the exact text.",
         "properties": {
@@ -1489,6 +1693,13 @@
         },
         "title": "Context",
         "type": "array"
+      },
+      "documents": {
+        "additionalProperties": {
+          "$ref": "#/$defs/SourceDocument"
+        },
+        "title": "Documents",
+        "type": "object"
       },
       "extraction": {
         "$ref": "#/$defs/ExtractionResult"

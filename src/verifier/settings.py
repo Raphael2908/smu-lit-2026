@@ -91,6 +91,40 @@ class Settings(BaseSettings):
     TASK_MAX_RETRIES: int = 2
     RESOLUTION_TTL_HOURS: int = 168
 
+    # --- Mock-embedder thresholds -----------------------------------------------
+    # NOT a special case in the code -- this IS the design principle applied.
+    # Thresholds are keyed by model and do not transfer (arXiv:2504.16318), and the
+    # hashed bag-of-words mock is a different model from voyage-law-2. It has no
+    # synonymy, so a genuine paraphrase scores far lower than it would under a real
+    # legal embedding model.
+    #
+    # Measured over 4 on-point and 4 off-point Singapore-law answers:
+    #   on-point   mu=0.270  sd=0.144  min=0.145
+    #   off-point  mu=0.039  sd=0.067  max=0.155
+    # 0.08 / 0.20 gives ZERO false fails on the on-point set while still failing 3 of
+    # 4 off-point answers -- the correct trade under fail-fast, where a false FAIL is
+    # unrecoverable. Applying the real-model 0.50/0.70 here fails EVERY answer, which
+    # would paint a green run red on L4 alone.
+    MOCK_L4_FAIL_BELOW: float = 0.08
+    MOCK_L4_PASS_AT: float = 0.20
+
+    @model_validator(mode="after")
+    def _apply_mock_thresholds(self) -> Settings:
+        """In mock mode, use mock-calibrated thresholds unless explicitly overridden.
+
+        Only fields the caller did not set are replaced, so an explicit env var or
+        constructor argument always wins -- tests that pin a threshold keep pinning it.
+        """
+        if self.PROVIDER_MODE != "mock":
+            return self
+        for field, mock_field in (
+            ("L4_FAIL_BELOW", "MOCK_L4_FAIL_BELOW"),
+            ("L4_PASS_AT", "MOCK_L4_PASS_AT"),
+        ):
+            if field not in self.model_fields_set:
+                object.__setattr__(self, field, getattr(self, mock_field))
+        return self
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

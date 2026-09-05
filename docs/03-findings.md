@@ -119,14 +119,44 @@ Governing rule everywhere: **prefer a false green to a false red.** Fail-fast ma
 false FAIL unrecoverable, and wrongly accusing correct legal work is what destroys
 trust in an accuracy tool.
 
-### Two corrections to our own evidence
+## Part 3 — L1 quote matching, measured under `rapidfuzz.partial_ratio`
 
-- The fuzzy-matching figures measured during design (0.870 verbatim / 0.869 one-word-
-  changed / 0.483 fabrication / 0.267 paraphrase) came from a coarse `difflib` sliding
-  window, **not** `rapidfuzz.partial_ratio`. What transfers is the *separation between
-  regimes* — in particular that exact substring matching returns False on a
-  near-verbatim quote while fuzzy does not, and that **paraphrase scores lower than
-  fabrication**, which is why L1 may only score text presented as a direct quotation.
-  The absolute values need their own calibration under `partial_ratio`.
-- A "0.7 retrieval threshold" figure that appeared in search summaries **could not be
-  verified** in the source PDF, so it is not relied on anywhere.
+The design-phase figures came from a coarse `difflib` sliding window. These are the
+real ones, measured against Spandeck paragraph [115] through L1's actual normalisation
+pipeline (NFKD, curly→straight quotes, dash folding, whitespace collapse, casefold):
+
+| Regime | `partial_ratio` | Exact substring |
+|---|---|---|
+| Verbatim | **100.0** | ✅ |
+| Curly quotes + en dash + NBSP | 98.0 | ❌ |
+| One word changed | **94.5** → PASS | ❌ |
+| Several words rewritten | 85.2 → WARN | ❌ |
+| Paraphrase (honest restatement) | **49.7** | ❌ |
+| Fabrication (invented sentence) | **46.1** | ❌ |
+
+Two things this settles.
+
+**Exact substring matching is unusable.** It returns False on every row but the first —
+including a quote that differs only in typography. A Ctrl+F implementation would accuse
+correct legal writing of fabrication as a matter of routine.
+
+**Paraphrase and fabrication are indistinguishable: 49.7 vs 46.1.** A 3.6-point gap is
+noise. (Note this is the opposite direction from the earlier `difflib` measurement,
+where paraphrase scored *below* fabrication — the direction was never the point, and it
+does not reproduce. What reproduces is that the two are not separable.) Lexical
+similarity cannot tell an honest restatement from plausible fiction, and both sit far
+below the 75 threshold, so scoring paraphrased attribution would fail correct legal
+writing on what amounts to a coin flip.
+
+That is why `ExtractedQuote.delimiter` is a required field: **L1 may only ever score
+text that was presented as a direct quotation.** Whether the output's paraphrased
+claims are supported is L3's question, not L1's.
+`tests/layers/test_l1_existence.py::test_paraphrase_and_fabrication_are_indistinguishable`
+pins this so it cannot silently regress.
+
+The 75 / 90 seeds sit cleanly between the regimes; no change needed.
+
+### One figure we deliberately do not rely on
+
+A "0.7 retrieval threshold" that appeared in search summaries **could not be verified**
+in the source PDF, so it is cited nowhere.

@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from verifier.contracts.citations import CitationCluster, ExtractedQuote, Resolution
+from verifier.contracts.documents import SourceDocument
 from verifier.contracts.enums import Layer, LayerStatus
 from verifier.contracts.findings import Finding
 
@@ -39,9 +40,16 @@ class LayerInput(BaseModel):
     is_followup: bool = False
 
     extraction: ExtractionResult = Field(default_factory=ExtractionResult)
-    #: Populated by the shared single-flight resolver. L1 and L3 both read it, so one
-    #: fetch serves both and L3 never waits on L1's verdict.
+    #: Populated by the shared single-flight resolver, keyed by citation_key. L1 and
+    #: L3 both read these, so one fetch serves both and L3 never waits on L1's verdict.
     resolutions: dict[str, Resolution] = Field(default_factory=dict)
+    #: The fetched documents themselves, same keys as ``resolutions``.
+    #:
+    #: Carried on the input rather than looked up through a repo so that layers stay
+    #: pure with respect to LayerInput -- a layer that reaches into the database is a
+    #: layer that cannot be tested without one. Both L1 (quote and party verification)
+    #: and L3 (grounding) need the document text, and the resolver has it already.
+    documents: dict[str, SourceDocument] = Field(default_factory=dict)
 
 
 class LayerResult(BaseModel):
