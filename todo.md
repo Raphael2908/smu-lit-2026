@@ -500,109 +500,305 @@ Files: `src/verifier/sources/sso/client.py`, `src/verifier/sources/sso/parser.py
 
 ---
 
-## Pending: the live end-to-end run against eLitigation
+## ~~Pending: the live end-to-end run against eLitigation~~ — RUN, 2026-09-05
 
-**Not yet run.** Two changes are unverified outside the offline suite: source resolution
-now goes through `sources/registry.py` rather than a hardcoded `ElitigationAdapter`, and
-adapters resolve their fetcher from a declared `fetch_strategy`. 767 tests pass offline
-and `tests/pipeline/test_mock_mode_resolution.py` proves the drop-in against fixtures, but
-nothing has driven the registry against the live site through the extension.
+**Run and written up as `docs/03-findings.md` Part 8 (F23–F29).** eLitigation was back
+(`200`, 153,370 bytes) and the stack was all-real and unmodified — the running image was
+verified byte-identical to `HEAD` before the run, and the database was empty at the start.
 
-It could not be run when the code landed: eLitigation was in a maintenance window
-(F12, a fifth time) from 14:00 to 23:00 SGT on 2026-09-05.
+**The thing under test passes.** Four Singapore neutral citations resolved through
+`sources/registry.py` to real judgments, every row carrying `domain = www.elitigation.sg`
+and `fetch_strategy = http` (F23). Three of them are the same `[2013] SGCA 29`,
+`[2021] SGCA 28` and `[2020] SGHC 32` that bug 8 saw reported as *fabricated* under the
+mock override — against the live source they resolve, with documents, which closes bug
+8's diagnosis. A correct Singapore answer verifies **pass** end to end, L1 1.0 / L3 0.537
+/ L5 1.0, for `$0.0338` (F24). L3's top passage is Spandeck [72] with a paragraph range
+and a live URL, so F13's fix works on real data.
 
-### 0. Preconditions
+**It did not work through the deployed worker, and now does.** The run took 53.4 s
+against a `RUN_SOFT_LIMIT` of 45, so all 4 API-dispatched runs were killed and the
+clean `pass` had to be obtained in-process, outside Celery. Bugs **18, 19 and 20 are
+now fixed** (`2607f5a`) and re-verified live through the worker — `docs/03-findings.md`
+Part 9: a cold run completes in 79 s, a warm one in **26.5 s** on `170/1` cache hits,
+and the judge runs on its own queue. Bugs 21–24 below remain open.
 
-```bash
-# eLitigation must be BACK. ~848 bytes is the maintenance page; a real judgment is ~150kB.
-curl -s -o /dev/null -w '%{http_code} %{size_download}\n' \
-  https://www.elitigation.sg/gd/s/2007_SGCA_37     # want: 200 ~150000
+Two runbook side-quests are **not** done and are still worth doing: bug 5's recall
+measurement for the Haiku extractor, and a deliberate re-check of bug 7 (no
+`fetch_failed:RuntimeError` was observed, but `sgca:2007:37` did fall back to `search`
+where the direct URL had worked moments earlier, which is that bug's fingerprint).
+
+---
+
+### 18. ~~Nothing reads the durable embedding cache, so no run is ever warm~~ — FIXED
+
+**Fixed in `2607f5a`, verified live: `docs/03-findings.md` F30.** `text_embeddings` went
+0 -> 170 rows, a second run hit `170/1` where every run before it reported `0/171`, and
+the deterministic phase dropped **46.0 s -> 11.5 s**. The L3 score is unchanged to three
+decimals (0.548 cold and warm), which is the property that matters: a cache that moved
+the score would be a bug wearing a speedup's clothes.
+
+The cause was as diagnosed below. `default_embedding_repo()` now takes the repo from
+`get_repos()`, and `CachedEmbedder`'s three repo calls are best-effort, because the repo
+is now network I/O rather than a dict that cannot fail.
+
+<details><summary>Original diagnosis</summary>
+
+After a **fully successful** run: `chunks` 0, `text_embeddings` 0, `document_summaries`
+0, `cache hits 0 / misses 171`. `PgEmbeddingRepo` is implemented and constructed by
+`build_pg_repos()`, and **nothing ever reads it**. `layers/registry.py:build_layer`
+constructs `SourceGroundingLayer()` and `ResponsivenessLayer()` with no arguments, so
+`embedding_repo` falls through to `semantic/defaults.py:default_embedding_repo()` —
+an `InMemoryEmbeddingRepo`. `embedding_repo` is never passed anywhere in the tree.
+
+So every run re-embeds the whole judgment (~40 s), which is precisely what pushes a
+53.4 s run past a 45 s budget: **the cache that would fix the timeout is the broken
+thing.** It also means L3's contrastive background pool is whatever one process has
+seen rather than the corpus, so Part 4's margin is calibrated against a pool that does
+not survive a restart.
+
+Same shape as the already-fixed "Documents never written to durable storage". That fix
+landed for `documents` and not for embeddings — documents persisting is what made this
+visible.
+
+Files: `src/verifier/layers/registry.py`, `src/verifier/semantic/defaults.py`.
+
+</details>
+
+---
+
+### 19. ~~A killed task leaves the run `pending` forever~~ — FIXED
+
+**Fixed in `2607f5a`, verified live against real Postgres: F32.** `pending` ->
+`status=error, is_final=True`, idempotent under redelivery, and `GET /v1/runs/{id}`
+reports it as terminal so the extension stops polling.
+
+It had **two** independent leaks, not one. `SoftTimeLimitExceeded` subclasses
+`Exception`, so it lands wherever the signal interrupts: usually the event loop's
+`select`, escaping `asyncio.run` (fixed by the new handler); sometimes inside the
+orchestrator's own `except`, which set `status=ERROR` but never `is_final` (fixed
+separately at `orchestrator.py:293-303`). Fixing either alone still hung.
+
+<details><summary>Original diagnosis</summary>
+
+There is no `except SoftTimeLimitExceeded` in `worker/tasks.py`. When the limit fires
+Celery marks the *task* `FAILURE`; the *run row* keeps its last status and `is_final`
+stays `false`, so `GET /v1/runs/{id}` says `pending` indefinitely. Three of four runs
+are still `pending` in the table.
+
+The panel's own timeout is what conceals it — the user sees "The verification timed
+out" while the API still claims the run is in flight.
+
+**Fix:** catch `SoftTimeLimitExceeded` and write a terminal `error` state. The soft
+limit exists to give exactly this chance to clean up; nothing uses it.
+
+Files: `src/verifier/worker/tasks.py`.
+
+</details>
+
+---
+
+### 20. ~~The judge is never deferred, so `judgeworker` is dead weight~~ — FIXED
+
+**Fixed in `2607f5a`, verified live: F31.** `judgeworker` received and succeeded its
+first task ever (16.5 s, `judge_ran: True`), and both runs passed through
+`deterministic_ready` before `complete` — the deterministic verdict rendering while the
+judge is still cold, which the two-phase design was built for and had never exhibited.
+
+`_dispatch` now passes `defer_judge=True`. A failed handoff falls back to the inline
+judge, because deferral would otherwise introduce a new way to hang: an unreachable
+broker would park the run at `deterministic_ready` with nothing left to finalise it.
+
+<details><summary>Original diagnosis</summary>
+
+`api/deps.py:_dispatch` calls `task.delay(run_id)` with no `defer_judge`, which defaults
+to `False`. The branch at `tasks.py:134` that sends the judge to `QUEUE_JUDGE` is
+therefore unreachable from the API, and a judge budgeted `JUDGE_SOFT_LIMIT = 90` on its
+own queue runs inline inside the deterministic task's 45. Confirmed live: `judgeworker`
+subscribes to `judge`, reports ready, receives nothing, and `llen judge` is 0 mid-run.
+
+Dispatching the judge by hand finalised a stalled run in one poll — the deferred path
+works and is simply never taken. This is bug 15 at the judge queue instead of the
+browser queue.
+
+**Fix:** pass `defer_judge=True` from `_dispatch`. That alone takes ~7–13 s of judge off
+the deterministic budget and puts it where the design already says it belongs.
+
+Files: `src/verifier/api/deps.py`.
+
+</details>
+
+---
+
+### 25. ~~The panel gives up at 45 s, so a healthy cold run reads as a timeout~~ — FIXED
+
+**Found by running it.** Raising `RUN_SOFT_LIMIT_S` to 150 (bug 18/19/20 work) moved the
+false timeout from the worker to the panel rather than removing it:
+`extension/src/config.js` still had `pollTimeoutMs: 45000`, matching the *old* server
+budget. A cold run takes ~79 s and completes, and the panel abandoned it at 45 s and
+rendered "The verification timed out" over a verdict already on its way.
+
+Now 240000, derived from the server's own budget rather than picked: `RUN_SOFT_LIMIT_S`
+(150) for the deterministic phase plus `JUDGE_SOFT_LIMIT_S` (90) for the judge on its own
+queue is the longest a run can legitimately take. The stale comment claiming "a run is
+<=20 s" went with it.
+
+**Necessary but not sufficient.** Changing the default did not change the behaviour,
+because `chrome.storage` held a stale copy that overrode it on every boot — bug 26.
+Both fixes are needed, and the extension must be reloaded in `chrome://extensions`
+(Chrome does not re-read an unpacked extension's files on a page refresh).
+
+The general lesson is worth keeping: a client timeout and a server timeout are one
+setting in two files, and changing either alone just relocates the failure.
+
+---
+
+### 26. ~~`saveConfig` persisted the whole config, freezing every tuning constant~~ — FIXED
+
+**Severity: high — it silently defeated every later change to a default, in a place no
+file shows.**
+
+`saveConfig` is only ever called with `{panelView}` or `{panelTheme}`, but it stored
+`{...SALV.config}` — the **entire** object — and `loadConfig` did
+`Object.assign(SALV.config, stored.config)`, applying that blob over the defaults.
+
+So the first time anyone clicked the full-screen or theme toggle, the extension wrote a
+complete snapshot of that session's config into `chrome.storage.sync`, `pollTimeoutMs:
+45000` included. From then on the shipped defaults were dead on arrival. That is why
+bug 25's fix appeared not to work: the default was raised to 240000, then to 180000, the
+extension was reloaded, and the panel still gave up at exactly 45 s — the stale value was
+not in any file, so nothing in the repo showed it, and reloading could not clear it.
+
+**Fixed** with a `PERSISTED_KEYS = ['panelView', 'panelTheme']` allowlist applied on
+**read as well as write**. Filtering the read is the half that matters for anyone who
+already has the bad blob: it heals an existing profile without asking them to clear site
+data. Verified against a simulated poisoned profile — the file's default wins, both real
+preferences survive, and a save now writes only those two keys.
+
+Same family as bug 3's `background.js` sticky `localhost` fallback: a value cached
+somewhere invisible, outliving the code that set it.
+
+---
+
+### 21. The extension verifies the sidebar, and calls it a FAIL
+
+**Severity: high — this is a false red on text the user never asked about.**
+
+Driving the panel on live claude.ai produced **14** runs of `complete | fail` whose
+`ai_output` is a sidebar conversation title and its date:
+
+```
+"Probability problem answer verification  Aug 22"
+"Continent selection requirement  Aug 24"
+"Runtime error in two-sum cement bag solution  Aug 26"
 ```
 
-If that returns ~848 bytes, stop — the run measures nothing except F12, which is already
-recorded. `.env` needs `VOYAGE_API_KEY` and `OPENROUTER_API_KEY`; `ANTHROPIC_API_KEY` is
-blank and must stay unused (`*_PROVIDER=openrouter`).
+The structural tier finds the recents list's repeated group and calls it an assistant
+turn. This file already records the symptom under QoL as cosmetic and limited to `/new`.
+It is neither: it fires on `/recents`, and a run over a 40-character title finds no
+citations and no grounding, which resolves to a hard **FAIL** — the worst verdict the
+system emits. The real answer was captured correctly in the same session, so the capture
+path is fine; the ladder just does not reject non-answers before spending a run.
 
-### 1. Bring the stack up — all-real, no override
+**Fix:** a minimum-plausibility gate on the captured turn before dispatch (length, and
+the absence of the sidebar's date suffix shape), and never a FAIL from a run that found
+nothing to check.
 
-```bash
-docker compose down -v          # the poisoned-cache reset; see bug 10
-docker compose up -d --build
-curl -s http://127.0.0.1:8000/readyz    # want: provider_mode "real", database+redis true
-docker exec sal-verifier-api-1 env | grep MODE    # want: NO occurrence of "mock"
+**Extension half done; STILL OPEN on the backend.** The sidebar no longer reaches a run
+at all: `classifyByClassFrequency` refuses a split it cannot evidence (a class token
+balanced across 25-75% of siblings, or one side's median at least 2x the other's), and
+navigation is excluded from the group search by text-share rather than by class name.
+A recents list fails both tests -- identical classes, identical lengths -- so tier 3
+returns null and the ladder falls through to the manual trigger. `buildRequest` also
+refuses anything under 60 characters unless the user pointed at it directly. Measured on
+`extension/dev/selector-fixture.html?shape=sidebar`: 14 rows in, 0 messages out, tier
+`manual`.
+
+The date-suffix half of the fix above was deliberately NOT implemented: it encodes one
+locale and one date format and stops matching the day claude.ai renders "2 days ago".
+The length floor covers every logged case without that assumption.
+
+What remains is the second half, and it is a backend change: `deterministic_verdict`
+(`src/verifier/pipeline/aggregate.py`) still returns FAIL on any FAIL-severity finding
+however little was actually checked, and the panel relabels only the *pill* for citation
+coverage, never the verdict. A run that checked nothing can still emit the worst verdict
+in the system -- it just can no longer be reached from the sidebar.
+
+---
+
+### 22. A truncated embeddings response takes L3 down with no retry
+
+**Severity: medium — safe direction, but the layer is lost and the run still pays.**
+
+```
+L3 could not complete: Response payload is not completed:
+<ContentLengthError: 400, 'Not enough data to satisfy content length header
+(received 27699 of 707298 bytes)'>
 ```
 
-`docker-compose.override.yml` was renamed to `docker-compose.mockfetch.yml`, so compose no
-longer auto-loads it and `.env` alone now yields the all-real stack (bug 8). **If any mode
-reads `mock`, stop** — something re-created the override, and per bug 8 the run would
-report real cases as fabricated.
+A Voyage response was cut off at 4% of its declared length. One truncated batch errors
+the whole layer, because nothing retries. The verdict degraded to `warn` with a
+`LAYER_ERROR` finding rather than failing anything — the F12 rule holding — but L3
+contributed nothing and the run still bought a judge call.
 
-### 2. Reload the extension — a page refresh is NOT enough
+**Fix:** retry a truncated/short read, the same way any transport error should be
+retried. Worth pairing with bug 18, since a warm cache makes the batch smaller.
 
-Chrome does not re-read an unpacked extension's files until it is reloaded in
-`chrome://extensions` (bug 3's operational note). Reload **SAL Verifier**
-(id `ekhdmamklicmlkphpnibledeoenpdjfi`, loaded from `<repo>/extension`), then hard-reload
-the claude.ai tab. Skipping this tests whatever code was loaded last session.
+---
 
-### 3. Drive claude.ai
+### 23. `citation_resolutions.document_id` can end up NULL for a resolved row
 
-Open an EXISTING conversation, not `/new` — on an empty chat the structural selector tier
-misreads the sidebar and renders "could not find the question this response answers".
+**Severity: medium — bug 10's shape, reached by a different route.**
 
-Ask something that pulls Singapore **neutral citations**, because that is the path the
-registry now dispatches by type. Suggested prompt:
+`sgca:2007:37` was written by one run as `method=url` with a document, then rewritten by
+a later run as `method=search` with `document_id` NULL while the document row still
+existed and was used by that same run. A `resolved` row pointing at no document is
+exactly bug 10's poisoned state, and `expires_at` is NULL, so it is permanent.
 
-> What is the test for establishing a duty of care in negligence under Singapore law?
-> Cite the leading Court of Appeal authority and quote one passage verbatim.
+Bug 10 remains open and this is a second way in: it is not only maintenance windows that
+write a durable row for a transient state.
 
-Prefer an answer citing **only Singapore neutral citations**: an English report citation
-following a Singapore one gets absorbed into the same cluster and silently goes unchecked
-(bug 6). `autoVerify` is true, so the panel fires when the answer settles; the right-click
-context menu is the fallback if the selectors miss.
+Files: `src/verifier/repos/resolutions.py`, `src/verifier/pipeline/resolver.py`.
 
-**Run it twice and report the second.** Bug 7 means every other run loses its first fetch
-to a closed event loop and reports it as "the lookup failed", which is indistinguishable
-from a source outage.
+---
 
-### 4. Capture
+### 24. Embeddings never carry a `document_id`, so L3's background pool is always empty
 
-```bash
-curl -s http://127.0.0.1:8000/v1/runs/<run_id> | python3 -m json.tool > run.json
-docker logs sal-verifier-worker-1 | tail -60
-docker exec sal-verifier-postgres-1 psql -U verifier -d verifier \
-  -c "select citation_key, status, candidates->>'detail', expires_at from citation_resolutions;"
+**Severity: high — the contrastive margin has never run in production.**
+
+Newly visible now that the cache is durable (F33). All 170 cached vectors have
+`document_id = NULL`:
+
+```
+embeddings with doc: 0 of 170
 ```
 
-Screenshot the panel in both the 380 px rail and the `⤢` full view.
+`_document_key` (`layers/l3_alignment.py:645-656`) falls back to the document's **content
+hash** when `SourceDocument.id` is unset, which it is for a freshly-fetched document.
+`PgEmbeddingRepo.put_many` then does `uuid.UUID(document_id)`, gets `ValueError`, and
+stores `NULL`. `sample_background` filters `document_id IS NOT NULL` and matches nothing.
 
-### 5. What would count as passing
+L3 handles it correctly and reports it — `background_empty: true`, `margin_skipped: true`,
+with a note saying only the absolute floor was applied — so this is safe degradation, not
+a silent failure.
 
-- `citation_resolutions` rows carry `domain = www.elitigation.sg` and a real
-  `document_id` — proving the registry dispatched by citation type and the document
-  reached `LayerInput.documents`.
-- Worker logs show live `elitigation.sg`, `openrouter.ai` and `api.voyageai.com` calls,
-  so no capability silently fell back to mock.
-- L1 PASS on a real citation; L3 scores rather than returning NOT_APPLICABLE; L5 runs.
-- No `CITATION_NOT_FOUND` on a real case. That is the one unrecoverable failure.
+**Not a regression.** The in-memory repo started cold in every task and had only ever
+seen the document under test, so the pool was empty then too. What changed is that it is
+now *permanently* empty rather than incidentally so: 170 durable vectors sit in the table
+and none can be sampled.
 
-**Expect verdict variance between the two runs.** Bug 4 / F17: the claim splitter is
-unseeded and uncached, and the same answer has split 14/15/16 ways and flipped the run
-between `pass` and `fail`. A difference is that, not a regression.
+The consequence is worth stating plainly: **every live L3 verdict to date rests on the
+absolute floor alone.** Scores are unaffected (they are `max cos(claim, cited)`, which
+does not involve the margin), but the margin half of Part 4's calibration has never been
+exercised outside the offline set.
 
-### 6. Also worth doing in the same session
+**Fix:** carry the persisted row id onto the `SourceDocument` before chunking — the
+orchestrator already learns it at `orchestrator.py:610` (`stored.id`) and writes it back
+onto the resolution, so the id exists and simply never reaches L3. Failing that,
+`PgEmbeddingRepo` could store a deterministic UUID5 of the content hash rather than
+discarding a non-UUID key. The first is the real fix.
 
-- **Bug 5's measurement.** Run five or six real claude.ai answers through
-  `extract_with_llm` and diff against `extract()`. Anything the regex found and Haiku
-  missed is the bug, and it is the evidence that decides whether dropping the regex floor
-  was right. Until it exists that decision is a design judgement, which is why it is
-  absent from `docs/03-findings.md`.
-- **Confirm bug 7 empirically** — verify the same answer twice and check whether the first
-  citation of the second run reports `fetch_failed:RuntimeError`.
-- **Re-check bug 10** — after eLitigation returns, confirm no `error/maintenance` row with
-  `expires_at IS NULL` is being served in place of a live fetch.
-
-Write the results into `docs/03-findings.md` as Part 8. That file admits **measured
-evidence only**; anything unmeasured belongs here instead.
+Files: `src/verifier/layers/l3_alignment.py`, `src/verifier/repos/embeddings.py`,
+`src/verifier/pipeline/orchestrator.py`.
 
 ---
 
@@ -644,10 +840,51 @@ orphaned-content-script hang in bug 3).
 
 ### Smaller things spotted in the same pass
 
-- **The panel shows an error on an empty chat.** On `/new` the structural tier finds
-  the sidebar's repeated group and calls half of it an assistant turn, so the panel
-  renders "could not find the question this response answers" where it should say
-  idle. Cosmetic, but it is the first thing a demo audience sees.
+- ~~**The panel shows an error on an empty chat.**~~ Fixed at the root, and it was never
+  cosmetic — it was bug 21 caught one step earlier. On `/new` the structural tier found
+  the sidebar's repeated group and called half of it an assistant turn; the *first* such
+  row had no preceding "user" row so it threw and painted the Error pill, and **every
+  other row dispatched a real run**. That asymmetry is why the selector was fixed first:
+  routing the throw to idle on its own would have removed the pill and kept the
+  dispatches, turning a loud bug into a silent one.
+
+  Two changes, either of which now suffices. The ladder no longer invents a transcript
+  out of navigation chrome (bug 21 above). And "nothing to verify" is no longer an
+  error: `buildRequest`'s benign throws are tagged, and an *automatic* scan that finds
+  nothing renders nothing at all — the panel is already idle from boot, and painting
+  over it would let one misclassified node wipe a real answer's verdict off the screen.
+  Only an explicit toolbar or right-click gesture gets an explanation back. The Error
+  pill is now reserved for a broken tool: backend unreachable, contact lost, run
+  forgotten, timeout.
+
+- ~~**Pending layers reported as `Skipped`.**~~ Mid-run `state.layers` is empty, and
+  `layerRow` fell back to `'skipped'` for any layer without a result — so all five rows
+  read `Skipped` while the run was still in flight. `skipped` is a *terminal*
+  `LayerStatus` meaning the layer was deliberately not run, which is what fail-fast does
+  to L5; using it for *not started yet* told the reader five layers had looked and
+  declined at a moment when none had reported. It is the same objection `statusLabel`
+  already makes to softening `not_applicable` into "skipped", in the other direction.
+  A pending row now carries the run's elapsed time instead, measured client-side from
+  dispatch (the backend's `timings` only fill in as the run completes) and ticking off
+  pollRun's existing 400 ms re-render with no timer. `render` also stops claiming "No
+  deterministic problems found" before anything has been checked.
+
+- ~~**A stale verdict survived navigation.**~~ `renderIdle` was called exactly once, at
+  boot, and there was no history listener anywhere — so SPA-navigating from a checked
+  answer to a new chat left the previous conversation's verdict on screen. The debounced
+  body observer now compares `location.pathname` and resets on change, above the
+  `autoVerify` guard so it still fires for someone who has automatic verification off.
+  `popstate` is wired too but is only for back/forward: it does not fire on
+  `history.pushState`, which is what "New chat" actually does.
+
+  Three latent races had to go with it, or the reset half-works intermittently, which is
+  worse than not fixing it. `pollRun` only checked `cancelled` at the top of its loop, so
+  an in-flight poll resolving after navigation repainted the old verdict ~400 ms later;
+  `watchForCompletion` never checked `isConnected`, so a node mid-settle at navigation
+  verified against a conversation that had left the screen; and `verifyNode` cancelled
+  the active run *before* knowing the node was verifiable at all — which, combined with
+  the dedupe early-return, left `active` permanently non-null after `pollRun` exited
+  without clearing it.
 - ~~**Long evidence passages are not scrollable.**~~ Fixed in the serif/light restyle:
   `.salv-evidence` is capped at `calc(var(--salv-scale) * 190px)` with `overflow-y:
   auto`, so a long retrieved passage no longer pushes the layer table below the fold.

@@ -353,6 +353,10 @@
   background: var(--salv-note-bg);
   font-size: var(--salv-fs-small);
   color: var(--salv-note-fg);
+  /* Notes now carry full sentences, not the one clause they were written for. In the
+     380px rail an unbroken run -- a long word, a URL -- would otherwise push the whole
+     panel sideways. `.salv-error` has carried this for the same reason. */
+  word-break: break-word;
 }
 
 #salv-panel .salv-error {
@@ -426,22 +430,48 @@
   gap: 3px;
 }
 
+/*
+ * Wraps, because a citation is not always short.
+ *
+ * The row is name-then-reason on one line while both fit, and breaks to two when they
+ * do not -- `flex-wrap` decides that per row, so `[2007] SGCA 37 — does not exist` stays
+ * compact and a full case name still gets the width it needs.
+ */
 #salv-panel .salv-banner-item {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 2px 8px;
   align-items: baseline;
   font-size: var(--salv-fs-small);
 }
 
-/* The citation itself is the thing to read, so it is set apart from the reason. */
+/*
+ * The citation itself is the thing to read, so it is set apart from the reason.
+ *
+ * It used to be `white-space: nowrap`, which was correct for the labels it was written
+ * against -- neutral citations like `[2007] SGCA 37`, where a break between "SGCA" and
+ * "37" reads as two references rather than one. But `citationLabel` also returns whole
+ * case names, upper-cased, off the `raw:` branch and off `resolution.title`, and
+ * "NIRU BATTERY MANUFACTURING CO V MILESTONE COMPANY LTD" cannot be kept on one line in
+ * a 380px rail by anything except running out of it -- which is what it did, straight
+ * through the panel's right edge and off the screen.
+ *
+ * Ordinary wrapping breaks at spaces only, so it costs the short labels nothing: they
+ * still sit on one line whenever they fit. `break-word` is the backstop for a label with
+ * no spaces to break at.
+ */
 #salv-panel .salv-banner-cite {
   font-weight: 600;
   font-variant-numeric: var(--salv-figures);
-  white-space: nowrap;
+  overflow-wrap: break-word;
+  min-width: 0;
 }
 
 #salv-panel .salv-banner-why {
   opacity: 0.85;
+  /* Takes the rest of its line, and a line of its own once the name has used the row. */
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 #salv-panel .salv-section {

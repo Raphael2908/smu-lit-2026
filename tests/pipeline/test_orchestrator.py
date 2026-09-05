@@ -355,3 +355,31 @@ async def test_a_failing_persistence_layer_does_not_lose_the_verdict():
     state = await orchestrator.run(make_request(), run_id="run-nodb")
     assert state.verdict is Verdict.PASS
     assert state.is_final is True
+
+
+async def test_a_pipeline_crash_ends_the_run_rather_than_leaving_it_open():
+    """ERROR is terminal, so the state must say so.
+
+    The crash path set status=ERROR but never is_final, so a crashed run still read as
+    working: the extension polls on is_final, and ``sse.diff_events`` emits final/done
+    only on the False->True edge, so neither transport would ever settle (F27).
+    """
+
+    orchestrator = Orchestrator(
+        layers=_all_pass_layers(),
+        judge=RecordingJudgeLayer(),
+        extractor=extractor_for(make_extraction(citations=1)),
+    )
+
+    # A layer that raises is already contained (it becomes LayerStatus.ERROR), so reach
+    # past those guards to the outer handler the way a real crash would.
+    async def explode(*a, **kw):
+        raise RuntimeError("settle exploded")
+
+    orchestrator._settle_deterministic = explode  # type: ignore[method-assign]
+
+    state = await orchestrator.run_deterministic(make_request(), run_id="run-crash")
+
+    assert state.status is RunStatus.ERROR
+    assert state.is_final is True, "a run nothing is working on must not read as pending"
+    assert any("settle exploded" in e for e in state.errors)

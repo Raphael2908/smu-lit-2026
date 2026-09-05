@@ -112,3 +112,52 @@ async def test_celery_is_not_consulted_in_mock_mode(mode):
     from verifier.api import deps
 
     assert deps._celery_task() is None
+
+
+async def test_dispatch_defers_the_judge_to_its_own_queue(monkeypatch):
+    """L5 must not be spent from inside the deterministic task's budget.
+
+    ``_dispatch`` called ``task.delay(run_id)`` with no kwargs, so ``defer_judge`` took
+    its default of False and the QUEUE_JUDGE branch in ``tasks._run_verification`` was
+    unreachable from the API -- the judgeworker sat subscribed to a queue nothing ever
+    wrote to, while a 90s-budgeted judge ran inside a 45s task (F26).
+    """
+    from verifier.api import deps
+
+    calls: list[tuple[tuple, dict]] = []
+
+    class FakeTask:
+        def delay(self, *args, **kwargs):
+            calls.append((args, kwargs))
+
+    monkeypatch.setattr(deps, "_celery_task", lambda: FakeTask())
+
+    async def fail_if_called(run_id: str) -> None:
+        raise AssertionError("inline is the fallback, not the path taken here")
+
+    monkeypatch.setattr(deps, "_run_inline", fail_if_called)
+
+    await deps._dispatch("run-defer")
+
+    assert calls == [(("run-defer",), {"defer_judge": True})]
+
+
+async def test_dispatch_falls_back_inline_when_the_broker_is_unreachable(monkeypatch):
+    """A dead broker must not swallow the run."""
+    from verifier.api import deps
+
+    class DeadTask:
+        def delay(self, *args, **kwargs):
+            raise RuntimeError("no broker")
+
+    monkeypatch.setattr(deps, "_celery_task", lambda: DeadTask())
+    ran: list[str] = []
+
+    async def record(run_id: str) -> None:
+        ran.append(run_id)
+
+    monkeypatch.setattr(deps, "_run_inline", record)
+
+    await deps._dispatch("run-fallback")
+
+    assert ran == ["run-fallback"]

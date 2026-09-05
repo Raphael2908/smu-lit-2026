@@ -1,0 +1,182 @@
+<!doctype html>
+<!--
+  Selector review harness. NOT SHIPPED: outside `content_scripts` in manifest.json.
+
+  selectors.js decides what counts as an answer, and until this file nothing could
+  exercise it without claude.ai in front of you -- which is how the structural tier came
+  to read the recents sidebar as a transcript, verify fourteen conversation titles and
+  return a hard FAIL on each (todo.md bug 21).
+
+  ONE SHAPE PER PAGE LOAD, selected by ?shape=. That is not tidiness: tierStructural()
+  reads `document` directly -- findScrollContainer() picks the tallest scrollable region
+  on the whole page -- so two shapes in one document would compete for it and neither
+  result would mean anything.
+
+  Open it directly:  open extension/dev/selector-fixture.html
+  Shapes:            ?shape=sidebar | transcript | samey | empty
+
+  Each shape prints the tier that won and every node it classified. What you are
+  checking, in one line each:
+
+    sidebar     -> tier `manual`, 0 messages.   The bug. Anything else is a regression.
+    transcript  -> tier `structural`, 4 messages, roles alternating user/assistant.
+    samey       -> tier `structural`, 4 messages. Identical classes on every turn, so
+                   there is no discriminating token and the 2x length gap alone has to
+                   carry the split. This is the fixture that tunes MIN_TURN_LENGTH_RATIO.
+    empty       -> tier `manual`, 0 messages.
+-->
+<meta charset="utf-8">
+<title>Sigma Tech selectors — fixtures</title>
+<style>
+  body { margin: 0; font: 13px/1.5 system-ui, sans-serif; background: #e9e6e0; color: #23262e; }
+  nav { padding: 10px 16px; background: #1f222a; color: #d8d2c8; }
+  nav a { color: #e8b273; margin-right: 14px; text-decoration: none; }
+  nav a[aria-current] { text-decoration: underline; }
+  .split { display: flex; gap: 16px; padding: 16px; align-items: flex-start; }
+  .stage { width: 420px; height: 300px; border: 1px solid #cfc7b8; background: #fff; }
+  .report { flex: 1; font: 12px/1.6 ui-monospace, monospace; background: #fff;
+            border: 1px solid #cfc7b8; padding: 12px; white-space: pre-wrap; }
+  .verdict { font: 600 13px system-ui; padding: 6px 10px; margin-bottom: 10px; }
+  .ok   { background: #e9f1e6; color: #1f5130; }
+  .bad  { background: #fbeae6; color: #8a2318; }
+  /* The scroll host every shape hangs off. Deliberately a bare <div> with NO landmark
+     role: if the sidebar shape were an <aside> the landmark guard would skip it and the
+     member/group gates -- the ones actually load-bearing -- would never be tested. */
+  .scroll { height: 100%; overflow-y: auto; padding: 8px; }
+</style>
+
+<nav id="nav"></nav>
+<div class="split">
+  <div class="stage"><div class="scroll" id="stage"></div></div>
+  <div class="report" id="report">loading…</div>
+</div>
+
+<script>
+  // The entire dependency surface of selectors.js.
+  globalThis.SALV = { log() {}, banner() {}, warn() {} };
+</script>
+<script src="../src/selectors.js"></script>
+<script>
+  const SHAPES = {
+    // Fourteen recents rows: identical generated class names, each row IS a link, all
+    // about the same length. Every premise the structural tier bets on fails here.
+    sidebar: {
+      expect: { tier: 'manual', count: 0 },
+      build: (root) => {
+        const titles = [
+          'Probability problem answer verification', 'Continent selection requirement',
+          'Runtime error in two-sum cement bag solution', 'Duty of care test in Singapore',
+          'Simplifying system diagram wording', 'Understanding random variables',
+          'Repair Kopitiam external environment', 'Data and text memory space',
+          'PostgreSQL query validation', 'Occupier duty to lawful entrants',
+          'Vitiating factors in contract', 'Remoteness of damage in tort',
+          'Formation of unilateral contracts', 'Promissory estoppel limits',
+        ];
+        const list = document.createElement('div');
+        list.className = 'x7f2a';
+        titles.forEach((t, i) => {
+          const row = document.createElement('a');
+          row.className = 'x9b31 x2d80';
+          row.href = '/chat/' + i;
+          row.textContent = t + '  Aug ' + (10 + i);
+          list.appendChild(row);
+        });
+        root.appendChild(list);
+      },
+    },
+
+    // A real transcript with generated class names and NO testids or roles, so tiers 1
+    // and 2 cannot fire and tier 3 must carry it on its own.
+    transcript: {
+      expect: { tier: 'structural', count: 4, roles: ['user', 'assistant', 'user', 'assistant'] },
+      build: (root) => {
+        const turns = [
+          ['q4k1 turn', 'What is the test for duty of care in Singapore?'],
+          ['m8p2 turn', 'The governing test is the two-stage framework in Spandeck Engineering (S) Pte Ltd v Defence Science & Technology Agency [2007] SGCA 37, preceded by a threshold enquiry into factual foreseeability. Stage one asks whether there is sufficient legal proximity between the parties, assessed through physical, circumstantial and causal closeness. Stage two then asks whether policy considerations negate the prima facie duty so established.'],
+          ['q4k1 turn', 'Does it apply to pure economic loss?'],
+          ['m8p2 turn', 'Yes. Spandeck deliberately adopted a single test of universal application, declining to carve pure economic loss out into a separate category as English law had done. The Court of Appeal held that the same two-stage framework governs all claims in negligence regardless of the type of damage alleged, with policy doing the work of limiting liability at stage two.'],
+        ];
+        const wrap = document.createElement('div');
+        wrap.className = 'c1a0';
+        for (const [cls, text] of turns) {
+          const turn = document.createElement('div');
+          turn.className = cls;
+          turn.textContent = text;
+          wrap.appendChild(turn);
+        }
+        root.appendChild(wrap);
+      },
+    },
+
+    // Same conversation, but every turn carries the SAME class -- a restyle that merges
+    // the bubbles. No token discriminates, so only the length gap is left.
+    samey: {
+      expect: { tier: 'structural', count: 4, roles: ['user', 'assistant', 'user', 'assistant'] },
+      build: (root) => {
+        SHAPES.transcript.build(root);
+        root.querySelectorAll('.c1a0 > div').forEach((t) => (t.className = 'same turn'));
+      },
+    },
+
+    // /new: a composer and nothing else. Everything on it is a control.
+    empty: {
+      expect: { tier: 'manual', count: 0 },
+      build: (root) => {
+        const composer = document.createElement('div');
+        composer.className = 'k0z9';
+        composer.innerHTML =
+          '<div class="p1"><textarea placeholder="Write a message..."></textarea></div>' +
+          '<button class="b1">Send message</button>' +
+          '<button class="b2">Attach files to the conversation</button>' +
+          '<div class="foot">Claude is AI and can make mistakes. Please double-check responses.</div>';
+        root.appendChild(composer);
+        // Force the host to scroll, so findScrollContainer has a candidate to pick and
+        // the shape is not passing for the wrong reason.
+        const filler = document.createElement('div');
+        filler.style.height = '600px';
+        root.appendChild(filler);
+      },
+    },
+  };
+
+  const name = new URLSearchParams(location.search).get('shape') || 'sidebar';
+  const shape = SHAPES[name] || SHAPES.sidebar;
+
+  document.getElementById('nav').innerHTML =
+    Object.keys(SHAPES)
+      .map((k) => `<a href="?shape=${k}"${k === name ? ' aria-current="page"' : ''}>${k}</a>`)
+      .join('') + `<span style="opacity:.6">selector-fixture — one shape per load</span>`;
+
+  const stage = document.getElementById('stage');
+  shape.build(stage);
+
+  const messages = SALV.selectors.findMessages();
+  const tier = SALV.selectors.lastTier;
+  const roles = messages.map((m) => m.role);
+
+  const pass =
+    tier === shape.expect.tier &&
+    messages.length === shape.expect.count &&
+    (!shape.expect.roles || String(roles) === String(shape.expect.roles));
+
+  const lines = messages.map(
+    (m, i) => `  ${String(i).padStart(2)}  ${m.role.padEnd(9)} ${JSON.stringify(
+      (m.el.textContent || '').trim().slice(0, 52)
+    )}`
+  );
+
+  document.getElementById('report').innerHTML =
+    `<div class="verdict ${pass ? 'ok' : 'bad'}">${pass ? 'PASS' : 'FAIL'} — ${name}</div>`;
+  document.getElementById('report').append(
+    [
+      `expected   tier=${shape.expect.tier} count=${shape.expect.count}` +
+        (shape.expect.roles ? ` roles=${shape.expect.roles}` : ''),
+      `actual     tier=${tier} count=${messages.length}` +
+        (messages.length ? ` roles=${roles}` : ''),
+      '',
+      messages.length ? 'classified:' : 'classified: (nothing — the ladder declined)',
+      ...lines,
+    ].join('\n')
+  );
+  document.title = `Sigma Tech selectors — ${name} — ${pass ? 'PASS' : 'FAIL'}`;
+</script>

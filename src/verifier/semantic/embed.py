@@ -11,10 +11,13 @@ prompt, summary or heading path to be served a stale vector.
 from __future__ import annotations
 
 from verifier.contracts.documents import Chunk
+from verifier.logging import get_logger
 from verifier.providers.base import Embedder, EmbeddingResult
 from verifier.repos.base import EmbeddingRepo
 from verifier.semantic.contextualise import sha256_text
 from verifier.semantic.similarity import l2_normalise
+
+log = get_logger(__name__)
 
 #: Voyage's ``input_type``. Not cosmetic, and not interchangeable.
 #:
@@ -33,7 +36,16 @@ INPUT_TYPE_DOCUMENT = "document"
 
 
 class CachedEmbedder:
-    """An :class:`Embedder` wrapper that reads through an :class:`EmbeddingRepo`."""
+    """An :class:`Embedder` wrapper that reads through an :class:`EmbeddingRepo`.
+
+    EVERY REPO CALL IS BEST-EFFORT. The repo used to be a process-local dict that could
+    not fail; it is now whatever ``get_repos()`` holds, which in production is Postgres
+    over a network. The rule the resolution cache already states applies here verbatim:
+    a cache is not a verdict, and we would rather re-embed a judgment than fail a
+    citation over a database blip. So a failed read degrades to a miss, a failed write
+    is logged and dropped, and a failed background sample returns the empty pool that
+    ``sample_background`` already documents as legitimate on a cold deployment.
+    """
 
     def __init__(
         self,
@@ -141,7 +153,11 @@ class CachedEmbedder:
 
         cached: dict[str, list[float]] = {}
         if use_repo:
-            cached = await self._repo.get_many(self.cache_model, unique_hashes)
+            try:
+                cached = await self._repo.get_many(self.cache_model, unique_hashes)
+            except Exception as exc:  # noqa: BLE001 - a cache read is not a verdict
+                log.warning("embedding_cache_read_failed", error=str(exc))
+                cached = {}
 
         miss_hashes = [h for h in unique_hashes if h not in cached]
         by_hash = dict(zip(hashes, inputs, strict=True))
@@ -164,7 +180,10 @@ class CachedEmbedder:
             if use_repo:
                 # ``document_id`` is what lets sample_background exclude this document's
                 # own vectors from L3's contrastive baseline.
-                await self._repo.put_many(self.cache_model, fresh, document_id=document_id)
+                try:
+                    await self._repo.put_many(self.cache_model, fresh, document_id=document_id)
+                except Exception as exc:  # noqa: BLE001 - a cache write is not a verdict
+                    log.warning("embedding_cache_write_failed", error=str(exc))
 
         lookup = {**cached, **fresh}
         return EmbeddingResult(
@@ -186,7 +205,11 @@ class CachedEmbedder:
         """
         if self._repo is None:
             return []
-        vectors = await self._repo.sample_background(
-            self.cache_model, limit, exclude_document_id=exclude_document_id
-        )
+        try:
+            vectors = await self._repo.sample_background(
+                self.cache_model, limit, exclude_document_id=exclude_document_id
+            )
+        except Exception as exc:  # noqa: BLE001 - a cold pool is a supported state
+            log.warning("embedding_background_failed", error=str(exc))
+            return []
         return [l2_normalise(v) for v in vectors]

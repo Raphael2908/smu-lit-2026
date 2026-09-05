@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import importlib
 import inspect
 from collections import OrderedDict
@@ -292,7 +293,16 @@ async def _dispatch(run_id: str) -> None:
         try:
             # .delay() is blocking socket work against the broker; keep it off the loop
             # and bounded, because a dead broker must not swallow the run.
-            await asyncio.wait_for(asyncio.to_thread(task.delay, run_id), timeout=3.0)
+            #
+            # defer_judge=True is what puts L5 on QUEUE_JUDGE, where it has its own
+            # 90s budget, instead of inside the deterministic task's. Omitting it left
+            # the branch in tasks._run_verification unreachable and the judgeworker
+            # subscribed to a queue nothing ever wrote to (docs/03-findings.md F26).
+            # to_thread forwards no kwargs, hence the partial.
+            await asyncio.wait_for(
+                asyncio.to_thread(functools.partial(task.delay, run_id, defer_judge=True)),
+                timeout=3.0,
+            )
             return
         except Exception as exc:  # noqa: BLE001
             log.warning("celery_dispatch_failed", run_id=run_id, error=str(exc))

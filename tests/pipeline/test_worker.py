@@ -7,9 +7,11 @@ be idempotent, because ``task_acks_late=True`` guarantees redelivery.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
+from celery.exceptions import SoftTimeLimitExceeded
 
 from tests.pipeline.conftest import (
     CollectingRunRepo,
@@ -22,6 +24,7 @@ from tests.pipeline.conftest import (
 from verifier.contracts.enums import Layer, RunStatus, Verdict, VerdictStage
 from verifier.contracts.runs import RunState
 from verifier.pipeline.events import InMemoryEventSink
+from verifier.settings import get_settings
 from verifier.worker import tasks
 from verifier.worker.celery_app import (
     QUEUE_BROWSER,
@@ -58,10 +61,28 @@ def test_the_tasks_are_registered_and_routed():
 
 
 def test_the_time_limits_give_the_judge_room():
+    """The budget must exceed the work it exists to permit.
+
+    45s was under the measured 46.0s cold deterministic phase, so every cold run through
+    the API was killed by its own limit (docs/03-findings.md F24). The numbers now come
+    from settings; this pins that the wiring reached Celery, and that the soft limit
+    still leaves room to record a terminal state before the hard one.
+    """
     run = celery_app.tasks[TASK_RUN_VERIFICATION]
     judge = celery_app.tasks[TASK_JUDGE_VERIFICATION]
-    assert (run.soft_time_limit, run.time_limit) == (45, 60)
-    assert (judge.soft_time_limit, judge.time_limit) == (90, 120)
+    settings = get_settings()
+
+    assert (run.soft_time_limit, run.time_limit) == (
+        settings.RUN_SOFT_LIMIT_S,
+        settings.RUN_HARD_LIMIT_S,
+    )
+    assert (judge.soft_time_limit, judge.time_limit) == (
+        settings.JUDGE_SOFT_LIMIT_S,
+        settings.JUDGE_HARD_LIMIT_S,
+    )
+    assert run.soft_time_limit > 46, "a cold deterministic phase is measured at 46.0s"
+    assert run.soft_time_limit < run.time_limit
+    assert judge.soft_time_limit < judge.time_limit
 
 
 # --- idempotency --------------------------------------------------------------------
@@ -144,6 +165,87 @@ async def test_run_verification_drives_the_whole_dag(stub_pipeline):
     assert result["verdict"] == Verdict.PASS.value
     assert result["status"] == RunStatus.COMPLETE.value
     assert judge.calls == 1
+
+
+async def test_a_failed_handoff_runs_the_judge_inline_rather_than_stranding_the_run(
+    stub_pipeline, monkeypatch
+):
+    """Deferral must not become a new way to hang.
+
+    An unreachable broker, or a deployment running no judgeworker, would otherwise leave
+    the run parked at deterministic_ready with nothing left to finalise it.
+    """
+    repo, judge = stub_pipeline
+    await repo.save(_pending_run("run-c"))
+
+    def boom(*a, **kw):
+        raise RuntimeError("broker down")
+
+    monkeypatch.setattr(tasks.celery_app, "send_task", boom)
+
+    result = await tasks._run_verification("run-c", defer_judge=True)
+
+    assert "judge_dispatched" not in result
+    assert judge.calls == 1, "the judge still ran, on this worker"
+    assert result["status"] == RunStatus.COMPLETE.value
+    assert repo.saved[-1].is_final is True
+
+
+# --- a killed task must not leave the run pending ------------------------------------
+
+
+def test_a_soft_timeout_writes_a_terminal_state(stub_pipeline, monkeypatch):
+    """The extension polls on is_final, so a killed run must stop looking like a live one.
+
+    Three of four live runs sat at ``pending`` forever after Celery killed the task
+    (docs/03-findings.md F27), which is indistinguishable from a run still in flight.
+
+    Synchronous on purpose: the task body is the sync Celery entry point, and it calls
+    ``asyncio.run``, which cannot nest inside an already-running loop.
+    """
+    repo, _judge = stub_pipeline
+    asyncio.run(repo.save(_pending_run("run-timeout")))
+
+    async def explode(*a, **kw):
+        raise SoftTimeLimitExceeded
+
+    monkeypatch.setattr(tasks, "_run_verification", explode)
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        tasks.run_verification("run-timeout")
+
+    saved = repo.saved[-1]
+    assert saved.status is RunStatus.ERROR
+    assert saved.is_final is True, "a run nothing is working on must not read as pending"
+    assert any("budget" in e for e in saved.errors)
+
+
+def test_a_soft_timeout_on_the_judge_queue_also_settles_the_run(stub_pipeline, monkeypatch):
+    repo, _judge = stub_pipeline
+    asyncio.run(repo.save(_pending_run("judge-timeout")))
+
+    async def explode(*a, **kw):
+        raise SoftTimeLimitExceeded
+
+    monkeypatch.setattr(tasks, "_judge_verification", explode)
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        tasks.judge_verification("judge-timeout")
+
+    saved = repo.saved[-1]
+    assert saved.status is RunStatus.ERROR
+    assert saved.is_final is True
+
+
+async def test_the_timeout_handler_never_reopens_a_finished_run(stub_pipeline, monkeypatch):
+    """acks_late means redelivery; a late signal must not overwrite a real verdict."""
+    repo, _judge = stub_pipeline
+    await repo.save(_complete_run("already-done"))
+    before = len(repo.saved)
+
+    await tasks._mark_timed_out("already-done", 150)
+
+    assert len(repo.saved) == before, "no write at all against a final run"
 
 
 async def test_deferring_the_judge_hands_it_to_the_judge_queue(stub_pipeline, monkeypatch):
