@@ -83,8 +83,25 @@ class Settings(BaseSettings):
     L3_ABSOLUTE_FLOOR: float = 0.35
     L3_BACKGROUND_SIZE: int = 200
 
-    L4_FAIL_BELOW: float = 0.50
-    L4_PASS_AT: float = 0.70
+    # MEASURED against voyage-law-2, not a seed. Question -> answer, input_type
+    # query/document, over 5 on-point answers, 4 hard negatives (same area of law,
+    # different question) and 2 off-topic:
+    #
+    #   on-point   mu=0.528  sd=0.119  min=0.434
+    #   hard-neg   mu=0.280  sd=0.055  max=0.369
+    #   off-topic  mu=0.196            max=0.235
+    #
+    # The threshold sits in the gap between on-point min (0.434) and hard-negative max
+    # (0.369): zero false fails on correct answers, all four hard negatives caught.
+    #
+    # The previous 0.50 seed failed THREE OF FIVE correct answers -- a reminder that a
+    # plausible-looking threshold is not a measured one, and that under fail-fast an
+    # over-tight threshold silently rejects good legal work.
+    #
+    # Caveat: n=11 total. This is a working calibration, not a benchmark. Widen the
+    # sample before relying on it, and re-run it for any other embedding model.
+    L4_FAIL_BELOW: float = 0.40
+    L4_PASS_AT: float = 0.45
     L4_MIN_ANSWER_TOKENS: int = 20  # "Yes." scores erratically -> WARN, not FAIL
 
     # --- Chunking ---
@@ -122,7 +139,12 @@ class Settings(BaseSettings):
     # 4 off-point answers -- the correct trade under fail-fast, where a false FAIL is
     # unrecoverable. Applying the real-model 0.50/0.70 here fails EVERY answer, which
     # would paint a green run red on L4 alone.
-    MOCK_L4_FAIL_BELOW: float = 0.08
+    # Lowered from 0.08 after a live run: a correctly-worded on-point answer scored
+    # 0.073 and was failed. The original figure came from a 4-sample estimate whose
+    # on-point minimum was 0.145, so the real spread is wider than that sample showed.
+    # Under fail-fast a false FAIL is unrecoverable, so the threshold sits below the
+    # lowest on-point score actually observed, not below the estimated one.
+    MOCK_L4_FAIL_BELOW: float = 0.04
     MOCK_L4_PASS_AT: float = 0.20
 
     # L3 under the mock embedder. Measured, claim -> cited document, over 3 genuine

@@ -84,6 +84,9 @@ _RUBRIC_CODES: dict[str, FindingCode] = {
     "contextual_accuracy": FindingCode.JUDGE_FAILED_CONTEXTUAL_ACCURACY,
     "citation_integrity": FindingCode.JUDGE_FAILED_CITATION_INTEGRITY,
     "responsiveness": FindingCode.JUDGE_FAILED_RESPONSIVENESS,
+    # Binary dimensions returned by the active prompt.
+    "correctness": FindingCode.JUDGE_FAILED_FAITHFULNESS,
+    "material_completeness": FindingCode.JUDGE_FAILED_COMPLETENESS,
 }
 
 #: Keep the prompt bounded. A judgment is ~84k chars (F9); a handful of retrieved
@@ -312,7 +315,13 @@ class FaithfulnessJudgeLayer(BaseLayer):
 
         findings: list[Finding] = []
         for dimension, code in _RUBRIC_CODES.items():
-            score = getattr(result.rubric, dimension)
+            score = getattr(result.rubric, dimension, None)
+            # A judge populates either the binary pair or the legacy 0-4 set, so the
+            # other set is None. Unscored is NOT zero: treating it as a failure would
+            # invent findings the judge never made -- which is the one thing this
+            # layer must never do.
+            if score is None:
+                continue
             severity = _severity_for(dimension, score)
             if severity is None:
                 continue
@@ -358,12 +367,19 @@ class FaithfulnessJudgeLayer(BaseLayer):
 
 
 def _fail_threshold(dimension: str) -> int:
+    if dimension in _DIMENSION_MAX:
+        return 0
     if dimension == "factual_faithfulness":
         return _FAITHFULNESS_FAIL_AT_OR_BELOW
     return _OTHER_FAIL_AT_OR_BELOW
 
 
 def _severity_for(dimension: str, score: int) -> Severity | None:
+    # Binary dimensions have no middle ground: the prompt defines 0 as "a competent
+    # lawyer could be materially misled", which is a failure, not a caution. Inventing
+    # a WARN band here would soften a verdict the prompt states categorically.
+    if dimension in _DIMENSION_MAX:
+        return Severity.FAIL if score == 0 else None
     if dimension == "factual_faithfulness":
         if score <= _FAITHFULNESS_FAIL_AT_OR_BELOW:
             return Severity.FAIL
@@ -382,23 +398,42 @@ _DIMENSION_COPY = {
     "contextual_accuracy": "uses a case for something other than what it actually decides",
     "citation_integrity": "attributes a proposition to an authority that does not carry it",
     "responsiveness": "does not answer the question that was asked",
+    "correctness": "contains a material legal or factual error",
+    "material_completeness": (
+        "omits something a competent lawyer would need to answer the question"
+    ),
 }
 
 
 def _message_for(dimension: str, score: int, reasons: str) -> str:
-    base = f"The answer {_DIMENSION_COPY[dimension]} (scored {score}/4)."
+    ceiling = _DIMENSION_MAX.get(dimension, 4)
+    base = f"The answer {_DIMENSION_COPY[dimension]} (scored {score}/{ceiling})."
     return f"{base} {reasons}".strip()
 
 
 def _rubric_dict(rubric: JudgeRubric | None) -> dict[str, int] | None:
+    """Only the dimensions this judge actually scored.
+
+    A judge populates either the binary pair or the legacy 0-4 set. ``None`` means
+    "not assessed", which must not be reported as a zero -- an unscored dimension is
+    not a failed one.
+    """
     if rubric is None:
         return None
-    return {
+    scored = {
         "factual_faithfulness": rubric.factual_faithfulness,
         "contextual_accuracy": rubric.contextual_accuracy,
         "citation_integrity": rubric.citation_integrity,
         "responsiveness": rubric.responsiveness,
+        "correctness": rubric.correctness,
+        "material_completeness": rubric.material_completeness,
     }
+    return {k: v for k, v in scored.items() if v is not None}
+
+
+#: Maximum value each dimension can take, so a mean is computed against the right
+#: scale. The active prompt's dimensions are binary; the legacy rubric is 0-4.
+_DIMENSION_MAX = {"correctness": 1, "material_completeness": 1}
 
 
 def _rubric_score(rubric: JudgeRubric | None) -> float | None:
@@ -406,8 +441,9 @@ def _rubric_score(rubric: JudgeRubric | None) -> float | None:
     if rubric is None:
         return None
     values = _rubric_dict(rubric)
-    assert values is not None
-    return sum(values.values()) / (4 * len(values))
+    if not values:
+        return None
+    return sum(v / _DIMENSION_MAX.get(k, 4) for k, v in values.items()) / len(values)
 
 
 @dataclass
