@@ -1,0 +1,66 @@
+[project]
+name = "sal-verifier"
+version = "0.1.0"
+description = "Five-layer verification of legal AI outputs: citation integrity, source trust, grounding, responsiveness, faithfulness"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sse-starlette>=2.1",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "celery[redis]>=5.4",
+    "redis>=5.2",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary,pool]>=3.2",
+    "pgvector>=0.3",
+    "httpx>=0.28",
+    "selectolax>=0.3",
+    "rapidfuzz>=3.10",
+    "tenacity>=9.0",
+    "structlog>=24.4",
+    "orjson>=3.10",
+    "python-ulid>=3.0",
+    "pyyaml>=6.0",
+    # Vendor SDKs. Imported lazily by providers/real/*; the stack boots without them configured.
+    "voyageai>=0.3",
+    "anthropic>=0.49",
+    "playwright>=1.48",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-socket>=0.7",
+    "respx>=0.21",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/verifier"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+ignore_missing_imports = true
