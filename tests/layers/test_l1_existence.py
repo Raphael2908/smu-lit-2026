@@ -723,3 +723,77 @@ def test_normalisation_maps_every_character_back_to_the_source():
     assert len(normalized.text) == len(normalized.origin)
     start = normalized.text.index("two-stage")
     assert normalized.source_slice(source, start, start + len("two-stage")) == "Two–Stage"
+
+
+# -- what an UNRESOLVABLE citation is TOLD the reader ------------------------------
+#
+# One sentence used to cover every cause: "is a report-only citation, which the full-text
+# index cannot resolve (F7)" -- printed for an sso.agc.gov.sg URL too, which is not a
+# report citation and has nothing to do with the full-text index. Saying something
+# specific we did not establish is a smaller error than a false FAIL, but it is the same
+# kind, and not making it is this layer's whole discipline.
+
+
+async def _unresolvable_message(detail: str | None) -> str:
+    citation = report_citation()
+    result = await CitationExistenceLayer().run(
+        layer_input(
+            clusters=(cluster_of(citation),),
+            resolutions={
+                citation.citation_key: resolution(
+                    citation, ResolutionStatus.UNRESOLVABLE, detail=detail
+                )
+            },
+        )
+    )
+    return only(result, FindingCode.CITATION_UNVERIFIED).message
+
+
+async def test_a_report_only_citation_still_says_report_only() -> None:
+    message = await _unresolvable_message("report_citation_not_resolvable")
+    assert "report-only citation" in message
+    assert "F7" in message
+
+
+async def test_an_off_domain_url_is_not_called_a_report_only_citation() -> None:
+    message = await _unresolvable_message("url_not_on_this_source")
+    assert "report-only" not in message
+    assert "outside the corpus" in message
+
+
+async def test_a_host_with_no_adapter_says_so() -> None:
+    """The detail carries a host suffix, so the lookup must match on the stem."""
+    message = await _unresolvable_message("url_not_on_any_source:medium.com")
+    assert "report-only" not in message
+    assert "no adapter" in message
+
+
+async def test_an_unknown_detail_gets_the_honest_default() -> None:
+    for detail in (None, "something_nobody_wrote_a_sentence_for"):
+        message = await _unresolvable_message(detail)
+        assert "report-only" not in message
+        assert "not evidence that it is wrong" in message
+
+
+async def test_every_unresolvable_reason_stays_a_warn() -> None:
+    """Only the sentence changes. None of these may drift toward a verdict."""
+    from verifier.layers.l1_existence import _UNRESOLVABLE_REASONS
+
+    citation = report_citation()
+    for detail in [*_UNRESOLVABLE_REASONS, None]:
+        result = await CitationExistenceLayer().run(
+            layer_input(
+                clusters=(cluster_of(citation),),
+                resolutions={
+                    citation.citation_key: resolution(
+                        citation, ResolutionStatus.UNRESOLVABLE, detail=detail
+                    )
+                },
+            )
+        )
+        assert result.status is LayerStatus.WARN
+        assert FindingCode.CITATION_NOT_FOUND not in codes(result)
+        assert only(result, FindingCode.CITATION_UNVERIFIED).severity is Severity.WARN
+        assert (
+            "not evidence that it is wrong" in only(result, FindingCode.CITATION_UNVERIFIED).message
+        )

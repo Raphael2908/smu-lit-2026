@@ -15,26 +15,47 @@ from verifier.settings import settings
 
 
 @lru_cache
-def get_http_fetcher() -> Fetcher:
+def get_http_fetcher(user_agent: str | None = None) -> Fetcher:
+    """``user_agent`` is per-SOURCE, not per-deployment.
+
+    Sources disagree about what a polite client looks like. eLitigation accepts
+    ``sal-verifier/0.1 (...)``; sso.agc.gov.sg answers that exact string with 403 and
+    serves ``Mozilla/5.0 (compatible; sal-verifier/0.1; ...)`` -- the conventional
+    ``(compatible; ...)`` bot form -- with 200. Both identify us honestly; only one is
+    shaped the way that WAF expects. One global default could not satisfy both.
+
+    Callers must always pass the argument rather than calling bare: ``f()`` and ``f(None)``
+    are different ``lru_cache`` keys and would build two clients.
+    """
     if settings.is_mock:
         from verifier.providers.mock.fetcher import MockFetcher
 
         return MockFetcher()
     from verifier.providers.fetcher_http import HttpFetcher
 
-    return HttpFetcher()
+    return HttpFetcher(user_agent=user_agent)
 
 
 @lru_cache
-def get_browser_fetcher() -> Fetcher:
-    """Login-walled sources only. Heavy: keep it off the fast path."""
+def get_browser_fetcher(user_agent: str | None = None) -> Fetcher:
+    """Sources with no plain-HTTP path. Heavy: keep it off the fast path.
+
+    Two kinds qualify, and they are different problems with one answer. A LOGIN WALL
+    (LawNet) needs a persisted session a script cannot obtain. A BOT-DETECTION CHALLENGE
+    (AGC SSO answers httpx with 202 and ``x-amzn-waf-action: challenge``) needs a client
+    that executes the page. Both are "a real browser or nothing".
+
+    ``user_agent`` is None for "send whatever Chromium sends", which is the right default
+    -- see ``BrowserFetcher._context_kwargs``. Callers must always pass the argument
+    rather than calling bare: ``f()`` and ``f(None)`` are different ``lru_cache`` keys.
+    """
     if settings.is_mock:
         from verifier.providers.mock.fetcher import MockFetcher
 
         return MockFetcher(strategy="browser")
     from verifier.providers.fetcher_browser import BrowserFetcher
 
-    return BrowserFetcher()
+    return BrowserFetcher(user_agent=user_agent)
 
 
 @lru_cache

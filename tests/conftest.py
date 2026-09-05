@@ -44,13 +44,23 @@ def _no_network(socket_enabled: bool = False):
 
 @pytest.fixture(autouse=True)
 def _mock_providers():
-    """Force mock mode and clear the provider caches around every test."""
+    """Force mock mode and clear the provider caches around every test.
+
+    The registry is cleared alongside them, and that is load-bearing rather than tidy:
+    a SourceAdapter memoises its fetcher on first access, and the registry memoises its
+    adapters for the life of the process. Clearing only the factory would leave test N+1
+    holding test N's MockFetcher through an adapter that never re-resolved it, so the
+    provider mode a test sets would not be the one actually in force.
+    """
     from verifier.providers import factory
     from verifier.settings import get_settings
+    from verifier.sources import registry
 
     get_settings.cache_clear()
     factory.reset_provider_cache()
+    registry.reset()
     yield
+    registry.reset()
     factory.reset_provider_cache()
     get_settings.cache_clear()
 

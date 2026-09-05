@@ -77,6 +77,12 @@ services:
       DATABASE_URL: postgresql+psycopg://verifier:verifier@postgres:5432/verifier
       REDIS_URL: redis://redis:6379/0
 
+  # CURRENTLY UNREACHABLE, and no source needs it. Nothing dispatches to QUEUE_BROWSER,
+  # and both implemented adapters declare FetchStrategy.HTTP -- SSO included, because a
+  # headless browser is the ONE client its WAF blocks outright (403), while plain httpx
+  # under a conventional UA gets 200. The browser path is for LawNet, which is not built.
+  # Kept because BrowserFetcher is real, tested and needed the moment a login-walled
+  # source lands; started only with `--profile browser`. See todo.md bug 15.
   browserworker:
     <<: *app
     build:

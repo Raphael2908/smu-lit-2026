@@ -38,6 +38,20 @@ MAINTENANCE_TOKEN = "__maintenance__"
 #: Minimal search index. Phrases are matched case-insensitively as substrings, mirroring
 #: F6's finding that a real case name hits at rank 1 and a fabricated one returns
 #: nothing at all.
+#: Singapore Statutes Online. Host-dispatched, see ``_resolve``.
+SSO_HOST = "sso.agc.gov.sg"
+
+#: Real captured pages, one per state SSO's classifier has to tell apart. All three were
+#: fetched through the adapter's own fetcher; see sources/sso/parser.py for the figures.
+SSO_BY_SLUG: dict[str, str] = {"IA1959": "sso_IA1959.html"}
+SSO_NOT_FOUND_FIXTURE = "sso_not_found.html"
+SSO_BLOCKED_FIXTURE = "sso_waf_blocked.html"
+
+#: Forces the WAF-refusal page, the way MAINTENANCE_TOKEN forces eLitigation's outage.
+#: That state cannot be summoned from the live site on demand either, and mishandling it
+#: would report every real Act as fabricated for as long as a block lasted.
+BLOCKED_TOKEN = "__blocked__"
+
 SEARCH_INDEX: tuple[tuple[str, str, str], ...] = (
     (
         "spandeck",
@@ -84,9 +98,25 @@ class MockFetcher:
     def _resolve(self, url: str) -> tuple[str, int]:
         parts = urlsplit(url)
         path = parts.path
+        host = (parts.hostname or "").lower()
 
         if MAINTENANCE_TOKEN in url:
             return self._read(MAINTENANCE_FIXTURE), 200
+
+        # HOST FIRST for SSO, not path. Everything below dispatches on path alone, which
+        # was fine while one source existed; with two it would serve eLitigation
+        # judgment fixtures for an sso.agc.gov.sg URL that happened to contain /gd/s/.
+        if host == SSO_HOST or host.endswith("." + SSO_HOST):
+            if BLOCKED_TOKEN in url:
+                return self._read(SSO_BLOCKED_FIXTURE), 403
+            slug = path.rsplit("/", 1)[-1]
+            fixture = SSO_BY_SLUG.get(slug)
+            if fixture:
+                return self._read(fixture), 200
+            # Unknown Act -> SSO's own "Page Not Found" page, at HTTP 200. Same shape as
+            # eLitigation's soft-404 and the same reason for serving it: a mock that
+            # returned 404 would hide the entire problem the classifier exists to solve.
+            return self._read(SSO_NOT_FOUND_FIXTURE), 200
 
         if path.startswith("/gd/s/"):
             slug = path[len("/gd/s/") :].strip("/")

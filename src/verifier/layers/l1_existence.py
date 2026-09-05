@@ -133,12 +133,71 @@ _PROPOSITION_MESSAGE: dict[PropositionKind, str] = {
     PropositionKind.STATUTE: "This states a statutory rule",
 }
 
+#: Why a citation was UNRESOLVABLE. One sentence cannot be honest about all of them.
+#:
+#: This used to be a single string saying "is a report-only citation, which the full-text
+#: index cannot resolve (F7)" -- printed for EVERY unresolvable citation, including an
+#: sso.agc.gov.sg URL, which is not a report citation and has nothing to do with the
+#: full-text index. Telling a lawyer something specific that we did not establish is a
+#: smaller error than a false FAIL, but it is the same KIND of error, and this layer's
+#: whole discipline is not making it.
+#:
+#: Keyed on ``Resolution.detail``, which already carried the truth. Matched on the stem
+#: before ":" so "url_not_on_any_source:medium.com" resolves. Deliberately a string
+#: lookup and not an import: ``layers/`` does not depend on ``sources/`` today, and one
+#: message is not a reason to start.
+_UNRESOLVABLE_REASONS: dict[str, str] = {
+    "report_citation_not_resolvable": (
+        "is a report-only citation, which the full-text index cannot resolve (F7). "
+        "It was not checked -- this is not evidence that it is wrong"
+    ),
+    "url_not_on_this_source": (
+        "points at a source outside the corpus this citation was looked up in, so it "
+        "was not checked -- this is not evidence that it is wrong"
+    ),
+    "url_not_on_any_source": (
+        "points at a source we have no adapter for, so it was not checked -- this is "
+        "not evidence that it is wrong"
+    ),
+    "no_adapter_for_citation_type": (
+        "is a citation form we cannot resolve to any source, so it was not checked -- "
+        "this is not evidence that it is wrong"
+    ),
+    "no_url_for_citation": (
+        "could not be turned into a source URL, so it was not checked -- this is not "
+        "evidence that it is wrong"
+    ),
+    "empty_case_name": (
+        "carried no case name to search for, so it was not checked -- this is not "
+        "evidence that it is wrong"
+    ),
+    "sso_resolves_urls_only": (
+        "is a statutory reference, which we can only check when it is accompanied by a "
+        "link. It was not checked -- this is not evidence that it is wrong"
+    ),
+    "not_a_legislation_url": (
+        "links to a page that is not a legislation document, so it was not checked -- "
+        "this is not evidence that it is wrong"
+    ),
+}
+
+#: What to say when the detail is absent or unrecognised. Says only what is known.
+_UNRESOLVABLE_DEFAULT = (
+    "could not be resolved to any source we cover, so it was not checked -- this is not "
+    "evidence that it is wrong"
+)
+
+
+def _unresolvable_explanation(detail: str | None) -> str:
+    return _UNRESOLVABLE_REASONS.get((detail or "").split(":", 1)[0], _UNRESOLVABLE_DEFAULT)
+
+
 #: Resolution states that mean "we did not find out". All WARN, never FAIL.
 _UNVERIFIED_STATES: dict[ResolutionStatus, tuple[FindingCode, str]] = {
     ResolutionStatus.UNRESOLVABLE: (
         FindingCode.CITATION_UNVERIFIED,
-        "is a report-only citation, which the full-text index cannot resolve (F7). "
-        "It was not checked -- this is not evidence that it is wrong",
+        # Placeholder: the real sentence comes from _unresolvable_explanation(detail).
+        _UNRESOLVABLE_DEFAULT,
     ),
     ResolutionStatus.UNAUTHENTICATED: (
         FindingCode.SOURCE_UNAUTHENTICATED,
@@ -576,6 +635,8 @@ class CitationExistenceLayer(BaseLayer):
 
         if resolution.status in _UNVERIFIED_STATES:
             code, explanation = _UNVERIFIED_STATES[resolution.status]
+            if resolution.status is ResolutionStatus.UNRESOLVABLE:
+                explanation = _unresolvable_explanation(resolution.detail)
             counts["unverified"] += 1
             evidence = Evidence(
                 source_url=resolution.url,

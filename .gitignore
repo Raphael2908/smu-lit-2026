@@ -20,4 +20,9 @@ browser-profile/
 # Local demo aid, not part of the stack: stubs the fetcher while eLitigation is
 # in a maintenance window. Never commit it -- a checked-in override silently turns
 # off real source fetching for everyone who runs `docker compose up`.
+#
+# Renamed from docker-compose.override.yml so compose stops AUTO-LOADING it (todo.md
+# bug 8): as an override it beat .env and silently flipped a real stack to mock. Both
+# names stay ignored -- the rename removed the ambush, not the reason to keep it local.
 docker-compose.override.yml
+docker-compose.mockfetch.yml

@@ -65,3 +65,36 @@ async def test_calls_are_recorded_for_assertions() -> None:
 
 async def test_unknown_path_is_a_404() -> None:
     assert (await MockFetcher().fetch(f"{BASE}/nope")).status_code == 404
+
+
+# -- SSO --------------------------------------------------------------------------
+
+
+async def test_an_sso_url_is_dispatched_on_its_host_not_its_path() -> None:
+    """Path-only dispatch was fine with one source. With two it would serve eLitigation
+    judgment fixtures for any SSO URL that happened to contain /gd/s/."""
+    result = await MockFetcher().fetch("https://sso.agc.gov.sg/gd/s/2007_SGCA_37")
+    assert result.status_code == 200
+    assert "Spandeck" not in result.html
+
+
+async def test_a_known_act_serves_the_captured_page() -> None:
+    result = await MockFetcher().fetch("https://sso.agc.gov.sg/Act/IA1959")
+    assert result.status_code == 200
+    assert "Immigration Act 1959 - Singapore Statutes Online" in result.html
+
+
+async def test_an_unknown_act_serves_ssos_own_page_not_found_at_http_200() -> None:
+    """SSO answers a fabricated Act with 200, exactly as eLitigation does (F3), so a mock
+    that returned 404 would hide the problem the classifier exists to solve."""
+    result = await MockFetcher().fetch("https://sso.agc.gov.sg/Act/ZZZ9999")
+    assert result.status_code == 200
+    assert "Page Not Found" in result.html
+
+
+async def test_the_waf_refusal_state_can_be_forced() -> None:
+    """The third state, and the one that cannot be summoned from the live site on demand
+    -- the same reason MAINTENANCE_TOKEN exists for eLitigation's outage page."""
+    result = await MockFetcher().fetch("https://sso.agc.gov.sg/Act/IA1959?__blocked__=1")
+    assert result.status_code == 403
+    assert "Singapore Statutes Online" not in result.html

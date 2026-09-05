@@ -251,9 +251,43 @@ class Settings(BaseSettings):
     SOURCE_TIMEOUT_S: float = 20.0
     SOURCE_USER_AGENT: str = "sal-verifier/0.1 (SMU LIT 2026 research prototype)"
     ELITIGATION_BASE_URL: str = "https://www.elitigation.sg"
+    SSO_BASE_URL: str = "https://sso.agc.gov.sg"
+
+    #: SSO's WAF rejects SOURCE_USER_AGENT outright. MEASURED, not guessed:
+    #:
+    #:   sal-verifier/0.1 (SMU LIT 2026 research prototype)              -> 403 blocked
+    #:   Mozilla/5.0 (compatible; sal-verifier/0.1; SMU LIT 2026 ...)    -> 200, 346kB
+    #:   HeadlessChrome/151 (what our own browser fetcher sends)         -> 403 blocked
+    #:
+    #: This is the conventional ``(compatible; <product>)`` bot form, and it still names
+    #: us and the project. It is NOT a browser impersonation and must not become one:
+    #: the headless-Chromium result above is the site saying it does not want automated
+    #: browsers, and dressing one up as a headed browser would be evading that rather
+    #: than complying with it. Plain HTTP under an honest name is what SSO permits.
+    SSO_USER_AGENT: str = (
+        "Mozilla/5.0 (compatible; sal-verifier/0.1; SMU LIT 2026 research prototype)"
+    )
+
+    #: Bound on an inline browser fetch. NOT a duplicate of SOURCE_TIMEOUT_S, which is
+    #: httpx-only and does not constrain the browser path at all.
+    #:
+    #: Browser fetches currently run inline in the orchestrator's asyncio.gather rather
+    #: than on QUEUE_BROWSER (todo.md bug 14), which puts them in front of the ~0.6s
+    #: fabrication check. BROWSER_TIMEOUT_S is 45.0 and RUN_SOFT_LIMIT is 45, so an
+    #: unbounded browser nav can consume the whole run. This is the mitigation, not the
+    #: fix; the fix is the queue.
+    SOURCE_BROWSER_INLINE_TIMEOUT_S: float = 20.0
 
     # --- Browser (login-walled sources) ---
     BROWSER_PROFILE_DIR: str = "./browser-profile"
+    #: Blank means "send whatever Chromium sends", which is the correct default.
+    #:
+    #: This used to be SOURCE_USER_AGENT, which is a non-browser string. Handing it to a
+    #: real browser is worse than useless in front of a bot filter: it advertises a
+    #: script from something that renders like a browser, which is precisely the
+    #: mismatch such a filter looks for. Set this only for a source that demands a
+    #: specific string.
+    BROWSER_USER_AGENT: str = ""
     BROWSER_TIMEOUT_S: float = 45.0
     BROWSER_HEADLESS: bool = True
 
