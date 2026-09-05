@@ -7,48 +7,48 @@ context, not as outstanding work.
 
 ## Bugs to fix
 
-### 1. The contextual prefix fails correct legal work — CONFIRMED, not fixed
+### 1. ~~The contextual prefix fails correct legal work~~ — FIXED
 
-**Severity: high — measured failing a correct answer on a live run.**
+Diagnosed, measured and fixed. See `docs/03-findings.md` F14.
 
-No longer a suspicion. See `docs/03-findings.md` F14.
+**The cause was the summary, not "the prefix".** Mean pairwise cosine between
+Spandeck's own 43 chunks — the quantity ranking inside a document depends on:
 
-**Live.** A correct answer citing `[2007] SGCA 37` and quoting paragraph [115]
-verbatim: L1 scored the quote **1.000**, L4 scored **0.751**, and **L3 failed it** at
-0.325 against the 0.35 floor. The failing claim was the quoted sentence itself, and the
-chunk containing [115] was not retrieved at all.
-
-**A/B against real `voyage-law-2`**, four grounded claims, 43 chunks, prefix on vs raw:
-
-| | Prefixed (as shipped) | Raw |
+| | mean pair | spread |
 |---|---|---|
-| Mean max cos | 0.503 | **0.621** |
-| Claims below the 0.35 floor | **1 of 4** | **0 of 4** |
-| The quoted paragraph's own chunk | 0.304, rank **#11** | **0.431**, rank **#4** |
+| Raw text | 0.426 | **0.574** |
+| Heading path only | 0.435 | 0.565 |
+| Summary + heading (shipped) | **0.894** | **0.106** |
+| `voyage-context-4` | **0.940** | **0.060** |
 
-The summary is 1,370 chars (~342 tokens) and is byte-identical across all 43 chunks, so
-it adds a large shared component to every document vector with no counterpart in the
-query vector — claims are embedded bare. It both lowers absolute similarity and
-compresses the differences *between* chunks, which is why it damages L3's verdict and
-L5's evidence by the same mechanism.
+The ~1,500-char summary is byte-identical across every chunk, so prefixing it leaves no
+two chunks of the judgment more than 0.24 apart. The heading path is short and differs
+per chunk, so it disambiguates instead. Over 5 claims: heading costs 2% of mean
+similarity and fails nothing; summary costs 23% and fails a correctly grounded claim in
+**4 of 4** independent summary draws (0.317–0.349 against the 0.35 floor, versus 0.436
+with heading only).
 
-**Still do not fix this by lowering the threshold.** The raw-text figures are the ones
-Part 4 calibrated, and they fail 0 of 4.
+**Two corrections to what this file used to say.** The margin gate was never the one
+firing — the prefix suppresses `s_cited` and `s_bg` together and the contrastive design
+cancels most of it, so every failure was a *floor* failure. And the intermittency was
+not the summary's variability: all four draws fail. It was `split_claims`, which is a
+Haiku call whose output varies, so a run may or may not contain the claim that trips.
 
-**The fix, when it is taken:** stop prefixing on the L3 document path. Note there is no
-switch for it today — `get_document_summary` returns `""` only when `summariser is
-None`, and no production path produces that, so the "config 1 vs config 2" A/B in the
-old plan was never runnable in-process.
+**Fixed:** `settings.L3_CONTEXTUAL_PREFIX` (`none` / `heading` / `summary_heading`,
+default `heading`). The summariser is no longer called on the L3 path unless the regime
+uses it, and the regime namespaces the embedding cache so two regimes cannot mix in the
+background pool — that mixing would have been a false *green*, so nothing would have
+gone red to reveal it.
 
-**Correction to what this file used to say:** `EmbeddingsProvider.contextualized_embed`
-does not exist. `VoyageEmbedder.contextualized_embed` and `uses_native_context` do, and
-have **zero call sites in `src/`** — `CachedEmbedder._embed` always calls `embed()` and
-`_embed_source` always prefixes. `EMBEDDINGS_MODEL=voyage-context-4` would today send
-chunks to the ordinary endpoint *and still prefix them by hand*. The one-env-var A/B is
-unimplemented, and that model has no calibrated thresholds either.
+**`voyage-context-4` is not the alternative.** Now measured: within-document
+compression 0.940, decisive paragraph at rank #12–#38. Contextualisation inside the
+model does the same damage as contextualisation by string concatenation, because L3
+needs to discriminate *within* a document, not between documents. See F15.
 
-Files: `src/verifier/semantic/contextualise.py`, `src/verifier/layers/l3_alignment.py`,
-`src/verifier/providers/voyage.py`.
+**Left open:** the A/B is n=5 claims over one judgment with 22 background chunks from
+2 documents. Same caveat class as Part 4 — enough to condemn the summary prefix, not a
+benchmark. Re-running it after any change to `EMBEDDINGS_MODEL` is mandatory, and the
+harness is not committed yet.
 
 ---
 
@@ -207,7 +207,9 @@ Files: `extension/src/panel.css`.
   75/90 figures separate the regimes cleanly on one judgment, which is not the same as
   being right across the corpus.
 - **Every number is model-specific.** Changing `EMBEDDINGS_MODEL` invalidates all of
-  them.
+  them — and so does changing `L3_CONTEXTUAL_PREFIX`, which decides what text is
+  embedded before any threshold sees it. The current figures are calibrated against
+  `heading`.
 
 ## Deferred by scope decision
 

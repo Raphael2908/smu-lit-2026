@@ -94,6 +94,7 @@ class SourceGroundingLayer(BaseLayer):
         absolute_floor: float | None = None,
         background_size: int | None = None,
         passages_per_claim: int | None = None,
+        contextual_prefix: str | None = None,
     ) -> None:
         self._embedder = resolve(embedder, default_embedder)
         self._summariser = resolve(summariser, default_summariser)
@@ -118,9 +119,19 @@ class SourceGroundingLayer(BaseLayer):
         self.passages_per_claim = (
             settings.L3_PASSAGES_PER_CLAIM if passages_per_claim is None else passages_per_claim
         )
+        # WHICH TEXT IS EMBEDDED, not a threshold. See settings.L3_CONTEXTUAL_PREFIX.
+        self.contextual_prefix = (
+            settings.L3_CONTEXTUAL_PREFIX if contextual_prefix is None else contextual_prefix
+        )
 
     async def _run(self, data: LayerInput) -> LayerResult:
-        embedder = CachedEmbedder(self._embedder, self._embedding_repo)
+        # The prefix regime namespaces the cache. Vectors made under a different regime
+        # must not be read back, and -- the part content-addressing alone does not cover
+        # -- must not be sampled into this run's background either. See
+        # CachedEmbedder.cache_model.
+        embedder = CachedEmbedder(
+            self._embedder, self._embedding_repo, cache_namespace=self.contextual_prefix
+        )
         clusters = data.extraction.clusters
 
         if not clusters:
@@ -303,6 +314,10 @@ class SourceGroundingLayer(BaseLayer):
                 "claims_attributed": attributed_total,
                 "claims_unattributed": max(0, len(raw_claims) - attributed_total),
                 "passages_per_claim": self.passages_per_claim,
+                # Which text was embedded. Reported because it changes what every
+                # score in this result MEANS, and because two runs under different
+                # regimes are not comparable -- see settings.L3_CONTEXTUAL_PREFIX.
+                "contextual_prefix": self.contextual_prefix,
                 "passages_generated": generated,
                 "passages_kept": len(kept),
                 "highest_dropped_score": dropped,
@@ -430,11 +445,21 @@ class SourceGroundingLayer(BaseLayer):
     async def _embed_source(
         self, embedder: CachedEmbedder, document: SourceDocument, doc_key: str
     ) -> tuple[list[Chunk], object]:
-        summary = await contextualise.get_document_summary(
-            document, summariser=self._summariser, doc_repo=self._doc_repo
-        )
+        # The summariser is called ONLY when the regime actually embeds its output.
+        # Under the default that is never, which takes a Haiku call off L3's critical
+        # path as well as taking the summary out of the vector.
+        summary = None
+        if self.contextual_prefix == "summary_heading":
+            summary = await contextualise.get_document_summary(
+                document, summariser=self._summariser, doc_repo=self._doc_repo
+            )
         raw_chunks = chunk_source_document(document)
-        chunks = contextualise.build_chunks(raw_chunks, summary=summary, document_id=doc_key)
+        chunks = contextualise.build_chunks(
+            raw_chunks,
+            summary=summary,
+            document_id=doc_key,
+            include_heading=self.contextual_prefix != "none",
+        )
         # Source passages are DOCUMENTS -- the corpus being searched. These are the only
         # vectors written through to the shared cache: a judgment recurs across runs, so
         # the second question that touches this case pays nothing.

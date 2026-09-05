@@ -1,14 +1,33 @@
 """Prefixing global context onto a chunk before it is embedded.
 
 A 1,800-token slice of a judgment, read cold, is close to meaningless: it says "the
-appellant" without saying who, and "this test" without saying which. Embedded on its
-own it lands wherever its vocabulary happens to point. Prefixing a one-paragraph
-document summary and the heading path pulls the chunk back towards what the case is
-actually about, which is the whole point of a retrieval layer.
+appellant" without saying who, and "this test" without saying which. Prefixing the
+heading path pulls the chunk back towards what that part of the case is about, which
+is what a retrieval layer wants.
+
+THE DOCUMENT SUMMARY DOES NOT DO THAT, AND THIS MODULE USED TO ASSUME IT DID.
+
+Measured against real voyage-law-2 over Spandeck's 43 chunks (docs/03-findings.md
+F14), mean pairwise cosine between chunks of the SAME judgment:
+
+    raw 0.426 | heading 0.435 | summary + heading 0.894
+
+The heading path is short and DIFFERS per chunk, so it disambiguates. The summary runs
+~1,500 chars and is byte-identical across every chunk, so it adds one large shared
+component to all of them -- and after L2 normalisation that component is bought with
+magnitude the chunk's own meaning used to have. The document ends up as 43 vectors
+that all point nearly the same way, which destroys the only thing L3 and L5 need from
+this space: the ability to rank passages WITHIN a case. A paragraph an answer quotes
+verbatim fell from rank #2 to #16, and a correctly grounded claim fell from 0.392 to
+0.325, under the 0.35 floor.
+
+Hence ``settings.L3_CONTEXTUAL_PREFIX``, which defaults to "heading". The summary is
+still built and cached -- it is useful text for a human and for the judge -- it is
+just no longer embedded.
 
 The prefixed string -- not the bare chunk text -- is what gets hashed into
 ``Chunk.embed_input_sha256``, and that hash is the embedding cache key. This is
-deliberate: changing the summary prompt changes every embed input, which must
+deliberate: changing the prefix regime changes every embed input, which must
 invalidate every cached vector. Hashing the bare text would leave the cache serving
 vectors produced under an older prompt, and the resulting scores would be quietly
 incomparable with the thresholds calibrated against the new one.
@@ -65,8 +84,13 @@ def build_chunk(
     *,
     summary: str | None = None,
     document_id: str | None = None,
+    include_heading: bool = True,
 ) -> Chunk:
-    embed_input = build_embed_input(raw.text, summary=summary, heading_path=raw.heading_path)
+    embed_input = build_embed_input(
+        raw.text,
+        summary=summary,
+        heading_path=raw.heading_path if include_heading else (),
+    )
     return Chunk(
         ordinal=raw.ordinal,
         kind=raw.kind,
@@ -84,8 +108,12 @@ def build_chunks(
     *,
     summary: str | None = None,
     document_id: str | None = None,
+    include_heading: bool = True,
 ) -> list[Chunk]:
-    return [build_chunk(raw, summary=summary, document_id=document_id) for raw in raws]
+    return [
+        build_chunk(raw, summary=summary, document_id=document_id, include_heading=include_heading)
+        for raw in raws
+    ]
 
 
 async def get_document_summary(

@@ -345,7 +345,95 @@ which is precisely ranking, the one thing cosine is supposed to survive anisotro
 Still **not** fixed by lowering the threshold. The raw-text figures are the ones Part 4
 calibrated, and they fail 0 of 4.
 
-### F15 — the documented `voyage-context-4` A/B does not exist
+#### The mechanism, measured: the summary collapses the judgment to a point
+
+The explanation above ("a large shared component") is now a number. Mean pairwise
+cosine **between Spandeck's own 43 chunks**, which is exactly the quantity ranking
+inside a document depends on:
+
+| Regime | mean pair | min pair | spread |
+|---|---|---|---|
+| Raw chunk text | 0.426 | 0.059 | **0.574** |
+| Heading path only | 0.435 | 0.071 | 0.565 |
+| Summary + heading (as shipped) | **0.894** | 0.760 | **0.106** |
+| `voyage-context-4`, raw text | **0.940** | 0.857 | **0.060** |
+
+Raw, the two least similar chunks of the judgment are nearly orthogonal. Prefixed, no
+two chunks are more than 0.24 apart: the case stops being 43 distinguishable passages
+and becomes one blurred point. That is why the paragraph an answer quotes verbatim
+falls from rank #2 to #16 — there is barely any ranking left to be right about.
+
+#### It is the summary, not the prefix. The heading path is nearly free
+
+Decomposing the two halves over the same 5 claims, background rebuilt inside each arm
+so the margin gate is measured and not assumed:
+
+| Arm | mean `s_cited` | mean `s_bg` | mean margin | min margin | FAILs |
+|---|---|---|---|---|---|
+| Raw | **0.639** | 0.232 | +0.407 | +0.120 | **0/5** |
+| Heading only | 0.626 | 0.220 | +0.407 | +0.167 | **0/5** |
+| Summary + heading | **0.490** | 0.174 | +0.317 | +0.096 | **1/5** |
+
+The heading path costs 2% of mean similarity, fails nothing, and *improves* the worst
+margin. The summary costs 23% and fails correct work. So the fix keeps one and drops
+the other — `L3_CONTEXTUAL_PREFIX`, defaulting to `"heading"`.
+
+**The margin gate was never the one firing.** The prefix suppresses `s_cited` and
+`s_bg` together, so the contrastive design cancels most of the damage exactly as
+intended; every failure in every arm is a floor failure. The earlier suspicion that
+L3's background sampling was at fault is not supported: `s_bg` sits at 0.17–0.23
+throughout and no claim comes near the margin threshold.
+
+#### Why it looked intermittent
+
+The failing claim, scored across four independent draws of the Haiku summary:
+
+| | heading | draw 1 | draw 2 | draw 3 | draw 4 |
+|---|---|---|---|---|---|
+| *"the application of a single test was a deliberate departure ..."* | **0.436** | 0.343 | 0.317 | 0.330 | 0.349 |
+
+**All four prefixed draws sit below the 0.35 floor.** The prefix does not fail this
+claim by bad luck; it fails it every time, and the summary's own variability (1,190 to
+1,617 chars) never rescues it. What *is* intermittent is whether the claim is emitted
+at all: `split_claims` is a Haiku call and its output varies between runs, so a given
+run may or may not contain the claim that trips. That is why the same answer produced
+a red one day and a green the next, and it is a separate pre-existing sensitivity, not
+something this fix introduces or removes.
+
+The claim is genuinely grounded — Spandeck discusses the English position at [27] and
+[42] and departs from it explicitly — so this was a false red throughout.
+
+#### What changed
+
+`settings.L3_CONTEXTUAL_PREFIX` selects `none` / `heading` / `summary_heading`, with
+`heading` the default. Two consequences beyond the score:
+
+- **The summariser is no longer called on the L3 path** unless the regime asks for it,
+  which takes a Haiku call off the critical path.
+- **The regime namespaces the embedding cache** (`CachedEmbedder.cache_model`).
+  Content-addressing already stops a stale vector being *read* after the regime
+  changes; it does not stop one being *sampled*, because `sample_background` selects on
+  model alone. Without the namespace, flipping this setting would contrast bare chunks
+  against prefixed background — a margin between two embedding regimes rather than two
+  documents, and a false **green**, so nothing would have gone red to reveal it. The
+  cost is a one-time re-embed per judgment (43 calls for Spandeck), and the first run
+  under a new regime correctly reports `background_empty`.
+
+### F15 — `voyage-context-4` is the same disease, not the cure
+
+Measured, now that the A/B is runnable. Its absolute scores are not comparable to the
+0.35 floor — no threshold transfers between models — but **ranking is** the thing the
+literature says survives anisotropy, and on ranking it is the worst arm tested:
+within-document chunk compression **0.940** (against raw's 0.426), and the decisive
+paragraph falling to rank #12–#38.
+
+That kills the planned "swap the env var and the problem goes away" fix. Making chunks
+attend to their neighbours *inside the model* does what stapling a shared summary on
+the front does: it pulls every chunk of a case toward the case's centroid. The manual
+prefix was never the problem in itself — contextualisation by any means is, because L3
+needs to discriminate **within** a document, not between documents.
+
+### F15a — the documented `voyage-context-4` A/B did not exist
 
 `VoyageEmbedder.contextualized_embed` and `uses_native_context` have **zero call sites
 in `src/`**. `CachedEmbedder._embed` calls `embed()` unconditionally, and
