@@ -89,6 +89,13 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
         'sgca:2007:37': { status: 'unauthenticated', case_name: null },
         'sghc:2019:214': { status: 'unresolvable', case_name: null },
         'raw:[2011] 3 slr(r) 540': { status: 'ambiguous', case_name: null },
+        // A `raw:` key is upper-cased whole by citationLabel, so it is the branch that
+        // produces labels far wider than the rail. Kept here deliberately: this is the
+        // shape that ran off the right edge of the panel.
+        'raw:niru battery manufacturing co v milestone company ltd':
+          { status: 'ambiguous', case_name: null },
+        'raw:seagate technology pte ltd v goh han kim':
+          { status: 'unresolvable', case_name: null },
       },
     },
 
@@ -107,6 +114,7 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
       resolutions: {
         'sgca:2007:37': { status: 'resolved', case_name: 'Chwee Kin Keong v Digilandmall.com Pte Ltd', domain: 'elitigation.sg', url: 'https://www.elitigation.sg/gd/s/2007_SGCA_37' },
         'sghc:2019:214': { status: 'unresolvable', case_name: null },
+        'raw:lipkin gorman v karpnale ltd': { status: 'ambiguous', case_name: null },
       },
       errors: [],
     },
