@@ -3,6 +3,7 @@
     uv run python -m scripts.l3_probe                    # grouped vs paragraph chunks
     uv run python -m scripts.l3_probe --mode heading     # add a prefix arm
     uv run python -m scripts.l3_probe --chunk grouped    # pin one chunk strategy
+    uv run python -m scripts.l3_probe --scenario f14     # the answer that opened bug 1
     uv run python -m scripts.l3_probe --answer my.txt    # your own answer text
 
 Arms are the GRID of --mode x --chunk, and each arm reports TWO things.
@@ -100,6 +101,39 @@ DEFAULT_ANSWER = (
 )
 
 DEFAULT_QUESTION = "What is the test for a duty of care in Singapore?"
+
+#: The answer whose L3 failure opened bug 1 (docs/03-findings.md F14): a correct answer
+#: citing [2007] SGCA 37 and quoting paragraph [115] verbatim, which L3 failed at 0.325
+#: against the 0.35 floor while L1 scored the quote 1.000 and L4 scored 0.751.
+#:
+#: Reconstructed from F14's description -- the original was a live run and its text was
+#: never captured, which is precisely why this one is kept. The verbatim quotation is
+#: the load-bearing part: it is a long sentence, and a long sentence is what the claim
+#: splitter cut into the fragment that actually caused the failure (F18).
+#:
+#: It now passes in every configuration tested, INCLUDING the original prefixed and
+#: grouped one, with only the splitter fixed. That is the control that shows the prefix
+#: and the chunking were neither necessary nor sufficient for the failure.
+F14_QUESTION = "What is the test for a duty of care in Singapore?"
+F14_ANSWER = (
+    "Singapore applies a single two-stage test for the imposition of a duty of care in "
+    "negligence, laid down by the Court of Appeal in Spandeck Engineering (S) Pte Ltd v "
+    "Defence Science & Technology Agency [2007] SGCA 37. The court summarised its "
+    'holding at [115]: "A single test to determine the existence of a duty of care '
+    "should be applied regardless of the nature of the damage caused (ie, pure economic "
+    "loss or physical damage). It could be that a more restricted approach is preferable "
+    "for cases of pure economic loss but this is to be done within the confines of a "
+    "single test. This test is a two-stage test, comprising of, first, proximity and, "
+    'second, policy considerations."'
+)
+
+#: Named inputs, so a regression case is a command rather than a description. Every
+#: measurement this pipeline lost track of was one that had been described in prose and
+#: never made re-runnable -- three of them surfaced in a single afternoon.
+SCENARIOS: dict[str, tuple[str, str]] = {
+    "default": (DEFAULT_QUESTION, DEFAULT_ANSWER),
+    "f14": (F14_QUESTION, F14_ANSWER),
+}
 
 #: GENUINE claims: each is stated by the numbered Spandeck paragraph named beside it,
 #: checked against the text rather than remembered. A calibration set whose positives
@@ -409,14 +443,22 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=MODES, action="append", help="repeatable")
     parser.add_argument("--chunk", choices=CHUNKS, action="append", help="repeatable")
+    parser.add_argument(
+        "--scenario", choices=sorted(SCENARIOS), default="default", help="built-in input"
+    )
     parser.add_argument("--answer", type=Path, help="file with the answer text to score")
-    parser.add_argument("--question", default=DEFAULT_QUESTION)
+    parser.add_argument("--question", default=None)
     args = parser.parse_args()
 
-    answer = args.answer.read_text(encoding="utf-8") if args.answer else DEFAULT_ANSWER
+    question, answer = SCENARIOS[args.scenario]
+    if args.answer:
+        answer = args.answer.read_text(encoding="utf-8")
+    if args.question:
+        question = args.question
     modes = args.mode or list(DEFAULT_MODES)
     chunks = args.chunk or list(DEFAULT_CHUNKS)
 
+    print(f"scenario      : {args.scenario}{' (overridden by --answer)' if args.answer else ''}")
     print(f"provider mode : {settings.PROVIDER_MODE}")
     print(f"embeddings    : {settings.EMBEDDINGS_MODEL}")
     if settings.is_mock:
@@ -431,7 +473,7 @@ async def main() -> int:
     arms = []
     for mode in modes:
         for chunk in chunks:
-            arms.append(await run_arm(mode, chunk, args.question, answer, summariser))
+            arms.append(await run_arm(mode, chunk, question, answer, summariser))
             report(arms[-1])
 
     counts = {len(a["detail"].get("claim_scores") or []) for a in arms}
