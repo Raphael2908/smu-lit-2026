@@ -58,9 +58,41 @@ globalThis.SALV = globalThis.SALV || {};
     return (el.textContent || '').trim().length;
   }
 
-  /** Drop nodes that merely contain other message nodes. */
+  /**
+   * Interactive chrome that must never be mistaken for a message.
+   *
+   * claude.ai's action bar carries `data-testid="user-message-retry"`, `-edit` and
+   * `-copy`, the composer carries `aria-label="Send message"`, and every message
+   * embeds a `role="toolbar"` labelled `aria-label="Message actions"`. All of them
+   * match the loose attribute selectors below. The testid ones were being classified
+   * as three one-character user "turns" ahead of the real answer; the toolbar, being
+   * nested INSIDE a message, was being preferred over the message containing it.
+   *
+   * A text-length floor is NOT the right filter here: a genuine turn can be two words
+   * ("Why?"), and short follow-ups are exactly the ones whose pairing matters most.
+   * What separates them is that a message is never a control. Roles are used rather
+   * than class names on purpose -- they are what the page promises to assistive
+   * technology, which makes them the most durable thing on it.
+   */
+  const CONTROL_SELECTOR =
+    'button, a, input, textarea, select, [role="button"], [role="menuitem"], ' +
+    '[role="tab"], [role="toolbar"], [role="menu"], [role="tablist"], [role="menubar"]';
+
+  function isControl(el) {
+    return !!(el.closest && el.closest(CONTROL_SELECTOR));
+  }
+
+  /**
+   * Drop nodes that merely contain other message nodes -- keep the INNERMOST.
+   *
+   * This used to keep the outermost, which is the opposite of what the line above
+   * says and of what a caller needs. The cost was concrete: `[aria-label*="message"]`
+   * matches claude.ai's `aria-label="Chat messages"` transcript WRAPPER, which
+   * contains both `role="article"` turns, so the wrapper survived and the two real
+   * messages were discarded -- one 1,772-character "message" where there were two.
+   */
   function dedupeNesting(nodes) {
-    return nodes.filter((node) => !nodes.some((other) => other !== node && other.contains(node)));
+    return nodes.filter((node) => !nodes.some((other) => other !== node && node.contains(other)));
   }
 
   function inDocumentOrder(nodes) {
@@ -89,7 +121,7 @@ globalThis.SALV = globalThis.SALV || {};
     const found = [];
     for (const selector of TESTID_SELECTORS) {
       for (const el of root.querySelectorAll(selector)) {
-        if (visible(el) && textLength(el) > 0) found.push(el);
+        if (visible(el) && textLength(el) > 0 && !isControl(el)) found.push(el);
       }
     }
     const nodes = dedupeNesting([...new Set(found)]);
@@ -117,7 +149,7 @@ globalThis.SALV = globalThis.SALV || {};
     const found = [];
     for (const selector of ARIA_SELECTORS) {
       for (const el of root.querySelectorAll(selector)) {
-        if (visible(el) && textLength(el) > 0) found.push(el);
+        if (visible(el) && textLength(el) > 0 && !isControl(el)) found.push(el);
       }
     }
     const nodes = inDocumentOrder(dedupeNesting([...new Set(found)]));
@@ -261,6 +293,7 @@ globalThis.SALV = globalThis.SALV || {};
         ['aria', () => tierAria(scope)],
         ['structural', () => tierStructural()],
       ];
+      let fallback = null;
       for (const [name, run] of tiers) {
         let messages = null;
         try {
@@ -268,10 +301,27 @@ globalThis.SALV = globalThis.SALV || {};
         } catch (err) {
           SALV.log(`selector tier "${name}" threw`, err);
         }
-        if (messages && messages.length) {
+        if (!messages || !messages.length) continue;
+        // A TIER ONLY WINS IF IT FOUND AN ANSWER TO VERIFY.
+        //
+        // Every caller here wants an assistant turn -- `assistantNodes` filters for
+        // one and `pairedQuestion` walks back from one -- so a classification with
+        // none in it cannot serve anybody, and letting it win short-circuits the
+        // strictly-more-robust tiers below. That is exactly what happened on
+        // claude.ai: tier 1 returned four "user" turns and no assistant, so tiers 2
+        // and 3 never ran and the panel could only report that it could not find the
+        // question. The ladder is only a ladder if a useless rung is stepped over.
+        if (messages.some((m) => m.role === ROLE_ASSISTANT)) {
           this.lastTier = name;
           return messages;
         }
+        // Keep the first user-only reading: mid-generation there may genuinely be no
+        // answer yet, and returning nothing at all would lose the prompt too.
+        if (!fallback) fallback = { name, messages };
+      }
+      if (fallback) {
+        this.lastTier = fallback.name;
+        return fallback.messages;
       }
       this.lastTier = 'manual';
       return [];

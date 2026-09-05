@@ -191,3 +191,5 @@ Files: `src/verifier/repos/lists.py` (missing), `src/verifier/repos/pg.py`.
 | The harvest cap applied to arrival order, so L1 evidence displaced L3's ranking | reading the orchestrator's layer order |
 | `background.js` still on `localhost` after the 127.0.0.1 fix — on the sticky proxy path | grepping the extension |
 | `boot()` awaiting a `chrome.storage` read that never settles, before mounting the panel | tracing the injection symptom |
+| Selector tier 1 classifying three action-bar buttons as user messages, and winning the ladder with no assistant in the result | driving the extension on live claude.ai |
+| `dedupeNesting` keeping the outermost match, so the `aria-label="Chat messages"` wrapper displaced both real turns | same |
