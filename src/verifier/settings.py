@@ -53,6 +53,42 @@ class Settings(BaseSettings):
     SUMMARISER_PROVIDER: Literal["openrouter", "anthropic"] = "openrouter"
     JUDGE_PROVIDER: Literal["openrouter", "anthropic"] = "openrouter"
     JUDGE_MODEL: str = "anthropic/claude-sonnet-5"
+    #: Output budget for one judge call. The provider default of 4096 is NOT enough for
+    #: current reasoning models: they spend it on internal reasoning and get cut off
+    #: mid-verdict. Observed live -- Gemini 3.1 Pro returned 780 characters of truncated
+    #: JSON, which the parse ladder reported as "unparseable", and L5 fails open on an
+    #: unreadable verdict. So a conviction became a pass because of a token budget.
+    JUDGE_MAX_TOKENS: int = 16000
+
+    # --- The council -------------------------------------------------------------
+    #: L5 is the one layer that reasons, and a single reasoning model is a single point
+    #: of failure that no deterministic test can catch. These seats are polled
+    #: independently -- separate requests, no seat told the others exist -- and their
+    #: votes combined by JUDGE_COUNCIL_RULE.
+    #:
+    #: One roster note, measured rather than assumed: on a live pair the previous
+    #: generation of these models split 1-4 on substantive correctness, and the current
+    #: generation went 5-0 on the same answer with the same context. Model RECENCY moved
+    #: the verdict far more than seat COUNT did, which is why these are pinned to
+    #: flagship tiers and worth revisiting whenever a vendor ships a new one.
+    #:
+    #: Blank disables the council and L5 falls back to the single JUDGE_MODEL.
+    JUDGE_COUNCIL: str = (
+        "anthropic/claude-opus-5,"
+        "openai/gpt-6-astra-pro,"
+        "google/gemini-3.1-pro-preview,"
+        "anthropic/claude-sonnet-5,"
+        "deepseek/deepseek-v4-pro"
+    )
+    #: How votes become a verdict, per dimension. "majority" is the default because it
+    #: is the rule that cancels a single seat's sampling noise, which is the failure a
+    #: panel is actually good at fixing. Note the trade it makes: majority also
+    #: OUTVOTES a lone seat that is right, so it lowers both the noise and the ceiling.
+    #: "any" convicts on one dissent -- maximally strict, and in tension with the
+    #: governing rule below of preferring a false green to a false red.
+    JUDGE_COUNCIL_RULE: Literal["majority", "any", "unanimous"] = "majority"
+    #: Seats are polled concurrently; this caps in-flight requests.
+    JUDGE_COUNCIL_CONCURRENCY: int = 5
     #: Bare first-party id, NOT the OpenRouter-namespaced form. The extractor talks to
     #: the Anthropic API directly, and "anthropic/claude-haiku-4.5" split on "/" gives
     #: "claude-haiku-4.5", which that API rejects -- the id is "claude-haiku-4-5".
@@ -71,7 +107,7 @@ class Settings(BaseSettings):
     #: L1a's citation finder. "auto" follows PROVIDER_MODE, which is what keeps the
     #: offline suite and every mock demo on the deterministic path at ~5 ms.
     EXTRACTOR_MODE: Literal["auto", "mock", "real"] = "auto"
-    JUDGE_PROMPT_VERSION: str = "v1"
+    JUDGE_PROMPT_VERSION: str = "v2"
     SUMMARY_PROMPT_VERSION: str = "v1"
 
     # --- Thresholds -------------------------------------------------------------
@@ -370,6 +406,18 @@ class Settings(BaseSettings):
     @property
     def is_mock(self) -> bool:
         return self.PROVIDER_MODE == "mock"
+
+    @property
+    def council_models(self) -> tuple[str, ...]:
+        """The council roster, de-duplicated, order preserved.
+
+        Order is meaningful: it is the order seats are reported in, and a reader
+        comparing two runs should see the same seat in the same place. Duplicates are
+        dropped because polling one model twice is not a second opinion -- it is the
+        same opinion resampled, which the measurements showed does not move a
+        systematic disagreement at all.
+        """
+        return tuple(dict.fromkeys(m.strip() for m in self.JUDGE_COUNCIL.split(",") if m.strip()))
 
     @property
     def uses_postgres(self) -> bool:

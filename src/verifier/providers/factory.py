@@ -90,6 +90,14 @@ def get_judge() -> Judge:
         from verifier.providers.mock.llm import MockJudge
 
         return MockJudge()
+    # A council of one is a single judge with extra indirection, so it is not built --
+    # and the roster is deliberately checked before JUDGE_PROVIDER, because the seats
+    # are OpenRouter ids and a panel is a cross-vendor construct that the first-party
+    # Anthropic door cannot serve.
+    if len(settings.council_models) > 1:
+        from verifier.providers.council import council_from_settings
+
+        return council_from_settings()
     if settings.JUDGE_PROVIDER == "anthropic":
         from verifier.providers.anthropic_llm import AnthropicJudge
 
