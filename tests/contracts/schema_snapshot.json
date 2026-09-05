@@ -1,0 +1,3367 @@
+{
+  "AcceptedResponse": {
+    "properties": {
+      "run_id": {
+        "title": "Run Id",
+        "type": "string"
+      },
+      "seq": {
+        "default": 0,
+        "title": "Seq",
+        "type": "integer"
+      },
+      "status": {
+        "default": "pending",
+        "title": "Status",
+        "type": "string"
+      }
+    },
+    "required": [
+      "run_id"
+    ],
+    "title": "AcceptedResponse",
+    "type": "object"
+  },
+  "Chunk": {
+    "$defs": {
+      "ChunkKind": {
+        "enum": [
+          "body",
+          "quote",
+          "heading",
+          "claim",
+          "window"
+        ],
+        "title": "ChunkKind",
+        "type": "string"
+      }
+    },
+    "description": "An embeddable unit. ``embed_input`` is what was actually sent to the model\n(summary + heading path + text), and its hash is the cache key -- so changing the\nsummary prompt correctly invalidates the cache.",
+    "properties": {
+      "document_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Document Id"
+      },
+      "embed_input": {
+        "title": "Embed Input",
+        "type": "string"
+      },
+      "embed_input_sha256": {
+        "title": "Embed Input Sha256",
+        "type": "string"
+      },
+      "kind": {
+        "$ref": "#/$defs/ChunkKind"
+      },
+      "ordinal": {
+        "title": "Ordinal",
+        "type": "integer"
+      },
+      "paragraph_from": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Paragraph From"
+      },
+      "paragraph_to": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Paragraph To"
+      },
+      "text": {
+        "title": "Text",
+        "type": "string"
+      }
+    },
+    "required": [
+      "ordinal",
+      "kind",
+      "text",
+      "embed_input",
+      "embed_input_sha256"
+    ],
+    "title": "Chunk",
+    "type": "object"
+  },
+  "CitationCluster": {
+    "$defs": {
+      "CitationType": {
+        "enum": [
+          "neutral",
+          "report",
+          "case_name",
+          "url"
+        ],
+        "title": "CitationType",
+        "type": "string"
+      },
+      "ExtractedCitation": {
+        "properties": {
+          "case_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Case Name"
+          },
+          "citation_type": {
+            "$ref": "#/$defs/CitationType"
+          },
+          "court": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Court"
+          },
+          "number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Number"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "raw_text": {
+            "title": "Raw Text",
+            "type": "string"
+          },
+          "span": {
+            "$ref": "#/$defs/Span"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Year"
+          }
+        },
+        "required": [
+          "ordinal",
+          "raw_text",
+          "citation_type",
+          "span"
+        ],
+        "title": "ExtractedCitation",
+        "type": "object"
+      },
+      "Span": {
+        "description": "Character offsets into the AI output, so the UI can highlight the exact text.",
+        "properties": {
+          "end": {
+            "minimum": 0,
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Span",
+        "type": "object"
+      }
+    },
+    "description": "One logical reference, however many forms it was written in.\n\n'Spandeck ... v DSTA [2007] 4 SLR(R) 100; [2007] SGCA 37' is three extracted\ncitations but ONE cluster with one resolution attempt. This is what rescues\nreport-only citations (F7): in practice they travel with a resolvable sibling.\nResolution preference: neutral -> case name -> report.",
+    "properties": {
+      "members": {
+        "items": {
+          "$ref": "#/$defs/ExtractedCitation"
+        },
+        "title": "Members",
+        "type": "array"
+      },
+      "ordinal": {
+        "title": "Ordinal",
+        "type": "integer"
+      },
+      "span": {
+        "$ref": "#/$defs/Span"
+      }
+    },
+    "required": [
+      "ordinal",
+      "members",
+      "span"
+    ],
+    "title": "CitationCluster",
+    "type": "object"
+  },
+  "Evidence": {
+    "description": "Why the system reached its conclusion. Everything a user needs to check our work.\n\nAn accuracy tool that asserts without showing its working has the same\ncredibility problem as the thing it audits.",
+    "properties": {
+      "best_match_paragraph": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Best Match Paragraph"
+      },
+      "best_match_text": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Best Match Text"
+      },
+      "body_length": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Body Length"
+      },
+      "extra": {
+        "additionalProperties": true,
+        "title": "Extra",
+        "type": "object"
+      },
+      "http_status": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Http Status"
+      },
+      "margin": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Margin"
+      },
+      "score": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Score"
+      },
+      "source_url": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Source Url"
+      },
+      "threshold": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Threshold"
+      }
+    },
+    "title": "Evidence",
+    "type": "object"
+  },
+  "ExtractedCitation": {
+    "$defs": {
+      "CitationType": {
+        "enum": [
+          "neutral",
+          "report",
+          "case_name",
+          "url"
+        ],
+        "title": "CitationType",
+        "type": "string"
+      },
+      "Span": {
+        "description": "Character offsets into the AI output, so the UI can highlight the exact text.",
+        "properties": {
+          "end": {
+            "minimum": 0,
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Span",
+        "type": "object"
+      }
+    },
+    "properties": {
+      "case_name": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Case Name"
+      },
+      "citation_type": {
+        "$ref": "#/$defs/CitationType"
+      },
+      "court": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Court"
+      },
+      "number": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Number"
+      },
+      "ordinal": {
+        "title": "Ordinal",
+        "type": "integer"
+      },
+      "raw_text": {
+        "title": "Raw Text",
+        "type": "string"
+      },
+      "span": {
+        "$ref": "#/$defs/Span"
+      },
+      "url": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Url"
+      },
+      "year": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Year"
+      }
+    },
+    "required": [
+      "ordinal",
+      "raw_text",
+      "citation_type",
+      "span"
+    ],
+    "title": "ExtractedCitation",
+    "type": "object"
+  },
+  "ExtractedQuote": {
+    "$defs": {
+      "AttributionMethod": {
+        "description": "How a quote was tied to a citation. Ordered by descending confidence.",
+        "enum": [
+          "pinpoint",
+          "explicit",
+          "proximity",
+          "none"
+        ],
+        "title": "AttributionMethod",
+        "type": "string"
+      },
+      "Span": {
+        "description": "Character offsets into the AI output, so the UI can highlight the exact text.",
+        "properties": {
+          "end": {
+            "minimum": 0,
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Span",
+        "type": "object"
+      }
+    },
+    "description": "Text presented as a DIRECT QUOTATION.\n\n``delimiter`` is required and load-bearing, not decorative. Lexical matching is\nanti-correlated on paraphrase -- a genuine paraphrase scores LOWER than a\nfabrication (F8) -- so L1 must only ever score text that was actually presented\nas a quote. Paraphrased attributions are L3's job.",
+    "properties": {
+      "attributed_cluster_ordinal": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Attributed Cluster Ordinal"
+      },
+      "attribution_method": {
+        "$ref": "#/$defs/AttributionMethod",
+        "default": "none"
+      },
+      "delimiter": {
+        "title": "Delimiter",
+        "type": "string"
+      },
+      "ordinal": {
+        "title": "Ordinal",
+        "type": "integer"
+      },
+      "pinpoint_paragraph": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Pinpoint Paragraph"
+      },
+      "span": {
+        "$ref": "#/$defs/Span"
+      },
+      "text": {
+        "title": "Text",
+        "type": "string"
+      }
+    },
+    "required": [
+      "ordinal",
+      "text",
+      "span",
+      "delimiter"
+    ],
+    "title": "ExtractedQuote",
+    "type": "object"
+  },
+  "ExtractionResult": {
+    "$defs": {
+      "AttributionMethod": {
+        "description": "How a quote was tied to a citation. Ordered by descending confidence.",
+        "enum": [
+          "pinpoint",
+          "explicit",
+          "proximity",
+          "none"
+        ],
+        "title": "AttributionMethod",
+        "type": "string"
+      },
+      "CitationCluster": {
+        "description": "One logical reference, however many forms it was written in.\n\n'Spandeck ... v DSTA [2007] 4 SLR(R) 100; [2007] SGCA 37' is three extracted\ncitations but ONE cluster with one resolution attempt. This is what rescues\nreport-only citations (F7): in practice they travel with a resolvable sibling.\nResolution preference: neutral -> case name -> report.",
+        "properties": {
+          "members": {
+            "items": {
+              "$ref": "#/$defs/ExtractedCitation"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "span": {
+            "$ref": "#/$defs/Span"
+          }
+        },
+        "required": [
+          "ordinal",
+          "members",
+          "span"
+        ],
+        "title": "CitationCluster",
+        "type": "object"
+      },
+      "CitationType": {
+        "enum": [
+          "neutral",
+          "report",
+          "case_name",
+          "url"
+        ],
+        "title": "CitationType",
+        "type": "string"
+      },
+      "ExtractedCitation": {
+        "properties": {
+          "case_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Case Name"
+          },
+          "citation_type": {
+            "$ref": "#/$defs/CitationType"
+          },
+          "court": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Court"
+          },
+          "number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Number"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "raw_text": {
+            "title": "Raw Text",
+            "type": "string"
+          },
+          "span": {
+            "$ref": "#/$defs/Span"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Year"
+          }
+        },
+        "required": [
+          "ordinal",
+          "raw_text",
+          "citation_type",
+          "span"
+        ],
+        "title": "ExtractedCitation",
+        "type": "object"
+      },
+      "ExtractedQuote": {
+        "description": "Text presented as a DIRECT QUOTATION.\n\n``delimiter`` is required and load-bearing, not decorative. Lexical matching is\nanti-correlated on paraphrase -- a genuine paraphrase scores LOWER than a\nfabrication (F8) -- so L1 must only ever score text that was actually presented\nas a quote. Paraphrased attributions are L3's job.",
+        "properties": {
+          "attributed_cluster_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attributed Cluster Ordinal"
+          },
+          "attribution_method": {
+            "$ref": "#/$defs/AttributionMethod",
+            "default": "none"
+          },
+          "delimiter": {
+            "title": "Delimiter",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "pinpoint_paragraph": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pinpoint Paragraph"
+          },
+          "span": {
+            "$ref": "#/$defs/Span"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ordinal",
+          "text",
+          "span",
+          "delimiter"
+        ],
+        "title": "ExtractedQuote",
+        "type": "object"
+      },
+      "Span": {
+        "description": "Character offsets into the AI output, so the UI can highlight the exact text.",
+        "properties": {
+          "end": {
+            "minimum": 0,
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Span",
+        "type": "object"
+      }
+    },
+    "description": "L0 output: the work items every other layer consumes.",
+    "properties": {
+      "clusters": {
+        "default": [],
+        "items": {
+          "$ref": "#/$defs/CitationCluster"
+        },
+        "title": "Clusters",
+        "type": "array"
+      },
+      "explicit_domains": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "title": "Explicit Domains",
+        "type": "array"
+      },
+      "quotes": {
+        "default": [],
+        "items": {
+          "$ref": "#/$defs/ExtractedQuote"
+        },
+        "title": "Quotes",
+        "type": "array"
+      }
+    },
+    "title": "ExtractionResult",
+    "type": "object"
+  },
+  "Finding": {
+    "$defs": {
+      "Evidence": {
+        "description": "Why the system reached its conclusion. Everything a user needs to check our work.\n\nAn accuracy tool that asserts without showing its working has the same\ncredibility problem as the thing it audits.",
+        "properties": {
+          "best_match_paragraph": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Best Match Paragraph"
+          },
+          "best_match_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Best Match Text"
+          },
+          "body_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Body Length"
+          },
+          "extra": {
+            "additionalProperties": true,
+            "title": "Extra",
+            "type": "object"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Http Status"
+          },
+          "margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Margin"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Score"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Url"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Threshold"
+          }
+        },
+        "title": "Evidence",
+        "type": "object"
+      },
+      "FindingCode": {
+        "description": "Every way the system can complain. Stable identifiers -- the UI maps these to copy.",
+        "enum": [
+          "CITATION_NOT_FOUND",
+          "RESOLVED_WRONG_DOC",
+          "CITATION_CASE_NAME_MISMATCH",
+          "QUOTE_NOT_FOUND",
+          "QUOTE_INEXACT",
+          "CITATION_AMBIGUOUS",
+          "CITATION_UNVERIFIED",
+          "SOURCE_UNAUTHENTICATED",
+          "QUOTE_UNATTRIBUTED",
+          "SOURCE_BLACKLISTED",
+          "SOURCE_GRAYLISTED",
+          "SOURCE_UNKNOWN",
+          "CLAIM_NOT_GROUNDED_IN_SOURCE",
+          "CLAIM_WEAKLY_GROUNDED",
+          "QUESTION_NOT_ANSWERED",
+          "QUESTION_PARTIALLY_ANSWERED",
+          "ANSWER_TOO_SHORT",
+          "FOLLOWUP_NOT_SCORED",
+          "JUDGE_FAILED_FAITHFULNESS",
+          "JUDGE_FAILED_CONTEXTUAL_ACCURACY",
+          "JUDGE_FAILED_CITATION_INTEGRITY",
+          "JUDGE_FAILED_RESPONSIVENESS",
+          "JUDGE_UNPARSEABLE",
+          "JUDGE_ERROR",
+          "LAYER_ERROR"
+        ],
+        "title": "FindingCode",
+        "type": "string"
+      },
+      "FindingSource": {
+        "description": "Whether a finding is machine-checkable ground truth or model opinion.\n\nThe extension renders these differently. That visual separation is the\n'who audits the auditor' answer expressed in UI.",
+        "enum": [
+          "deterministic",
+          "llm"
+        ],
+        "title": "FindingSource",
+        "type": "string"
+      },
+      "Layer": {
+        "enum": [
+          "L0",
+          "L1",
+          "L2",
+          "L3",
+          "L4",
+          "L5"
+        ],
+        "title": "Layer",
+        "type": "string"
+      },
+      "Severity": {
+        "description": "How a finding affects the verdict.\n\nFAIL from any of L1-L4 skips the judge entirely (fail-fast gate).\nWARN passes but annotates. INFO is reporting only.",
+        "enum": [
+          "fail",
+          "warn",
+          "info"
+        ],
+        "title": "Severity",
+        "type": "string"
+      },
+      "Span": {
+        "description": "Character offsets into the AI output, so the UI can highlight the exact text.",
+        "properties": {
+          "end": {
+            "minimum": 0,
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Span",
+        "type": "object"
+      }
+    },
+    "description": "One reason the output is (or might be) wrong.\n\n``source`` separates machine-checkable ground truth from model opinion. The UI\nrenders them differently, and that separation is the visible form of the\ninvariant that the judge cannot clear a deterministic failure.",
+    "properties": {
+      "citation_ordinal": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Citation Ordinal"
+      },
+      "code": {
+        "$ref": "#/$defs/FindingCode"
+      },
+      "evidence": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "id": {
+        "title": "Id",
+        "type": "string"
+      },
+      "layer": {
+        "$ref": "#/$defs/Layer"
+      },
+      "message": {
+        "title": "Message",
+        "type": "string"
+      },
+      "output_span": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Span"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "quote_ordinal": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Quote Ordinal"
+      },
+      "severity": {
+        "$ref": "#/$defs/Severity"
+      },
+      "source": {
+        "$ref": "#/$defs/FindingSource",
+        "default": "deterministic"
+      }
+    },
+    "required": [
+      "id",
+      "layer",
+      "code",
+      "severity",
+      "message"
+    ],
+    "title": "Finding",
+    "type": "object"
+  },
+  "LayerInput": {
+    "$defs": {
+      "AttributionMethod": {
+        "description": "How a quote was tied to a citation. Ordered by descending confidence.",
+        "enum": [
+          "pinpoint",
+          "explicit",
+          "proximity",
+          "none"
+        ],
+        "title": "AttributionMethod",
+        "type": "string"
+      },
+      "ChunkKind": {
+        "enum": [
+          "body",
+          "quote",
+          "heading",
+          "claim",
+          "window"
+        ],
+        "title": "ChunkKind",
+        "type": "string"
+      },
+      "CitationCluster": {
+        "description": "One logical reference, however many forms it was written in.\n\n'Spandeck ... v DSTA [2007] 4 SLR(R) 100; [2007] SGCA 37' is three extracted\ncitations but ONE cluster with one resolution attempt. This is what rescues\nreport-only citations (F7): in practice they travel with a resolvable sibling.\nResolution preference: neutral -> case name -> report.",
+        "properties": {
+          "members": {
+            "items": {
+              "$ref": "#/$defs/ExtractedCitation"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "span": {
+            "$ref": "#/$defs/Span"
+          }
+        },
+        "required": [
+          "ordinal",
+          "members",
+          "span"
+        ],
+        "title": "CitationCluster",
+        "type": "object"
+      },
+      "CitationType": {
+        "enum": [
+          "neutral",
+          "report",
+          "case_name",
+          "url"
+        ],
+        "title": "CitationType",
+        "type": "string"
+      },
+      "ExtractedCitation": {
+        "properties": {
+          "case_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Case Name"
+          },
+          "citation_type": {
+            "$ref": "#/$defs/CitationType"
+          },
+          "court": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Court"
+          },
+          "number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Number"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "raw_text": {
+            "title": "Raw Text",
+            "type": "string"
+          },
+          "span": {
+            "$ref": "#/$defs/Span"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Year"
+          }
+        },
+        "required": [
+          "ordinal",
+          "raw_text",
+          "citation_type",
+          "span"
+        ],
+        "title": "ExtractedCitation",
+        "type": "object"
+      },
+      "ExtractedQuote": {
+        "description": "Text presented as a DIRECT QUOTATION.\n\n``delimiter`` is required and load-bearing, not decorative. Lexical matching is\nanti-correlated on paraphrase -- a genuine paraphrase scores LOWER than a\nfabrication (F8) -- so L1 must only ever score text that was actually presented\nas a quote. Paraphrased attributions are L3's job.",
+        "properties": {
+          "attributed_cluster_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attributed Cluster Ordinal"
+          },
+          "attribution_method": {
+            "$ref": "#/$defs/AttributionMethod",
+            "default": "none"
+          },
+          "delimiter": {
+            "title": "Delimiter",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "pinpoint_paragraph": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pinpoint Paragraph"
+          },
+          "span": {
+            "$ref": "#/$defs/Span"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ordinal",
+          "text",
+          "span",
+          "delimiter"
+        ],
+        "title": "ExtractedQuote",
+        "type": "object"
+      },
+      "ExtractionResult": {
+        "description": "L0 output: the work items every other layer consumes.",
+        "properties": {
+          "clusters": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/CitationCluster"
+            },
+            "title": "Clusters",
+            "type": "array"
+          },
+          "explicit_domains": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Explicit Domains",
+            "type": "array"
+          },
+          "quotes": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ExtractedQuote"
+            },
+            "title": "Quotes",
+            "type": "array"
+          }
+        },
+        "title": "ExtractionResult",
+        "type": "object"
+      },
+      "FetchStrategy": {
+        "enum": [
+          "http",
+          "browser"
+        ],
+        "title": "FetchStrategy",
+        "type": "string"
+      },
+      "Paragraph": {
+        "description": "A numbered paragraph of a judgment.\n\neLitigation marks these up cleanly (Judg-1, Judg-Quote-1, Judg-Heading-*), which\ngives us paragraph chunking, a heading hierarchy and pinpoint lookup for free (F5).",
+        "properties": {
+          "heading_path": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Heading Path",
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/$defs/ChunkKind"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "paragraph_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paragraph Number"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ordinal",
+          "kind",
+          "text"
+        ],
+        "title": "Paragraph",
+        "type": "object"
+      },
+      "Resolution": {
+        "description": "The outcome of trying to turn a citation into a real document.",
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "candidates": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "case_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Case Name"
+          },
+          "citation_key": {
+            "title": "Citation Key",
+            "type": "string"
+          },
+          "confidence": {
+            "default": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Document Id"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Domain"
+          },
+          "fetch_strategy": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FetchStrategy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "method": {
+            "$ref": "#/$defs/ResolutionMethod",
+            "default": "none"
+          },
+          "status": {
+            "$ref": "#/$defs/ResolutionStatus"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          }
+        },
+        "required": [
+          "citation_key",
+          "status"
+        ],
+        "title": "Resolution",
+        "type": "object"
+      },
+      "ResolutionMethod": {
+        "enum": [
+          "url",
+          "search",
+          "cache",
+          "none"
+        ],
+        "title": "ResolutionMethod",
+        "type": "string"
+      },
+      "ResolutionStatus": {
+        "enum": [
+          "resolved",
+          "not_found",
+          "ambiguous",
+          "unresolvable",
+          "unauthenticated",
+          "error"
+        ],
+        "title": "ResolutionStatus",
+        "type": "string"
+      },
+      "SourceDocument": {
+        "properties": {
+          "case_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Case Name"
+          },
+          "cited_authorities": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Cited Authorities",
+            "type": "array"
+          },
+          "coram": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Coram"
+          },
+          "court": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Court"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "fetch_strategy": {
+            "$ref": "#/$defs/FetchStrategy"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Http Status"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Id"
+          },
+          "is_soft_404": {
+            "default": false,
+            "title": "Is Soft 404",
+            "type": "boolean"
+          },
+          "neutral_citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Neutral Citation"
+          },
+          "paragraphs": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/Paragraph"
+            },
+            "title": "Paragraphs",
+            "type": "array"
+          },
+          "parallel_citations": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Parallel Citations",
+            "type": "array"
+          },
+          "source_url": {
+            "title": "Source Url",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "text_sha256": {
+            "default": "",
+            "title": "Text Sha256",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Year"
+          }
+        },
+        "required": [
+          "source_url",
+          "domain",
+          "fetch_strategy",
+          "exists"
+        ],
+        "title": "SourceDocument",
+        "type": "object"
+      },
+      "Span": {
+        "description": "Character offsets into the AI output, so the UI can highlight the exact text.",
+        "properties": {
+          "end": {
+            "minimum": 0,
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Span",
+        "type": "object"
+      }
+    },
+    "description": "Everything a layer may read. Layers are pure with respect to this input:\nthey never reach into the DB or another layer's state directly.",
+    "properties": {
+      "ai_output": {
+        "title": "Ai Output",
+        "type": "string"
+      },
+      "context": {
+        "default": [],
+        "items": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "title": "Context",
+        "type": "array"
+      },
+      "documents": {
+        "additionalProperties": {
+          "$ref": "#/$defs/SourceDocument"
+        },
+        "title": "Documents",
+        "type": "object"
+      },
+      "extraction": {
+        "$ref": "#/$defs/ExtractionResult"
+      },
+      "is_followup": {
+        "default": false,
+        "title": "Is Followup",
+        "type": "boolean"
+      },
+      "question": {
+        "title": "Question",
+        "type": "string"
+      },
+      "resolutions": {
+        "additionalProperties": {
+          "$ref": "#/$defs/Resolution"
+        },
+        "title": "Resolutions",
+        "type": "object"
+      },
+      "run_id": {
+        "title": "Run Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "run_id",
+      "question",
+      "ai_output"
+    ],
+    "title": "LayerInput",
+    "type": "object"
+  },
+  "LayerResult": {
+    "$defs": {
+      "Evidence": {
+        "description": "Why the system reached its conclusion. Everything a user needs to check our work.\n\nAn accuracy tool that asserts without showing its working has the same\ncredibility problem as the thing it audits.",
+        "properties": {
+          "best_match_paragraph": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Best Match Paragraph"
+          },
+          "best_match_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Best Match Text"
+          },
+          "body_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Body Length"
+          },
+          "extra": {
+            "additionalProperties": true,
+            "title": "Extra",
+            "type": "object"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Http Status"
+          },
+          "margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Margin"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Score"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Url"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Threshold"
+          }
+        },
+        "title": "Evidence",
+        "type": "object"
+      },
+      "Finding": {
+        "description": "One reason the output is (or might be) wrong.\n\n``source`` separates machine-checkable ground truth from model opinion. The UI\nrenders them differently, and that separation is the visible form of the\ninvariant that the judge cannot clear a deterministic failure.",
+        "properties": {
+          "citation_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Citation Ordinal"
+          },
+          "code": {
+            "$ref": "#/$defs/FindingCode"
+          },
+          "evidence": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "layer": {
+            "$ref": "#/$defs/Layer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "output_span": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Span"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "quote_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Quote Ordinal"
+          },
+          "severity": {
+            "$ref": "#/$defs/Severity"
+          },
+          "source": {
+            "$ref": "#/$defs/FindingSource",
+            "default": "deterministic"
+          }
+        },
+        "required": [
+          "id",
+          "layer",
+          "code",
+          "severity",
+          "message"
+        ],
+        "title": "Finding",
+        "type": "object"
+      },
+      "FindingCode": {
+        "description": "Every way the system can complain. Stable identifiers -- the UI maps these to copy.",
+        "enum": [
+          "CITATION_NOT_FOUND",
+          "RESOLVED_WRONG_DOC",
+          "CITATION_CASE_NAME_MISMATCH",
+          "QUOTE_NOT_FOUND",
+          "QUOTE_INEXACT",
+          "CITATION_AMBIGUOUS",
+          "CITATION_UNVERIFIED",
+          "SOURCE_UNAUTHENTICATED",
+          "QUOTE_UNATTRIBUTED",
+          "SOURCE_BLACKLISTED",
+          "SOURCE_GRAYLISTED",
+          "SOURCE_UNKNOWN",
+          "CLAIM_NOT_GROUNDED_IN_SOURCE",
+          "CLAIM_WEAKLY_GROUNDED",
+          "QUESTION_NOT_ANSWERED",
+          "QUESTION_PARTIALLY_ANSWERED",
+          "ANSWER_TOO_SHORT",
+          "FOLLOWUP_NOT_SCORED",
+          "JUDGE_FAILED_FAITHFULNESS",
+          "JUDGE_FAILED_CONTEXTUAL_ACCURACY",
+          "JUDGE_FAILED_CITATION_INTEGRITY",
+          "JUDGE_FAILED_RESPONSIVENESS",
+          "JUDGE_UNPARSEABLE",
+          "JUDGE_ERROR",
+          "LAYER_ERROR"
+        ],
+        "title": "FindingCode",
+        "type": "string"
+      },
+      "FindingSource": {
+        "description": "Whether a finding is machine-checkable ground truth or model opinion.\n\nThe extension renders these differently. That visual separation is the\n'who audits the auditor' answer expressed in UI.",
+        "enum": [
+          "deterministic",
+          "llm"
+        ],
+        "title": "FindingSource",
+        "type": "string"
+      },
+      "Layer": {
+        "enum": [
+          "L0",
+          "L1",
+          "L2",
+          "L3",
+          "L4",
+          "L5"
+        ],
+        "title": "Layer",
+        "type": "string"
+      },
+      "LayerStatus": {
+        "enum": [
+          "pass",
+          "warn",
+          "fail",
+          "not_applicable",
+          "error",
+          "skipped"
+        ],
+        "title": "LayerStatus",
+        "type": "string"
+      },
+      "Severity": {
+        "description": "How a finding affects the verdict.\n\nFAIL from any of L1-L4 skips the judge entirely (fail-fast gate).\nWARN passes but annotates. INFO is reporting only.",
+        "enum": [
+          "fail",
+          "warn",
+          "info"
+        ],
+        "title": "Severity",
+        "type": "string"
+      },
+      "Span": {
+        "description": "Character offsets into the AI output, so the UI can highlight the exact text.",
+        "properties": {
+          "end": {
+            "minimum": 0,
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Span",
+        "type": "object"
+      }
+    },
+    "properties": {
+      "cache_hits": {
+        "default": 0,
+        "title": "Cache Hits",
+        "type": "integer"
+      },
+      "cache_misses": {
+        "default": 0,
+        "title": "Cache Misses",
+        "type": "integer"
+      },
+      "detail": {
+        "additionalProperties": true,
+        "title": "Detail",
+        "type": "object"
+      },
+      "duration_ms": {
+        "default": 0,
+        "title": "Duration Ms",
+        "type": "integer"
+      },
+      "findings": {
+        "default": [],
+        "items": {
+          "$ref": "#/$defs/Finding"
+        },
+        "title": "Findings",
+        "type": "array"
+      },
+      "layer": {
+        "$ref": "#/$defs/Layer"
+      },
+      "score": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Score"
+      },
+      "status": {
+        "$ref": "#/$defs/LayerStatus"
+      }
+    },
+    "required": [
+      "layer",
+      "status"
+    ],
+    "title": "LayerResult",
+    "type": "object"
+  },
+  "ListEntryIn": {
+    "$defs": {
+      "ListType": {
+        "enum": [
+          "white",
+          "gray",
+          "black"
+        ],
+        "title": "ListType",
+        "type": "string"
+      },
+      "MatchType": {
+        "enum": [
+          "domain",
+          "url_pattern",
+          "publisher"
+        ],
+        "title": "MatchType",
+        "type": "string"
+      }
+    },
+    "properties": {
+      "list_type": {
+        "$ref": "#/$defs/ListType"
+      },
+      "match_type": {
+        "$ref": "#/$defs/MatchType",
+        "default": "domain"
+      },
+      "pattern": {
+        "minLength": 1,
+        "title": "Pattern",
+        "type": "string"
+      },
+      "reason": {
+        "default": "",
+        "title": "Reason",
+        "type": "string"
+      }
+    },
+    "required": [
+      "list_type",
+      "pattern"
+    ],
+    "title": "ListEntryIn",
+    "type": "object"
+  },
+  "Paragraph": {
+    "$defs": {
+      "ChunkKind": {
+        "enum": [
+          "body",
+          "quote",
+          "heading",
+          "claim",
+          "window"
+        ],
+        "title": "ChunkKind",
+        "type": "string"
+      }
+    },
+    "description": "A numbered paragraph of a judgment.\n\neLitigation marks these up cleanly (Judg-1, Judg-Quote-1, Judg-Heading-*), which\ngives us paragraph chunking, a heading hierarchy and pinpoint lookup for free (F5).",
+    "properties": {
+      "heading_path": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "title": "Heading Path",
+        "type": "array"
+      },
+      "kind": {
+        "$ref": "#/$defs/ChunkKind"
+      },
+      "ordinal": {
+        "title": "Ordinal",
+        "type": "integer"
+      },
+      "paragraph_number": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Paragraph Number"
+      },
+      "text": {
+        "title": "Text",
+        "type": "string"
+      }
+    },
+    "required": [
+      "ordinal",
+      "kind",
+      "text"
+    ],
+    "title": "Paragraph",
+    "type": "object"
+  },
+  "Resolution": {
+    "$defs": {
+      "FetchStrategy": {
+        "enum": [
+          "http",
+          "browser"
+        ],
+        "title": "FetchStrategy",
+        "type": "string"
+      },
+      "ResolutionMethod": {
+        "enum": [
+          "url",
+          "search",
+          "cache",
+          "none"
+        ],
+        "title": "ResolutionMethod",
+        "type": "string"
+      },
+      "ResolutionStatus": {
+        "enum": [
+          "resolved",
+          "not_found",
+          "ambiguous",
+          "unresolvable",
+          "unauthenticated",
+          "error"
+        ],
+        "title": "ResolutionStatus",
+        "type": "string"
+      }
+    },
+    "description": "The outcome of trying to turn a citation into a real document.",
+    "properties": {
+      "cached": {
+        "default": false,
+        "title": "Cached",
+        "type": "boolean"
+      },
+      "candidates": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "title": "Candidates",
+        "type": "array"
+      },
+      "case_name": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Case Name"
+      },
+      "citation_key": {
+        "title": "Citation Key",
+        "type": "string"
+      },
+      "confidence": {
+        "default": 0.0,
+        "title": "Confidence",
+        "type": "number"
+      },
+      "detail": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Detail"
+      },
+      "document_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Document Id"
+      },
+      "domain": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Domain"
+      },
+      "fetch_strategy": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/FetchStrategy"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "method": {
+        "$ref": "#/$defs/ResolutionMethod",
+        "default": "none"
+      },
+      "status": {
+        "$ref": "#/$defs/ResolutionStatus"
+      },
+      "title": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Title"
+      },
+      "url": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Url"
+      }
+    },
+    "required": [
+      "citation_key",
+      "status"
+    ],
+    "title": "Resolution",
+    "type": "object"
+  },
+  "RunEvent": {
+    "$defs": {
+      "EventName": {
+        "description": "SSE event names. Order in a typical run: accepted -> extracted ->\nlayer_result(L4) -> layer_result(L1) -> layer_result(L3) -> layer_result(L2) ->\ndeterministic_verdict -> {judge_skipped | layer_result(L5)} -> final -> done.\n\nL4 usually lands first (no dependencies); L2 last (it needs L1's resolved domain).",
+        "enum": [
+          "accepted",
+          "extracted",
+          "layer_result",
+          "deterministic_verdict",
+          "judge_skipped",
+          "final",
+          "error",
+          "done"
+        ],
+        "title": "EventName",
+        "type": "string"
+      }
+    },
+    "properties": {
+      "data": {
+        "additionalProperties": true,
+        "title": "Data",
+        "type": "object"
+      },
+      "event": {
+        "$ref": "#/$defs/EventName"
+      },
+      "run_id": {
+        "title": "Run Id",
+        "type": "string"
+      },
+      "seq": {
+        "title": "Seq",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "event",
+      "seq",
+      "run_id"
+    ],
+    "title": "RunEvent",
+    "type": "object"
+  },
+  "RunState": {
+    "$defs": {
+      "CacheStats": {
+        "properties": {
+          "hits": {
+            "default": 0,
+            "title": "Hits",
+            "type": "integer"
+          },
+          "misses": {
+            "default": 0,
+            "title": "Misses",
+            "type": "integer"
+          }
+        },
+        "title": "CacheStats",
+        "type": "object"
+      },
+      "Evidence": {
+        "description": "Why the system reached its conclusion. Everything a user needs to check our work.\n\nAn accuracy tool that asserts without showing its working has the same\ncredibility problem as the thing it audits.",
+        "properties": {
+          "best_match_paragraph": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Best Match Paragraph"
+          },
+          "best_match_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Best Match Text"
+          },
+          "body_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Body Length"
+          },
+          "extra": {
+            "additionalProperties": true,
+            "title": "Extra",
+            "type": "object"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Http Status"
+          },
+          "margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Margin"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Score"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Url"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Threshold"
+          }
+        },
+        "title": "Evidence",
+        "type": "object"
+      },
+      "FetchStrategy": {
+        "enum": [
+          "http",
+          "browser"
+        ],
+        "title": "FetchStrategy",
+        "type": "string"
+      },
+      "Finding": {
+        "description": "One reason the output is (or might be) wrong.\n\n``source`` separates machine-checkable ground truth from model opinion. The UI\nrenders them differently, and that separation is the visible form of the\ninvariant that the judge cannot clear a deterministic failure.",
+        "properties": {
+          "citation_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Citation Ordinal"
+          },
+          "code": {
+            "$ref": "#/$defs/FindingCode"
+          },
+          "evidence": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "layer": {
+            "$ref": "#/$defs/Layer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "output_span": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Span"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "quote_ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Quote Ordinal"
+          },
+          "severity": {
+            "$ref": "#/$defs/Severity"
+          },
+          "source": {
+            "$ref": "#/$defs/FindingSource",
+            "default": "deterministic"
+          }
+        },
+        "required": [
+          "id",
+          "layer",
+          "code",
+          "severity",
+          "message"
+        ],
+        "title": "Finding",
+        "type": "object"
+      },
+      "FindingCode": {
+        "description": "Every way the system can complain. Stable identifiers -- the UI maps these to copy.",
+        "enum": [
+          "CITATION_NOT_FOUND",
+          "RESOLVED_WRONG_DOC",
+          "CITATION_CASE_NAME_MISMATCH",
+          "QUOTE_NOT_FOUND",
+          "QUOTE_INEXACT",
+          "CITATION_AMBIGUOUS",
+          "CITATION_UNVERIFIED",
+          "SOURCE_UNAUTHENTICATED",
+          "QUOTE_UNATTRIBUTED",
+          "SOURCE_BLACKLISTED",
+          "SOURCE_GRAYLISTED",
+          "SOURCE_UNKNOWN",
+          "CLAIM_NOT_GROUNDED_IN_SOURCE",
+          "CLAIM_WEAKLY_GROUNDED",
+          "QUESTION_NOT_ANSWERED",
+          "QUESTION_PARTIALLY_ANSWERED",
+          "ANSWER_TOO_SHORT",
+          "FOLLOWUP_NOT_SCORED",
+          "JUDGE_FAILED_FAITHFULNESS",
+          "JUDGE_FAILED_CONTEXTUAL_ACCURACY",
+          "JUDGE_FAILED_CITATION_INTEGRITY",
+          "JUDGE_FAILED_RESPONSIVENESS",
+          "JUDGE_UNPARSEABLE",
+          "JUDGE_ERROR",
+          "LAYER_ERROR"
+        ],
+        "title": "FindingCode",
+        "type": "string"
+      },
+      "FindingSource": {
+        "description": "Whether a finding is machine-checkable ground truth or model opinion.\n\nThe extension renders these differently. That visual separation is the\n'who audits the auditor' answer expressed in UI.",
+        "enum": [
+          "deterministic",
+          "llm"
+        ],
+        "title": "FindingSource",
+        "type": "string"
+      },
+      "Layer": {
+        "enum": [
+          "L0",
+          "L1",
+          "L2",
+          "L3",
+          "L4",
+          "L5"
+        ],
+        "title": "Layer",
+        "type": "string"
+      },
+      "LayerResult": {
+        "properties": {
+          "cache_hits": {
+            "default": 0,
+            "title": "Cache Hits",
+            "type": "integer"
+          },
+          "cache_misses": {
+            "default": 0,
+            "title": "Cache Misses",
+            "type": "integer"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "duration_ms": {
+            "default": 0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "findings": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/Finding"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "layer": {
+            "$ref": "#/$defs/Layer"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Score"
+          },
+          "status": {
+            "$ref": "#/$defs/LayerStatus"
+          }
+        },
+        "required": [
+          "layer",
+          "status"
+        ],
+        "title": "LayerResult",
+        "type": "object"
+      },
+      "LayerStatus": {
+        "enum": [
+          "pass",
+          "warn",
+          "fail",
+          "not_applicable",
+          "error",
+          "skipped"
+        ],
+        "title": "LayerStatus",
+        "type": "string"
+      },
+      "Resolution": {
+        "description": "The outcome of trying to turn a citation into a real document.",
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "candidates": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "case_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Case Name"
+          },
+          "citation_key": {
+            "title": "Citation Key",
+            "type": "string"
+          },
+          "confidence": {
+            "default": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Document Id"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Domain"
+          },
+          "fetch_strategy": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FetchStrategy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "method": {
+            "$ref": "#/$defs/ResolutionMethod",
+            "default": "none"
+          },
+          "status": {
+            "$ref": "#/$defs/ResolutionStatus"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          }
+        },
+        "required": [
+          "citation_key",
+          "status"
+        ],
+        "title": "Resolution",
+        "type": "object"
+      },
+      "ResolutionMethod": {
+        "enum": [
+          "url",
+          "search",
+          "cache",
+          "none"
+        ],
+        "title": "ResolutionMethod",
+        "type": "string"
+      },
+      "ResolutionStatus": {
+        "enum": [
+          "resolved",
+          "not_found",
+          "ambiguous",
+          "unresolvable",
+          "unauthenticated",
+          "error"
+        ],
+        "title": "ResolutionStatus",
+        "type": "string"
+      },
+      "RunStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "deterministic_ready",
+          "judging",
+          "complete",
+          "error"
+        ],
+        "title": "RunStatus",
+        "type": "string"
+      },
+      "Severity": {
+        "description": "How a finding affects the verdict.\n\nFAIL from any of L1-L4 skips the judge entirely (fail-fast gate).\nWARN passes but annotates. INFO is reporting only.",
+        "enum": [
+          "fail",
+          "warn",
+          "info"
+        ],
+        "title": "Severity",
+        "type": "string"
+      },
+      "Span": {
+        "description": "Character offsets into the AI output, so the UI can highlight the exact text.",
+        "properties": {
+          "end": {
+            "minimum": 0,
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Span",
+        "type": "object"
+      },
+      "Timings": {
+        "properties": {
+          "deterministic_ms": {
+            "default": 0,
+            "title": "Deterministic Ms",
+            "type": "integer"
+          },
+          "extract_ms": {
+            "default": 0,
+            "title": "Extract Ms",
+            "type": "integer"
+          },
+          "judge_ms": {
+            "default": 0,
+            "title": "Judge Ms",
+            "type": "integer"
+          },
+          "total_ms": {
+            "default": 0,
+            "title": "Total Ms",
+            "type": "integer"
+          }
+        },
+        "title": "Timings",
+        "type": "object"
+      },
+      "Verdict": {
+        "description": "Ordered lattice: FAIL < WARN < PASS. Aggregation only ever moves down.",
+        "enum": [
+          "fail",
+          "warn",
+          "pass",
+          "pending"
+        ],
+        "title": "Verdict",
+        "type": "string"
+      },
+      "VerdictStage": {
+        "enum": [
+          "deterministic",
+          "final"
+        ],
+        "title": "VerdictStage",
+        "type": "string"
+      }
+    },
+    "description": "The single response schema. ``seq`` increments on every mutation so a poller\ncan ask for deltas and an SSE client can replay from Last-Event-ID.",
+    "properties": {
+      "ai_output": {
+        "default": "",
+        "title": "Ai Output",
+        "type": "string"
+      },
+      "cache": {
+        "$ref": "#/$defs/CacheStats"
+      },
+      "completed_at": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Completed At"
+      },
+      "cost_usd": {
+        "default": 0.0,
+        "title": "Cost Usd",
+        "type": "number"
+      },
+      "created_at": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Created At"
+      },
+      "errors": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Errors",
+        "type": "array"
+      },
+      "findings": {
+        "items": {
+          "$ref": "#/$defs/Finding"
+        },
+        "title": "Findings",
+        "type": "array"
+      },
+      "is_final": {
+        "default": false,
+        "title": "Is Final",
+        "type": "boolean"
+      },
+      "layers": {
+        "additionalProperties": {
+          "$ref": "#/$defs/LayerResult"
+        },
+        "propertyNames": {
+          "$ref": "#/$defs/Layer"
+        },
+        "title": "Layers",
+        "type": "object"
+      },
+      "question": {
+        "default": "",
+        "title": "Question",
+        "type": "string"
+      },
+      "resolutions": {
+        "additionalProperties": {
+          "$ref": "#/$defs/Resolution"
+        },
+        "title": "Resolutions",
+        "type": "object"
+      },
+      "run_id": {
+        "title": "Run Id",
+        "type": "string"
+      },
+      "seq": {
+        "default": 0,
+        "title": "Seq",
+        "type": "integer"
+      },
+      "short_circuit_reason": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Short Circuit Reason"
+      },
+      "short_circuited": {
+        "default": false,
+        "title": "Short Circuited",
+        "type": "boolean"
+      },
+      "status": {
+        "$ref": "#/$defs/RunStatus",
+        "default": "pending"
+      },
+      "timings": {
+        "$ref": "#/$defs/Timings"
+      },
+      "verdict": {
+        "$ref": "#/$defs/Verdict",
+        "default": "pending"
+      },
+      "verdict_stage": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/VerdictStage"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "run_id"
+    ],
+    "title": "RunState",
+    "type": "object"
+  },
+  "SourceDocument": {
+    "$defs": {
+      "ChunkKind": {
+        "enum": [
+          "body",
+          "quote",
+          "heading",
+          "claim",
+          "window"
+        ],
+        "title": "ChunkKind",
+        "type": "string"
+      },
+      "FetchStrategy": {
+        "enum": [
+          "http",
+          "browser"
+        ],
+        "title": "FetchStrategy",
+        "type": "string"
+      },
+      "Paragraph": {
+        "description": "A numbered paragraph of a judgment.\n\neLitigation marks these up cleanly (Judg-1, Judg-Quote-1, Judg-Heading-*), which\ngives us paragraph chunking, a heading hierarchy and pinpoint lookup for free (F5).",
+        "properties": {
+          "heading_path": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Heading Path",
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/$defs/ChunkKind"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "paragraph_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paragraph Number"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ordinal",
+          "kind",
+          "text"
+        ],
+        "title": "Paragraph",
+        "type": "object"
+      }
+    },
+    "properties": {
+      "case_name": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Case Name"
+      },
+      "cited_authorities": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "title": "Cited Authorities",
+        "type": "array"
+      },
+      "coram": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Coram"
+      },
+      "court": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Court"
+      },
+      "domain": {
+        "title": "Domain",
+        "type": "string"
+      },
+      "exists": {
+        "title": "Exists",
+        "type": "boolean"
+      },
+      "fetch_strategy": {
+        "$ref": "#/$defs/FetchStrategy"
+      },
+      "http_status": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Http Status"
+      },
+      "id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Id"
+      },
+      "is_soft_404": {
+        "default": false,
+        "title": "Is Soft 404",
+        "type": "boolean"
+      },
+      "neutral_citation": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Neutral Citation"
+      },
+      "paragraphs": {
+        "default": [],
+        "items": {
+          "$ref": "#/$defs/Paragraph"
+        },
+        "title": "Paragraphs",
+        "type": "array"
+      },
+      "parallel_citations": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "title": "Parallel Citations",
+        "type": "array"
+      },
+      "source_url": {
+        "title": "Source Url",
+        "type": "string"
+      },
+      "text": {
+        "default": "",
+        "title": "Text",
+        "type": "string"
+      },
+      "text_sha256": {
+        "default": "",
+        "title": "Text Sha256",
+        "type": "string"
+      },
+      "year": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Year"
+      }
+    },
+    "required": [
+      "source_url",
+      "domain",
+      "fetch_strategy",
+      "exists"
+    ],
+    "title": "SourceDocument",
+    "type": "object"
+  },
+  "VerifyRequest": {
+    "$defs": {
+      "RunOptions": {
+        "properties": {
+          "force_judge": {
+            "default": false,
+            "title": "Force Judge",
+            "type": "boolean"
+          },
+          "jurisdiction": {
+            "default": "SG",
+            "title": "Jurisdiction",
+            "type": "string"
+          },
+          "skip_judge": {
+            "default": false,
+            "title": "Skip Judge",
+            "type": "boolean"
+          }
+        },
+        "title": "RunOptions",
+        "type": "object"
+      }
+    },
+    "description": "The extension's capture contract. This pair is the system's ONLY input --\nthere is no API integration with the model under test, which is what makes the\nverifier model- and vendor-agnostic.",
+    "properties": {
+      "ai_output": {
+        "minLength": 1,
+        "title": "Ai Output",
+        "type": "string"
+      },
+      "client": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "title": "Client",
+        "type": "object"
+      },
+      "context": {
+        "items": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "title": "Context",
+        "type": "array"
+      },
+      "idempotency_key": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Idempotency Key"
+      },
+      "is_followup": {
+        "default": false,
+        "title": "Is Followup",
+        "type": "boolean"
+      },
+      "options": {
+        "$ref": "#/$defs/RunOptions"
+      },
+      "question": {
+        "minLength": 1,
+        "title": "Question",
+        "type": "string"
+      }
+    },
+    "required": [
+      "question",
+      "ai_output"
+    ],
+    "title": "VerifyRequest",
+    "type": "object"
+  }
+}

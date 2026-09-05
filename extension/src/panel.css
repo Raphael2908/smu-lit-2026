@@ -1,0 +1,419 @@
+/*
+ * Panel styling, plus the ::highlight() rules that paint offending spans in the page.
+ *
+ * Every rule is scoped under #salv-panel except the ::highlight() ones, which must be
+ * page-level to paint page ranges. `all: initial` on the root blunts inheritance from
+ * claude.ai without needing shadow DOM (which cannot host the highlight rules).
+ */
+
+#salv-panel {
+  all: initial;
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 2147483000;
+  width: 380px;
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #16181d;
+  background: #ffffff;
+  border: 1px solid #d8dce4;
+  border-radius: 10px;
+  box-shadow: 0 10px 34px rgba(16, 20, 30, 0.18);
+  overflow: hidden;
+}
+
+#salv-panel *,
+#salv-panel *::before,
+#salv-panel *::after {
+  box-sizing: border-box;
+  font-family: inherit;
+  margin: 0;
+  padding: 0;
+}
+
+#salv-panel[data-collapsed="true"] .salv-body {
+  display: none;
+}
+
+/* --- header ------------------------------------------------------------------ */
+#salv-panel .salv-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e6e9f0;
+  background: #f7f8fb;
+}
+
+#salv-panel .salv-title {
+  font-weight: 650;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  flex: 1;
+}
+
+#salv-panel .salv-toggle {
+  width: 22px;
+  height: 22px;
+  border: 1px solid #dfe3ec;
+  border-radius: 5px;
+  background: #fff;
+  color: #4a5262;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#salv-panel .salv-toggle:hover {
+  background: #eef1f7;
+}
+
+/* --- verdict + status pills -------------------------------------------------- */
+#salv-panel .salv-verdict-pill,
+#salv-panel .salv-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+#salv-panel .salv-pill-sm {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+#salv-panel [data-kind="pass"] {
+  background: #e6f6ec;
+  color: #10653a;
+  border-color: #bfe6cd;
+}
+
+#salv-panel [data-kind="fail"] {
+  background: #fdeaea;
+  color: #8f1d1d;
+  border-color: #f4c4c4;
+}
+
+#salv-panel [data-kind="warn"] {
+  background: #fdf3e0;
+  color: #86590c;
+  border-color: #f2ddb4;
+}
+
+#salv-panel [data-kind="error"] {
+  background: #f1e8fb;
+  color: #5b2c8d;
+  border-color: #ddcaf2;
+}
+
+#salv-panel [data-kind="verifying"] {
+  background: #fdf3e0;
+  color: #86590c;
+  border-color: #f2ddb4;
+}
+
+#salv-panel [data-kind="idle"],
+#salv-panel [data-kind="muted"] {
+  background: #eef0f5;
+  color: #555d6e;
+  border-color: #dfe3ec;
+}
+
+/* --- body -------------------------------------------------------------------- */
+#salv-panel .salv-body {
+  overflow-y: auto;
+  padding: 10px 12px 14px;
+}
+
+#salv-panel .salv-summary {
+  font-size: 11px;
+  color: #6a7285;
+  margin-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+#salv-panel .salv-hint,
+#salv-panel .salv-empty {
+  color: #6a7285;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+#salv-panel .salv-note {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid #e0a93c;
+  background: #fdf7ec;
+  font-size: 12px;
+  color: #6d5417;
+}
+
+#salv-panel .salv-error {
+  color: #8f1d1d;
+  font-size: 12px;
+  padding: 2px 0;
+  word-break: break-word;
+}
+
+/* The fail-fast invariant, stated rather than implied. */
+#salv-panel .salv-shortcircuit {
+  margin: 6px 0 10px;
+  padding: 8px 10px;
+  border: 1px solid #f4c4c4;
+  border-radius: 7px;
+  background: #fdeaea;
+  color: #7e1e1e;
+  font-size: 12px;
+}
+
+#salv-panel .salv-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #eceff5;
+}
+
+#salv-panel .salv-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #4a5262;
+  margin-bottom: 6px;
+}
+
+#salv-panel .salv-section-note {
+  font-size: 11px;
+  color: #757d90;
+  margin-bottom: 6px;
+}
+
+/* --- layer rows -------------------------------------------------------------- */
+#salv-panel .salv-layer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+#salv-panel .salv-layer-code {
+  font-weight: 700;
+  font-size: 11px;
+  color: #8a91a2;
+  width: 20px;
+}
+
+#salv-panel .salv-layer-name {
+  flex: 1;
+  font-size: 12px;
+}
+
+#salv-panel .salv-layer-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 10px;
+  color: #7b8295;
+  font-variant-numeric: tabular-nums;
+}
+
+#salv-panel .salv-cache {
+  color: #1f7a4d;
+}
+
+/* --- findings ---------------------------------------------------------------- */
+#salv-panel .salv-findings {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#salv-panel .salv-finding {
+  padding: 8px 9px;
+  border-radius: 7px;
+  border: 1px solid #e4e8f0;
+  background: #fafbfd;
+}
+
+/*
+ * The visual separation that carries the argument: deterministic findings are solid
+ * and definite, judge findings are dashed, tinted and unmistakably a second class of
+ * claim. A user should never have to read a label to know which is which.
+ */
+#salv-panel .salv-finding[data-source="deterministic"] {
+  border-left: 3px solid #2f3b52;
+}
+
+#salv-panel .salv-finding[data-source="llm"] {
+  border-style: dashed;
+  border-left: 3px dashed #7b5cc4;
+  background: #faf7ff;
+}
+
+#salv-panel .salv-finding-locatable {
+  cursor: crosshair;
+}
+
+#salv-panel .salv-finding-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+#salv-panel .salv-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: #5c6478;
+}
+
+#salv-panel .salv-finding-msg {
+  font-size: 12px;
+  color: #23262e;
+}
+
+#salv-panel .salv-evidence {
+  margin: 6px 0 2px;
+  padding: 5px 8px;
+  border-left: 2px solid #cdd3df;
+  background: #fff;
+  font-size: 11px;
+  color: #3d4453;
+}
+
+#salv-panel .salv-para {
+  display: block;
+  margin-top: 3px;
+  font-style: normal;
+  font-size: 10px;
+  color: #7b8295;
+}
+
+#salv-panel .salv-evidence-meta {
+  font-size: 10px;
+  color: #7b8295;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+#salv-panel .salv-judge-absent {
+  padding: 8px 10px;
+  border: 1px dashed #c9b6ea;
+  border-radius: 7px;
+  background: #f8f5fe;
+  color: #5b3d92;
+  font-size: 12px;
+}
+
+/* --- citations --------------------------------------------------------------- */
+#salv-panel .salv-citation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+#salv-panel .salv-citation-key {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#salv-panel .salv-unresolved {
+  font-size: 11px;
+  color: #8f1d1d;
+  font-style: italic;
+}
+
+#salv-panel .salv-link {
+  font-size: 11px;
+  color: #1a5fb4;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+#salv-panel .salv-link:hover {
+  color: #12447f;
+}
+
+/* --- page highlights ---------------------------------------------------------- */
+/*
+ * Painted over live Ranges by the browser. Nothing in claude.ai's DOM is touched, so
+ * React never re-renders our marks away and its reconciler is never surprised.
+ */
+::highlight(salv-fail) {
+  background-color: rgba(214, 60, 60, 0.28);
+  text-decoration: underline wavy rgba(160, 30, 30, 0.7);
+}
+
+::highlight(salv-warn) {
+  background-color: rgba(224, 169, 60, 0.28);
+}
+
+::highlight(salv-info) {
+  background-color: rgba(120, 140, 190, 0.2);
+}
+
+::highlight(salv-focus) {
+  background-color: rgba(90, 120, 220, 0.38);
+}
+
+@media (prefers-color-scheme: dark) {
+  #salv-panel {
+    color: #e8eaf0;
+    background: #191b21;
+    border-color: #333846;
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+  }
+
+  #salv-panel .salv-header {
+    background: #21242c;
+    border-bottom-color: #333846;
+  }
+
+  #salv-panel .salv-toggle {
+    background: #262a33;
+    border-color: #3a4050;
+    color: #c3c8d4;
+  }
+
+  #salv-panel .salv-finding {
+    background: #1f222a;
+    border-color: #333846;
+  }
+
+  #salv-panel .salv-finding[data-source="llm"] {
+    background: #221f2c;
+  }
+
+  #salv-panel .salv-evidence {
+    background: #191b21;
+    border-left-color: #3a4050;
+    color: #c3c8d4;
+  }
+
+  #salv-panel .salv-section {
+    border-top-color: #2b3038;
+  }
+
+  #salv-panel .salv-judge-absent {
+    background: #241f31;
+    border-color: #4a3d6b;
+    color: #cbb8f0;
+  }
+
+  #salv-panel .salv-link {
+    color: #7fb0f5;
+  }
+}

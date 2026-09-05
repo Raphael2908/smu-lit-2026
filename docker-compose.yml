@@ -1,0 +1,92 @@
+# The whole stack boots with an empty .env in PROVIDER_MODE=mock.
+name: sal-verifier
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  env_file: [.env]
+  environment:
+    DATABASE_URL: postgresql+psycopg://verifier:verifier@postgres:5432/verifier
+    REDIS_URL: redis://redis:6379/0
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: verifier
+      POSTGRES_PASSWORD: verifier
+      POSTGRES_DB: verifier
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U verifier"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    <<: *app
+    environment:
+      ROLE: migrate
+      DATABASE_URL: postgresql+psycopg://verifier:verifier@postgres:5432/verifier
+    restart: "no"
+
+  api:
+    <<: *app
+    environment:
+      ROLE: api
+      DATABASE_URL: postgresql+psycopg://verifier:verifier@postgres:5432/verifier
+      REDIS_URL: redis://redis:6379/0
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+
+  worker:
+    <<: *app
+    environment:
+      ROLE: worker
+      DATABASE_URL: postgresql+psycopg://verifier:verifier@postgres:5432/verifier
+      REDIS_URL: redis://redis:6379/0
+
+  judgeworker:
+    <<: *app
+    environment:
+      ROLE: judgeworker
+      DATABASE_URL: postgresql+psycopg://verifier:verifier@postgres:5432/verifier
+      REDIS_URL: redis://redis:6379/0
+
+  browserworker:
+    <<: *app
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args: {INSTALL_BROWSER: "true"}
+    environment:
+      ROLE: browserworker
+      DATABASE_URL: postgresql+psycopg://verifier:verifier@postgres:5432/verifier
+      REDIS_URL: redis://redis:6379/0
+      BROWSER_PROFILE_DIR: /profile
+    volumes: [browserprofile:/profile]
+    profiles: [browser]
+
+volumes:
+  pgdata:
+  redisdata:
+  browserprofile:
