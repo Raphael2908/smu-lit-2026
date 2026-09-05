@@ -526,9 +526,16 @@ async def test_retrieval_coverage_is_reported():
 
 
 async def test_an_oversized_chunk_is_split_into_its_own_numbered_paragraphs():
-    """Measured on the real judgment: 22 of 43 chunks exceed the 1,800-char passage
-    budget (median 2,042, max 7,103). Truncating them cut by byte offset, so the
+    """Measured on the real judgment: 22 of 43 GROUPED chunks exceed the 1,800-char
+    passage budget (median 2,042, max 7,103). Truncating them cut by byte offset, so the
     decisive paragraph could be retrieved correctly and still never reach the judge.
+
+    Pinned against ``chunk_strategy="grouped"`` deliberately. The default is now
+    "paragraph", whose units are mostly under the passage budget already, so the split
+    fires rarely -- which is the granularity change doing this mechanism's job upstream
+    rather than the mechanism becoming unnecessary. It is still reached by grouped mode
+    and by any single paragraph over the budget (Spandeck's longest is 2,387 chars), so
+    it has to keep working.
     """
     from tests.semantic.fixtures import real_judgment_document
     from verifier.settings import settings
@@ -539,7 +546,7 @@ async def test_an_oversized_chunk_is_split_into_its_own_numbered_paragraphs():
     cluster = spandeck_cluster(GROUNDED_OUTPUT)
     resolutions, documents = cited(cluster, document)
 
-    result = await build_layer(repo).run(
+    result = await build_layer(repo, chunk_strategy="grouped").run(
         layer_input(
             ai_output=GROUNDED_OUTPUT,
             clusters=(cluster,),

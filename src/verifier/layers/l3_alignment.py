@@ -93,6 +93,7 @@ class SourceGroundingLayer(BaseLayer):
         margin_pass_above: float | None = None,
         absolute_floor: float | None = None,
         background_size: int | None = None,
+        chunk_strategy: str | None = None,
         passages_per_claim: int | None = None,
         contextual_prefix: str | None = None,
     ) -> None:
@@ -114,6 +115,10 @@ class SourceGroundingLayer(BaseLayer):
         self.background_size = (
             settings.L3_BACKGROUND_SIZE if background_size is None else background_size
         )
+        #: How the source is cut into retrieval units. Injectable for the same reason
+        #: as contextual_prefix: it changes the score, so it has to be measurable
+        #: without editing source. See settings.CHUNK_STRATEGY.
+        self.chunk_strategy = settings.CHUNK_STRATEGY if chunk_strategy is None else chunk_strategy
         # Retrieval breadth, NOT a threshold. It widens what the judge may read and
         # changes no verdict this layer reaches -- see settings.L3_PASSAGES_PER_CLAIM.
         self.passages_per_claim = (
@@ -302,6 +307,10 @@ class SourceGroundingLayer(BaseLayer):
             # The passages the judge will reason over, best first.
             "passages": kept,
             "clusters": cluster_reports,
+            # Per-claim numbers for every assessed claim, passing or failing.
+            "claim_scores": claim_scores,
+            #: Which chunking produced these scores. Recorded because it changes them.
+            "chunk_strategy": self.chunk_strategy,
             "claims": len(raw_claims),
             "claim_strategy": raw_claims[0].strategy,
             "assessed_clusters": assessed_clusters,
@@ -453,7 +462,7 @@ class SourceGroundingLayer(BaseLayer):
             summary = await contextualise.get_document_summary(
                 document, summariser=self._summariser, doc_repo=self._doc_repo
             )
-        raw_chunks = chunk_source_document(document)
+        raw_chunks = chunk_source_document(document, strategy=self.chunk_strategy)
         chunks = contextualise.build_chunks(
             raw_chunks,
             summary=summary,

@@ -168,7 +168,49 @@ class Settings(BaseSettings):
     L4_MIN_ANSWER_TOKENS: int = 20  # "Yes." scores erratically -> WARN, not FAIL
 
     # --- Chunking ---
-    CHUNK_TARGET_TOKENS: int = 1800  # voyage-law-2 ctx is 16k; a judgment is ~21k (F9)
+    # How a source judgment is cut into retrieval units.
+    #
+    # "grouped" merges paragraphs greedily up to CHUNK_TARGET_TOKENS. "paragraph"
+    # emits one unit per paragraph, merging only the stubs ("I agree.") forward.
+    #
+    # The distinction matters because 1,800 was chosen as a CEILING and then used as a
+    # TARGET. F9 established that a judgment (~21k tokens) does not fit voyage-law-2's
+    # 16k context, so chunking is mandatory -- but "fits the model" and "is the right
+    # size to retrieve against a one-sentence claim" are different questions, and only
+    # the first one was ever answered. Measured on Spandeck: 43 grouped chunks, median
+    # 2,042 chars and ~6 paragraphs each, against a median paragraph of 338 chars.
+    # Default MEASURED, not assumed. Against real voyage-law-2 over 8 shared claims,
+    # one shared background and prefix_mode=none:
+    #
+    #   grouped     mean 0.566  min 0.313  1 of 8 below the 0.35 floor   FAIL
+    #   paragraph   mean 0.626  min 0.390  0 of 8                        PASS
+    #
+    # The claim that survived the prefix fix went 0.313 -> 0.390, and the decisive
+    # paragraph [115] moved from rank #3 (inside a [115-116] merge) to rank #1, so it
+    # now reaches the judge as well. Part 4's thresholds were themselves derived on raw
+    # PARAGRAPHS, so this is the setting that matches the calibration.
+    #
+    # Costs ~4x the vectors per document (170 chunks vs 43 on Spandeck), paid once per
+    # judgment and cached forever. Revert with CHUNK_STRATEGY=grouped.
+    CHUNK_STRATEGY: Literal["grouped", "paragraph"] = "paragraph"
+    #: Caps a unit in BOTH modes -- an oversized single paragraph is still split
+    #: here, because at that size it is no longer a good retrieval unit either.
+    #: What "paragraph" changes is when a unit is CLOSED, not how large one may be.
+    CHUNK_TARGET_TOKENS: int = 1800
+
+    #: Below this, a paragraph is merged into the next one instead of standing alone.
+    #: Judgments are full of "I agree." and "The appeal is dismissed." -- embedded by
+    #: themselves those are noise that can out-rank substantive text, the same reason
+    #: L1 refuses to score a quotation under L1_MIN_QUOTE_CHARS.
+    #:
+    #: A section boundary still wins over it: merging across a heading change would
+    #: give the chunk a heading path true of only half its text. So a short fragment at
+    #: the end of a section is emitted short rather than joined to the next section --
+    #: 7 of Spandeck's 170 paragraph-mode chunks. Kept rather than dropped: they are
+    #: real text from a source we are verifying against, and a max-over-chunks score is
+    #: only harmed by a short chunk if it out-ranks a substantive one.
+    CHUNK_MIN_CHARS: int = 200
+
     CHUNK_OVERLAP_TOKENS: int = 100
     SUMMARY_MAX_TOKENS: int = 250
 

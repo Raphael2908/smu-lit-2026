@@ -194,21 +194,36 @@ def chunk_source_document(
     *,
     target_tokens: int | None = None,
     overlap_tokens: int | None = None,
+    strategy: str | None = None,
 ) -> list[RawChunk]:
-    """Merge a judgment's paragraphs into chunks that fit the embedding context window.
+    """Cut a judgment into retrieval units.
 
-    Paragraphs are merged greedily, and a new chunk is forced whenever the heading path
-    changes: a chunk that spans two sections of a judgment would be prefixed with a
-    heading path that is true of only half of it, which is worse than a short chunk.
+    ``strategy="grouped"`` merges paragraphs greedily up to the retrieval target;
+    ``strategy="paragraph"`` emits one unit per paragraph and merges only stubs
+    forward. In both, a new chunk is forced whenever the heading path changes: a chunk
+    spanning two sections would carry a heading path true of only half of it.
+
+    ``CHUNK_TARGET_TOKENS`` caps a unit in both modes; what the strategy changes is
+    when a unit is CLOSED. That number came from F9 -- a judgment is ~21k tokens
+    against a 16k context, so chunking is mandatory -- which answers "what fits the
+    model", not "what should a one-sentence claim be compared against". Grouping to the
+    ceiling answered only the first question, and gave a median unit of ~6 paragraphs.
 
     Falls back to splitting the raw ``doc.text`` when the document carries no parsed
     paragraphs, so a source that was fetched but not marked up is still assessable
     rather than silently scoring zero.
     """
+    strategy = strategy or settings.CHUNK_STRATEGY
+    per_paragraph = strategy == "paragraph"
     target_tokens = target_tokens or settings.CHUNK_TARGET_TOKENS
     overlap_tokens = settings.CHUNK_OVERLAP_TOKENS if overlap_tokens is None else overlap_tokens
-    budget = _budget_chars(target_tokens)
     overlap = _budget_chars(overlap_tokens) if overlap_tokens else 0
+
+    budget = _budget_chars(target_tokens)
+    # The only difference between the modes: when the accumulator is closed. Grouping
+    # fills it to the budget; paragraph mode closes it as soon as it holds enough text
+    # to be worth embedding, so a stub rides along with the paragraph after it.
+    min_chars = settings.CHUNK_MIN_CHARS if per_paragraph else budget
 
     paragraphs = [p for p in doc.paragraphs if p.kind in _CONTENT_KINDS and p.text.strip()]
     if not paragraphs:
@@ -232,7 +247,7 @@ def chunk_source_document(
                     heading_path=current_path,
                     paragraph_from=min(numbers) if numbers else None,
                     paragraph_to=max(numbers) if numbers else None,
-                    strategy="paragraph",
+                    strategy=strategy,
                 )
             )
         acc.clear()
@@ -246,6 +261,11 @@ def chunk_source_document(
             flush()
         acc.paragraphs.append(para)
         acc.chars += len(text) + 2
+        # Paragraph mode closes the unit as soon as it carries enough text to be worth
+        # embedding. A stub therefore rides along with the paragraph after it rather
+        # than becoming a chunk of its own.
+        if per_paragraph and acc.chars >= min_chars:
+            flush()
     flush()
 
     _assert_within_budget(chunks, budget)
