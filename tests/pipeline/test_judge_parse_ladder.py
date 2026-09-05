@@ -143,7 +143,9 @@ def test_coerce_reports_the_rung_that_won():
 def test_coerce_returns_a_repair_message_it_can_send_back():
     result, error = coerce_judge_result("no json here", model="m", provider="p")
     assert result is None
-    assert "no JSON object" in error
+    # Names both accepted formats, so the repair turn tells the model what to fix.
+    assert "Correctness" in error
+    assert "JSON object" in error
 
 
 def test_the_response_schema_is_strict_shaped():

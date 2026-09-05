@@ -43,13 +43,25 @@ class EmbeddingResult:
 
 @dataclass(frozen=True)
 class JudgeRubric:
-    """Scored 0-4 each, with written justification. factual_faithfulness is weighted
-    highest: it is the dimension embeddings provably cannot assess."""
+    """What the judge scored.
 
-    factual_faithfulness: int
-    contextual_accuracy: int
-    citation_integrity: int
-    responsiveness: int
+    The active prompt scores two BINARY dimensions -- substantive correctness and
+    material completeness -- assessed independently, because an answer can be entirely
+    true and still materially misleading by omission, or cover every issue and get one
+    wrong. Those are ``correctness`` and ``material_completeness``.
+
+    The four 0-4 fields are the earlier rubric shape, retained so a differently
+    prompted judge still has somewhere to report. A given judge populates one set or
+    the other; ``None`` means "this judge did not score that dimension", which is not
+    the same as scoring it zero.
+    """
+
+    factual_faithfulness: int | None = None
+    contextual_accuracy: int | None = None
+    citation_integrity: int | None = None
+    responsiveness: int | None = None
+    correctness: int | None = None
+    material_completeness: int | None = None
 
 
 @dataclass(frozen=True)
