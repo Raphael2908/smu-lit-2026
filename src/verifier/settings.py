@@ -97,6 +97,30 @@ class Settings(BaseSettings):
     L3_ABSOLUTE_FLOOR: float = 0.35
     L3_BACKGROUND_SIZE: int = 200
 
+    # --- L3 retrieval breadth. NOT a threshold: no verdict depends on these. ------
+    # L3 SCORES on max cos(claim, chunks) and always will -- every figure in
+    # docs/03-findings.md Part 4 is calibrated against that maximum, so widening the
+    # evidence set must not widen what is scored. These two govern only how much of
+    # the source the JUDGE gets to read, which has no threshold attached to it.
+    #
+    # Retrieving one chunk per claim was the real bound on L5: the judge could only
+    # ever reason over the single best-matching passage, so a decisive paragraph
+    # ranked second was invisible to it and the verdict tracked whichever passage
+    # happened to win. See todo.md bug 2.
+    L3_PASSAGES_PER_CLAIM: int = 3
+
+    #: Total passages handed to the judge, across every claim and citation. One
+    #: setting because L3 fills the list and L5 renders it, and two constants drifting
+    #: apart silently truncates evidence in between.
+    MAX_JUDGE_PASSAGES: int = 24
+
+    #: Hard character budget per passage in the judge prompt. A chunk longer than this
+    #: is split back into its own paragraphs and the best-matching ones are sent, so
+    #: what the judge loses is chosen by relevance rather than by byte offset. Measured
+    #: on Spandeck: 22 of 43 chunks exceed this, median 2,042 chars and max 7,103, so
+    #: blind truncation was discarding most of the evidence for half the corpus.
+    JUDGE_PASSAGE_MAX_CHARS: int = 1800
+
     # MEASURED against voyage-law-2, not a seed. Question -> answer, input_type
     # query/document, over 5 on-point answers, 4 hard negatives (same area of law,
     # different question) and 2 off-topic:

@@ -427,3 +427,137 @@ async def test_a_claim_never_leaks_into_a_later_runs_background_pool():
     )
     for claim_vector in claim_vectors:
         assert claim_vector not in pool
+
+
+# --- what the judge gets to read ----------------------------------------------------
+#
+# L5 reasons only over the passages L3 hands it and is told not to fill gaps from
+# memory, so its verdict is bounded by this layer's recall. These tests pin that
+# boundary: they assert L3 hands over ENOUGH, correctly labelled, and -- critically --
+# that widening the evidence set moves no score, because every threshold in
+# docs/03-findings.md Part 4 is calibrated against max cos(claim, chunks).
+
+
+async def _grounded_result(repo, **kwargs):
+    await seed_background(repo, [drugs_document(), tenancy_document()])
+    cluster = spandeck_cluster(GROUNDED_OUTPUT)
+    resolutions, documents = cited(cluster, spandeck_document())
+    return await build_layer(repo, **kwargs).run(
+        layer_input(
+            ai_output=GROUNDED_OUTPUT,
+            clusters=(cluster,),
+            resolutions=resolutions,
+            documents=documents,
+        )
+    )
+
+
+async def test_each_claim_contributes_more_than_its_single_best_passage():
+    """The bug this fixes: retrieval was top-1, so a decisive paragraph ranked second
+    was invisible to the judge no matter how large the passage cap was."""
+    narrow = await _grounded_result(InMemoryEmbeddingRepo(), passages_per_claim=1)
+    wide = await _grounded_result(InMemoryEmbeddingRepo(), passages_per_claim=3)
+
+    assert len(wide.detail["passages"]) > len(narrow.detail["passages"])
+    assert wide.detail["retrieval"]["passages_per_claim"] == 3
+
+
+async def test_widening_retrieval_does_not_move_the_score():
+    """The calibration guard. The evidence set is for the judge; the SCORE stays
+    max cos(claim, chunks). If this ever fails, every threshold in Part 4 is void."""
+    narrow = await _grounded_result(InMemoryEmbeddingRepo(), passages_per_claim=1)
+    wide = await _grounded_result(InMemoryEmbeddingRepo(), passages_per_claim=5)
+
+    assert wide.score == pytest.approx(narrow.score)
+    assert wide.status is narrow.status
+    assert wide.findings == narrow.findings
+
+
+def test_every_claim_is_represented_before_any_claim_gets_depth():
+    """Round-robin, not a global sort.
+
+    A global sort by similarity lets one high-scoring claim spend the whole budget,
+    which is the failure this fix exists to prevent: the judge then reasons about a
+    multi-claim answer from evidence for one of its claims. Unit-tested directly
+    because the property is about how the budget is SPENT, and reproducing budget
+    pressure through the layer would need a fixture larger than the point being made.
+    """
+    from verifier.layers.l3_alignment import _select_passages
+
+    def passage(name: str, score: float) -> dict[str, object]:
+        return {"text": name, "citation": "c", "paragraph": None, "score": score}
+
+    # Claim A owns the three highest scores; claim B's best is worse than all of them.
+    groups = [
+        [passage("a1", 0.9), passage("a2", 0.8), passage("a3", 0.7)],
+        [passage("b1", 0.6), passage("b2", 0.5)],
+    ]
+    kept, dropped = _select_passages(groups, limit=2)
+
+    assert [p["text"] for p in kept] == ["a1", "b1"], "claim B must not be starved"
+    assert dropped == pytest.approx(0.8), "the best passage that missed the cut is reported"
+
+
+async def test_retrieval_coverage_is_reported():
+    """A thin evidence set must be visible in the panel, not inferred from a confident
+    verdict arriving with nothing behind it."""
+    result = await _grounded_result(InMemoryEmbeddingRepo())
+    coverage = result.detail["retrieval"]
+
+    assert coverage["claims_total"] >= coverage["claims_attributed"]
+    assert (
+        coverage["passages_generated"]
+        >= coverage["passages_kept"]
+        == len(result.detail["passages"])
+    )
+    assert coverage["claims_unattributed"] == (
+        coverage["claims_total"] - coverage["claims_attributed"]
+    )
+
+
+async def test_an_oversized_chunk_is_split_into_its_own_numbered_paragraphs():
+    """Measured on the real judgment: 22 of 43 chunks exceed the 1,800-char passage
+    budget (median 2,042, max 7,103). Truncating them cut by byte offset, so the
+    decisive paragraph could be retrieved correctly and still never reach the judge.
+    """
+    from tests.semantic.fixtures import real_judgment_document
+    from verifier.settings import settings
+
+    document = real_judgment_document()
+    repo = InMemoryEmbeddingRepo()
+    await seed_background(repo, [drugs_document(), tenancy_document()])
+    cluster = spandeck_cluster(GROUNDED_OUTPUT)
+    resolutions, documents = cited(cluster, document)
+
+    result = await build_layer(repo).run(
+        layer_input(
+            ai_output=GROUNDED_OUTPUT,
+            clusters=(cluster,),
+            resolutions=resolutions,
+            documents=documents,
+        )
+    )
+
+    passages = result.detail["passages"]
+    assert passages, "an oversized chunk must still yield evidence"
+    assert result.detail["retrieval"]["paragraph_split_applied"] is True
+
+    singles = 0
+    for passage in passages:
+        # Nothing is handed over that the judge would only ever see truncated ...
+        assert len(passage["text"]) <= settings.JUDGE_PASSAGE_MAX_CHARS
+        assert passage["paragraph_to"] >= passage["paragraph"]
+        # ... and the "at [N]" label describes EXACTLY the text supplied. Before this
+        # change a passage was labelled with the first paragraph of a chunk the judge
+        # was shown a quarter of, so a proposition could be attributed to a paragraph
+        # the judge never read.
+        assert passage["text"] == "\n\n".join(
+            para.text
+            for para in document.paragraphs
+            if para.paragraph_number is not None
+            and passage["paragraph"] <= para.paragraph_number <= passage["paragraph_to"]
+        )
+        if passage["paragraph"] == passage["paragraph_to"]:
+            singles += 1
+
+    assert singles, "the split must yield at least one exactly-labelled paragraph"

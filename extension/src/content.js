@@ -270,10 +270,23 @@
   }
 
   // --- boot -----------------------------------------------------------------------
+  /**
+   * MOUNT FIRST, THEN AWAIT ANYTHING.
+   *
+   * This used to `await SALV.loadConfig()` before `panel.mount()`, which made the
+   * panel's existence contingent on a `chrome.storage` round trip. In an orphaned
+   * content script that promise never settles (see config.js), so boot parked on line
+   * one and the extension presented as never having injected at all -- no panel, no
+   * error, no output. The panel is the only visible proof the content script is
+   * alive, so nothing may be awaited before it is on the page. Config carries
+   * defaults for every field; a run with stale config is strictly better than a run
+   * that never starts.
+   */
   async function boot() {
-    await SALV.loadConfig();
     panel.mount();
     panel.renderIdle();
+    SALV.banner('content script running on', location.host);
+    await SALV.loadConfig();
     setBadge('idle');
 
     if (!panel.highlightsSupported()) {
@@ -288,19 +301,28 @@
       true
     );
 
-    chrome.runtime.onMessage.addListener((message) => {
-      if (!message || typeof message.type !== 'string') return;
-      if (message.type === 'salv:verify') {
-        // Tier 4 of the selector strategy: whatever happened to the DOM, this works.
-        manualVerify(message.source === 'context-menu' ? lastContextTarget : null);
-      }
-      if (message.type === 'salv:config-changed') {
-        SALV.loadConfig();
-      }
-    });
+    // Guarded for the same reason as everything else in this function: in an orphaned
+    // context `chrome.runtime` throws "Extension context invalidated" synchronously,
+    // and losing the manual trigger must not also cost us the transcript watcher below.
+    try {
+      chrome.runtime.onMessage.addListener((message) => {
+        if (!message || typeof message.type !== 'string') return;
+        if (message.type === 'salv:verify') {
+          // Tier 4 of the selector strategy: whatever happened to the DOM, this works.
+          manualVerify(message.source === 'context-menu' ? lastContextTarget : null);
+        }
+        if (message.type === 'salv:config-changed') {
+          SALV.loadConfig();
+        }
+      });
+    } catch (err) {
+      SALV.warn('message listener unavailable; reload the tab:', (err && err.message) || err);
+    }
 
     watchTranscript();
-    SALV.log('ready; selector tier =', selectors.lastTier);
+    // console.info, not debug: this line is what tells a human at a console the
+    // script is alive, and Chrome hides debug at its default log level.
+    SALV.banner('ready; selector tier =', selectors.lastTier, '; api =', config.apiBase);
   }
 
   if (document.readyState === 'loading') {

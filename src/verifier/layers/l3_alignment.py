@@ -36,8 +36,10 @@ matching nothing in the cited case.
 
 from __future__ import annotations
 
+from rapidfuzz import fuzz
+
 from verifier.contracts.citations import CitationCluster, Resolution, Span
-from verifier.contracts.documents import Chunk, SourceDocument
+from verifier.contracts.documents import Chunk, Paragraph, SourceDocument
 from verifier.contracts.enums import FindingCode, Layer, LayerStatus, Severity
 from verifier.contracts.findings import Evidence, Finding
 from verifier.contracts.layers import LayerInput, LayerResult
@@ -55,7 +57,7 @@ from verifier.semantic.defaults import (
     resolve,
 )
 from verifier.semantic.embed import INPUT_TYPE_DOCUMENT, INPUT_TYPE_QUERY, CachedEmbedder
-from verifier.semantic.similarity import Band, best_match, classify_margin, max_similarity
+from verifier.semantic.similarity import Band, classify_margin, max_similarity, top_k
 from verifier.settings import settings
 
 #: How far from a citation a claim may sit and still be treated as resting on it.
@@ -63,10 +65,11 @@ from verifier.settings import settings
 ATTRIBUTION_WINDOW_CHARS = 400
 
 
-#: How many retrieved passages to hand the judge. Enough to check a multi-claim answer,
-#: few enough that the prompt stays small and cacheable -- the judge is meant to verify
-#: specific text, not re-read the judgment.
-MAX_JUDGE_PASSAGES = 12
+#: How many paragraphs of an over-long chunk to send. More than one because the
+#: lexical ranking below is a recall aid, not an oracle: if the top-scoring paragraph
+#: is the wrong one, the runner-up is usually the right one, and the judge can read
+#: both. Fewer than the whole chunk because that is the budget problem we are solving.
+PARAGRAPHS_PER_OVERSIZED_CHUNK = 2
 
 
 class SourceGroundingLayer(BaseLayer):
@@ -90,6 +93,7 @@ class SourceGroundingLayer(BaseLayer):
         margin_pass_above: float | None = None,
         absolute_floor: float | None = None,
         background_size: int | None = None,
+        passages_per_claim: int | None = None,
     ) -> None:
         self._embedder = resolve(embedder, default_embedder)
         self._summariser = resolve(summariser, default_summariser)
@@ -108,6 +112,11 @@ class SourceGroundingLayer(BaseLayer):
         )
         self.background_size = (
             settings.L3_BACKGROUND_SIZE if background_size is None else background_size
+        )
+        # Retrieval breadth, NOT a threshold. It widens what the judge may read and
+        # changes no verdict this layer reaches -- see settings.L3_PASSAGES_PER_CLAIM.
+        self.passages_per_claim = (
+            settings.L3_PASSAGES_PER_CLAIM if passages_per_claim is None else passages_per_claim
         )
 
     async def _run(self, data: LayerInput) -> LayerResult:
@@ -144,11 +153,16 @@ class SourceGroundingLayer(BaseLayer):
         cluster_reports: list[dict[str, object]] = []
         margins: list[float] = []
         scores: list[float] = []
-        passages: list[dict[str, object]] = []
+        # One list per (cluster, claim), each ordered best-first. Kept separate rather
+        # than flattened so the cap below can be spent round-robin: every claim gets
+        # its best passage before any claim gets a second one.
+        passage_groups: list[list[dict[str, object]]] = []
         cache_hits = 0
         cache_misses = 0
         assessed_clusters = 0
         background_seen = False
+        attributed_total = 0
+        split_applied = False
 
         quote_spans = _quote_spans_by_cluster(data)
 
@@ -208,10 +222,17 @@ class SourceGroundingLayer(BaseLayer):
                 continue
 
             assessed_clusters += 1
+            attributed_total += len(attributed)
             for index in attributed:
                 claim = raw_claims[index]
                 vector = claim_vectors[index]
-                match = best_match(vector, source_result.vectors)
+                # Top-k, but the SCORE is still the maximum. Retrieving more passages
+                # widens what L5 may read; it must not widen what L3 scores, because
+                # every threshold in docs/03-findings.md Part 4 was calibrated against
+                # max cos(claim, chunks) and a mean or an n-th best would invalidate
+                # all of them.
+                matches = top_k(vector, source_result.vectors, k=self.passages_per_claim)
+                match = matches[0] if matches else None
                 s_cited = match.score if match else 0.0
                 scores.append(s_cited)
                 s_background = max_similarity(vector, background) if background else None
@@ -238,17 +259,19 @@ class SourceGroundingLayer(BaseLayer):
                 # is precisely when the judge runs. It then scores the answer while
                 # stating it has no text to check against, which is worse than not
                 # running it at all.
-                best_chunk = source_chunks[match.index] if match else None
-                if best_chunk is not None:
-                    passages.append(
-                        {
-                            "text": best_chunk.text,
-                            "citation": cluster.preferred.raw_text,
-                            "paragraph": best_chunk.paragraph_from,
-                            "score": s_cited,
-                            "source_url": document.source_url,
-                        }
+                group: list[dict[str, object]] = []
+                for candidate in matches:
+                    chunk_passages, was_split = _passages_for_chunk(
+                        source_chunks[candidate.index],
+                        document=document,
+                        claim_text=claim.text,
+                        score=candidate.score,
+                        citation=cluster.preferred.raw_text,
                     )
+                    split_applied = split_applied or was_split
+                    group.extend(chunk_passages)
+                if group:
+                    passage_groups.append(group)
 
             cluster_reports.append(
                 {
@@ -261,16 +284,30 @@ class SourceGroundingLayer(BaseLayer):
                 }
             )
 
+        kept, dropped = _select_passages(passage_groups, settings.MAX_JUDGE_PASSAGES)
+        generated = sum(len(group) for group in passage_groups)
+
         detail: dict[str, object] = {
-            # The passages the judge will reason over. Kept ordered by descending
-            # similarity and capped, so a long judgment cannot crowd the prompt.
-            "passages": [dict(p) for p in sorted(passages, key=lambda x: -float(x["score"]))][
-                :MAX_JUDGE_PASSAGES
-            ],
+            # The passages the judge will reason over, best first.
+            "passages": kept,
             "clusters": cluster_reports,
             "claims": len(raw_claims),
             "claim_strategy": raw_claims[0].strategy,
             "assessed_clusters": assessed_clusters,
+            # Retrieval coverage, so a thin evidence set is VISIBLE in the panel
+            # instead of silently producing a confident verdict. L5 is only as good as
+            # what L3 hands it, and that bound should be reported rather than
+            # discovered by reading the judge's reasons.
+            "retrieval": {
+                "claims_total": len(raw_claims),
+                "claims_attributed": attributed_total,
+                "claims_unattributed": max(0, len(raw_claims) - attributed_total),
+                "passages_per_claim": self.passages_per_claim,
+                "passages_generated": generated,
+                "passages_kept": len(kept),
+                "highest_dropped_score": dropped,
+                "paragraph_split_applied": split_applied,
+            },
         }
         if not background_seen:
             # Cold cache: no other judgment has ever been embedded, so there is nothing
@@ -405,6 +442,134 @@ class SourceGroundingLayer(BaseLayer):
             chunks, input_type=INPUT_TYPE_DOCUMENT, document_id=doc_key
         )
         return chunks, result
+
+
+def _passages_for_chunk(
+    chunk: Chunk,
+    *,
+    document: SourceDocument,
+    claim_text: str,
+    score: float,
+    citation: str,
+) -> tuple[list[dict[str, object]], bool]:
+    """Turn one retrieved chunk into passages the judge can actually read.
+
+    A chunk that fits the prompt budget is sent whole, exactly as before. A chunk that
+    does not is split back into its own numbered paragraphs and only the best-matching
+    ones are sent.
+
+    THE POINT: the old code sent the chunk and let ``RetrievedPassage.render`` cut it
+    at 1,800 characters. Measured on Spandeck, 22 of 43 chunks exceed that (median
+    2,042, max 7,103), so for half the corpus the judge was reading the first quarter
+    of a passage chosen by BYTE OFFSET. A decisive paragraph could be retrieved
+    correctly and still never reach the judge. Splitting makes the cut a ranking
+    decision instead of an accident of layout, and it makes the ``at [N]`` provenance
+    the judge is shown point at text it was actually given -- previously the label was
+    ``chunk.paragraph_from``, the FIRST paragraph of a multi-paragraph chunk.
+
+    The ranking is lexical (``token_set_ratio``), and that is deliberate but narrow.
+    docs/03-findings.md Part 3 shows lexical similarity cannot separate an honest
+    paraphrase from a fabrication (49.7 vs 46.1), so it may never decide whether a
+    claim is supported -- and it does not: nothing here reaches ``_assess``, no
+    threshold consumes it, and the layer's score is untouched. Choosing which
+    paragraph of an ALREADY-RETRIEVED chunk to show a reasoning model is a recall
+    decision, and recall is what lexical overlap is good for.
+
+    Returns the passages and whether a split was applied, for coverage reporting.
+    """
+    budget = settings.JUDGE_PASSAGE_MAX_CHARS
+    # A chunk is a MERGE of paragraphs, so it is labelled with the range it covers.
+    # Labelling it with paragraph_from alone -- as this did -- tells the judge "at
+    # [187]" for text that also contains [188]-[190], and provenance a reader cannot
+    # check is worse than none.
+    whole = {
+        "text": chunk.text,
+        "citation": citation,
+        "paragraph": chunk.paragraph_from,
+        "paragraph_to": chunk.paragraph_to,
+        "score": score,
+        "source_url": document.source_url,
+    }
+    if len(chunk.text) <= budget:
+        return [whole], False
+
+    paragraphs = _chunk_paragraphs(chunk, document)
+    if not paragraphs:
+        # No paragraph mapping to split on -- an unnumbered chunk, or a document
+        # parsed without paragraphs. Fall back to the old behaviour rather than drop
+        # the evidence: a truncated passage still beats no passage.
+        return [whole], False
+
+    ranked = sorted(
+        paragraphs,
+        key=lambda para: (-fuzz.token_set_ratio(claim_text, para.text), para.ordinal),
+    )
+    return [
+        {
+            "text": para.text,
+            "citation": citation,
+            "paragraph": para.paragraph_number,
+            "paragraph_to": para.paragraph_number,
+            "score": score,
+            "source_url": document.source_url,
+        }
+        for para in ranked[:PARAGRAPHS_PER_OVERSIZED_CHUNK]
+    ], True
+
+
+def _chunk_paragraphs(chunk: Chunk, document: SourceDocument) -> list[Paragraph]:
+    """The document paragraphs this chunk was merged from.
+
+    Headings are excluded: the chunker folds them into ``heading_path`` as context, and
+    a heading on its own is not a passage anyone can check a claim against.
+    """
+    if chunk.paragraph_from is None or chunk.paragraph_to is None:
+        return []
+    return [
+        para
+        for para in document.paragraphs
+        if para.paragraph_number is not None
+        and chunk.paragraph_from <= para.paragraph_number <= chunk.paragraph_to
+        and para.text.strip()
+    ]
+
+
+def _select_passages(
+    groups: list[list[dict[str, object]]], limit: int
+) -> tuple[list[dict[str, object]], float | None]:
+    """Spend the passage budget round-robin across claims, best rank first.
+
+    A global sort by similarity lets one high-scoring claim take every slot, which is
+    exactly the failure mode we are fixing: the judge is then reasoning about a
+    multi-claim answer from evidence for one of its claims. Taking each claim's rank-1
+    passage before any claim's rank-2 guarantees every attributed claim is represented
+    before depth is bought anywhere.
+
+    Also returns the best score that did NOT make the cut, so a truncated evidence set
+    is reported rather than inferred.
+    """
+    kept: list[dict[str, object]] = []
+    seen: set[tuple[object, object, str]] = set()
+    dropped: list[float] = []
+    depth = max((len(group) for group in groups), default=0)
+
+    for rank in range(depth):
+        # Within a round, best-scoring first; ties keep group order for determinism.
+        row = sorted(
+            (group[rank] for group in groups if rank < len(group)),
+            key=lambda passage: -float(passage["score"] or 0.0),
+        )
+        for passage in row:
+            key = (passage["citation"], passage["paragraph"], str(passage["text"])[:160])
+            if key in seen:
+                continue
+            seen.add(key)
+            if len(kept) < limit:
+                kept.append(dict(passage))
+            else:
+                dropped.append(float(passage["score"] or 0.0))
+
+    return kept, (max(dropped) if dropped else None)
 
 
 def _document_key(document: SourceDocument, resolution: Resolution | None) -> str:

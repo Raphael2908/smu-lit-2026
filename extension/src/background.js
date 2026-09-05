@@ -8,7 +8,15 @@
  * outlive the first idle window.
  */
 
-const API_BASE = 'http://localhost:8000';
+/**
+ * 127.0.0.1, NOT localhost -- the same rule as config.js, and this file is why that
+ * rule needs stating twice. Commit 402f537 fixed the content script and missed the
+ * proxy, so the bug survived exactly where it is hardest to see: `api.js` falls back
+ * to this worker the first time a direct fetch fails and the fallback is STICKY, so
+ * every subsequent request went to `localhost` -> ::1 while uvicorn was bound to
+ * 127.0.0.1. The symptom is an intermittently dead backend, not a resolution error.
+ */
+const API_BASE = 'http://127.0.0.1:8000';
 const MENU_ID = 'salv-verify-response';
 
 const BADGE = {
@@ -34,7 +42,7 @@ chrome.runtime.onInstalled.addListener(() => {
       id: MENU_ID,
       title: 'Verify this response',
       contexts: ['page', 'selection'],
-      documentUrlPatterns: ['https://claude.ai/*'],
+      documentUrlPatterns: ['https://claude.ai/*', 'https://*.claude.ai/*'],
     });
   });
   applyBadge(null, 'idle');
