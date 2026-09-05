@@ -173,6 +173,10 @@ class Orchestrator:
             state.timings.extract_ms = int((time.perf_counter() - extract_started) * 1000)
             if extract_error:
                 state.errors.append(extract_error)
+            if extraction.extractor_degraded:
+                # Visible on the run, but NOT an L0 error status: the extractor being
+                # down is not a verification failure, and L1a reads the flag itself.
+                state.errors.append(extraction.extractor_degraded)
             state.layers[Layer.L0_EXTRACT] = LayerResult(
                 layer=Layer.L0_EXTRACT,
                 status=LayerStatus.ERROR if extract_error else LayerStatus.PASS,
@@ -181,6 +185,26 @@ class Orchestrator:
                     "clusters": len(extraction.clusters),
                     "quotes": len(extraction.quotes),
                     "explicit_domains": list(extraction.explicit_domains),
+                    # The list itself, not just a count: the whole point of putting a
+                    # model in L0 is that a reader can see what it decided the answer
+                    # cited, and the unchecked leftovers alongside it.
+                    "citations": [
+                        {
+                            "ordinal": cluster.ordinal,
+                            "text": cluster.preferred.raw_text,
+                            "type": cluster.preferred.citation_type.value,
+                            "url": cluster.preferred.url,
+                        }
+                        for cluster in extraction.clusters
+                    ],
+                    "untyped": list(extraction.untyped),
+                    "statutes": len(extraction.statutes),
+                    "propositions": len(extraction.propositions),
+                    **(
+                        {"extractor_degraded": extraction.extractor_degraded}
+                        if extraction.extractor_degraded
+                        else {}
+                    ),
                     **({"error": extract_error} if extract_error else {}),
                 },
             )
@@ -380,15 +404,28 @@ class Orchestrator:
 
         An empty extraction is a perfectly coherent run: no citations to check, no
         quotes to verify. It must never be an error state.
+
+        ``extract_with_llm`` is preferred over the deterministic ``extract`` because L1a
+        is only as good as what it was given to count. It handles its own failures and
+        reports them through ``ExtractionResult.extractor_degraded``; the catch below is
+        the last resort, and note what it returns -- an EMPTY extraction, which L1a would
+        otherwise be entitled to read as "this answer cited nothing".
         """
         extractor = self._extractor
         if extractor is None:
             try:
-                from verifier import extraction as extraction_module
+                from verifier.extraction import llm as extraction_llm
 
-                extractor = getattr(extraction_module, "extract", None)
-            except Exception as exc:  # noqa: BLE001
-                return ExtractionResult(), f"L0 extraction unavailable: {exc}"
+                extractor = getattr(extraction_llm, "extract_with_llm", None)
+            except Exception:  # noqa: BLE001 - fall through to the deterministic pass
+                extractor = None
+            if extractor is None:
+                try:
+                    from verifier import extraction as extraction_module
+
+                    extractor = getattr(extraction_module, "extract", None)
+                except Exception as exc:  # noqa: BLE001
+                    return ExtractionResult(), f"L0 extraction unavailable: {exc}"
         if extractor is None:
             return ExtractionResult(), "L0 extraction unavailable: no extract() found"
         try:

@@ -204,3 +204,61 @@ async def test_l1a_does_not_disturb_the_counts_the_panel_renders():
     assert result.detail["propositions_uncited"] == 1
     assert result.detail["authorities"] == 1
     assert set(result.detail["stages"]) == {"L1a", "L1b", "L1c"}
+
+
+# --- the extractor is now a model, and a model can be down --------------------------
+
+
+def degraded_input(ai_output: str, reason: str = "citation extractor timed out"):
+    """The same output, extracted by something that did not run."""
+    return LayerInput(
+        run_id="run-l1a",
+        question="What is the test for a duty of care in Singapore?",
+        ai_output=ai_output,
+        extraction=extract(ai_output).model_copy(
+            update={"clusters": (), "statutes": (), "extractor_degraded": reason}
+        ),
+    )
+
+
+async def test_a_degraded_extractor_never_fails_the_run():
+    """THE safety property of putting a model in L0.
+
+    Since L1a stopped counting regex matches, "zero authority" no longer means "the
+    answer cited nothing" -- it can equally mean the extractor timed out or had no key.
+    Failing on that would report an outage as a fabrication, which is the same mistake
+    F12 caught with the eLitigation maintenance page, arriving by a new route.
+    """
+    result = await CitationExistenceLayer().run(degraded_input(UNCITED))
+    assert FindingCode.OUTPUT_UNCITED not in codes(result)
+    assert not any(f.severity is Severity.FAIL for f in result.findings)
+
+
+async def test_a_degraded_extractor_still_reports_the_assertions_as_unsupported():
+    """Silence would present an unchecked answer as a clean one."""
+    result = await CitationExistenceLayer().run(degraded_input(UNCITED))
+    assert FindingCode.PROPOSITION_UNCITED in codes(result)
+    assert all(f.severity is Severity.WARN for f in l1a(result))
+
+
+async def test_the_same_output_still_fails_when_the_extractor_did_run():
+    """The guard above must turn on the degraded flag, not on the count being zero."""
+    result = await run(UNCITED)
+    assert FindingCode.OUTPUT_UNCITED in codes(result)
+
+
+async def test_authority_the_parser_could_not_type_still_clears_the_fail():
+    """An unenumerated report series is authority, so the answer is not uncited.
+
+    It is never resolved -- see extraction/llm.py -- so this is the only place it can
+    show up, and if it did not count here the feature would fail exactly the answers it
+    was built to rescue.
+    """
+    data = LayerInput(
+        run_id="run-l1a",
+        question="What is the test for a duty of care in Singapore?",
+        ai_output=UNCITED,
+        extraction=extract(UNCITED).model_copy(update={"untyped": ("(2005) 3 SCC 123",)}),
+    )
+    result = await CitationExistenceLayer().run(data)
+    assert FindingCode.OUTPUT_UNCITED not in codes(result)
