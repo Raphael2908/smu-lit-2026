@@ -43,6 +43,9 @@ globalThis.SALV = globalThis.SALV || {};
   let bodyEl = null;
   let headerEl = null;
   let collapsed = false;
+  /** 'panel' (380px rail) | 'full' (expanded reading view). See panel.css. */
+  let view = 'panel';
+  let expandBtn = null;
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -61,12 +64,19 @@ globalThis.SALV = globalThis.SALV || {};
     const title = el('div', 'salv-title', 'SAL Verifier');
     const verdict = el('span', 'salv-verdict-pill', 'idle');
     verdict.id = 'salv-verdict';
+    // Expand to the full-screen reading view. A 380px rail is the right shape for
+    // glancing at a verdict beside an answer and the wrong one for working through
+    // twenty findings against paragraph pinpoints, which is what this is actually for.
+    expandBtn = el('button', 'salv-toggle', '⤢');
+    expandBtn.addEventListener('click', () => setView(view === 'full' ? 'panel' : 'full', true));
+
     const toggle = el('button', 'salv-toggle', '–');
     toggle.title = 'Collapse';
     toggle.addEventListener('click', () => {
       collapsed = !collapsed;
       root.setAttribute('data-collapsed', collapsed ? 'true' : 'false');
       toggle.textContent = collapsed ? '+' : '–';
+      toggle.title = collapsed ? 'Expand' : 'Collapse';
     });
     const close = el('button', 'salv-toggle', '×');
     close.title = 'Dismiss';
@@ -75,11 +85,36 @@ globalThis.SALV = globalThis.SALV || {};
       root.remove();
     });
 
-    headerEl.append(title, verdict, toggle, close);
+    headerEl.append(title, verdict, expandBtn, toggle, close);
     bodyEl = el('div', 'salv-body');
     root.append(headerEl, bodyEl);
     document.body.appendChild(root);
+    setView(view, false);
     return root;
+  }
+
+  /**
+   * Switch between the rail and the expanded reading view.
+   *
+   * `persist` is false when restoring a stored preference, so reading the setting can
+   * never write it back -- and, more importantly, so nothing in the mount path awaits
+   * storage. The panel's existence must not be contingent on a chrome.storage round
+   * trip: in an orphaned content script that promise never settles, which is exactly
+   * how this extension once presented as "does not inject". Mount first, persist later,
+   * best effort.
+   */
+  function setView(next, persist) {
+    view = next === 'full' ? 'full' : 'panel';
+    if (root) root.setAttribute('data-view', view);
+    if (expandBtn) {
+      expandBtn.textContent = view === 'full' ? '⤡' : '⤢';
+      expandBtn.title = view === 'full' ? 'Exit full screen' : 'Expand to full screen';
+      expandBtn.setAttribute('aria-pressed', view === 'full' ? 'true' : 'false');
+    }
+    if (persist) {
+      SALV.config.panelView = view;
+      SALV.saveConfig({ panelView: view });
+    }
   }
 
   function setVerdict(text, kind) {
@@ -374,6 +409,7 @@ globalThis.SALV = globalThis.SALV || {};
 
   SALV.panel = {
     mount,
+    setView,
     renderIdle,
     renderVerifying,
     renderError,

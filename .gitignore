@@ -16,3 +16,8 @@ node_modules/
 artifacts/
 browser-profile/
 .DS_Store
+
+# Local demo aid, not part of the stack: stubs the fetcher while eLitigation is
+# in a maintenance window. Never commit it -- a checked-in override silently turns
+# off real source fetching for everyone who runs `docker compose up`.
+docker-compose.override.yml

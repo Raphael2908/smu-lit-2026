@@ -453,3 +453,82 @@ exists for that model either.
 
 The cache claim holds under measurement: the second run touching Spandeck reported
 **43 cache hits and 1 miss**, the miss being its own question.
+
+---
+
+## Part 6 — the fix, re-measured on a live claude.ai answer
+
+Part 5's A/B used claims written for the test. This one replays an answer **Claude
+actually produced in the browser**, captured by the extension, through the live
+pipeline: real `voyage-law-2`, real `anthropic/claude-sonnet-5`, real Postgres, the
+mock fetcher serving the real corpus HTML (eLitigation was in a maintenance window —
+F12, a fourth time).
+
+### F16 — the summary costs 24% on live data; the heading path costs ~1%
+
+Identical answer, identical judgment, identical thresholds. The **claim set is pinned**
+— see F17 for why that is not optional — so the prefix regime is the only variable:
+
+| Arm | failing claim `s_cited` | worst margin | vs raw |
+|---|---|---|---|
+| `none` — chunk text only | 0.282 | +0.106 | — |
+| `heading` — section path only (**shipped default**) | 0.279 | +0.105 | −1% |
+| `summary_heading` — the old behaviour | **0.214** | +0.083 | **−24%** |
+
+The 24% reproduces Part 5's offline figure (23%) on text nobody wrote for the test, and
+`none` buys nothing over `heading` — which is the whole basis for keeping the heading
+path and dropping only the summary.
+
+It also confirms which gate fires. **Every margin passes** (+0.083 to +0.106 against a
+0.02 FAIL threshold, with a real 22-chunk background pool). The floor is the only gate
+that has ever failed anything in any measurement in this document.
+
+### F17 — L3 verdicts are not reproducible, because the claim splitter is not
+
+The first attempt at the table above was meaningless and looked fine. Run per-arm
+through the orchestrator, the three arms scored **3/14, 4/16 and 4/16** claims — three
+different claim sets — and reported `pass`, `fail`, `fail`. The apparent result ("the
+shipped default wins") was an artefact of which claims each arm happened to be given.
+
+`chunk_output_claims` calls `Summariser.split_claims`, a Haiku call with no seed and no
+cache. The same 2,184-character answer split into 14, 15 and 16 claims across four runs
+in one session. Because L3's status is driven by the **worst** attributed claim, a
+single extra claim flips the layer, and with it the run's verdict.
+
+Measured consequence, on one answer verified twice through the browser:
+
+| Run | claims | attributed | L3 | verdict |
+|---|---|---|---|---|
+| First | 14 | 3 | **pass** 0.545 | warn (L1a only) |
+| Replay | 15 | 4 | **fail** 0.279 | fail |
+
+Nothing about the answer, the judgment, the thresholds or the code differed. **A green
+L3 in this system is not currently a repeatable measurement**, and any A/B run through
+the orchestrator without pinning the split is measuring the splitter.
+
+This is a pre-existing defect, not one the prefix change introduced — but it was masked
+while the prefix was failing things outright, and it is the reason F14's live failure
+looked intermittent. See `todo.md`.
+
+### The claim all three arms fail
+
+> *"The court expressly declined to treat pure economic loss as attracting a separate or
+> more restrictive control device, holding instead that the same two stages ... are
+> capable of doing the necessary limiting work."*
+
+Spandeck [115] says close to the opposite: *"It could be that a more restricted approach
+is preferable for cases of pure economic loss but this is to be done within the confines
+of a single test."* The court did not decline a more restrictive approach; it said one
+might be preferable, inside the single test.
+
+So the flag may well be a true positive. It should be held loosely: **L3 asks a
+retrieval question, not a truth question**, and a claim about what a court *declined* to
+do is a negative proposition that will match no single paragraph well even when it is
+accurate — the asymmetry arXiv:2504.16318 names and the reason this belongs to L5.
+L5 never saw it, because L3 short-circuited the judge.
+
+The open question is whether a floor calibrated on `n=5` positive assertions is the
+right instrument for meta-claims of this shape. It is recorded here rather than fixed,
+because lowering a floor to admit one claim is exactly the "tuning around the bug"
+Part 4 forbids.
+

@@ -87,50 +87,90 @@ layers are model-independent, but **L5's reliability is bounded by retrieval qua
 
 ---
 
-### 3. The Chrome extension does not inject — code defects fixed, load pending
+### 3. ~~The Chrome extension does not inject~~ — FIXED, confirmed loaded
 
-**Severity: high for the demo.**
+Verified live on `https://claude.ai`: the panel mounts, captures the prompt and
+response, calls the API, polls, and renders all five layers with per-layer status,
+score and timing, deterministic findings with source links, the citations list and the
+judge section. It verified a real Claude answer end to end against the Docker stack
+(29.8 s, cache 43/44, $0.0435).
 
-Ruled out by direct inspection: the manifest parses with no BOM, all 11 referenced
-paths exist case-correctly, the icons are valid PNGs at their declared sizes, all seven
-JS files pass `node --check`, there is no ES-module syntax anywhere, load order is
-correct, and there is no build step to have skipped. CORS already allows
-`https://claude.ai` and `chrome-extension://`.
+The three code defects diagnosed earlier were the cause and are fixed: `background.js`
+hardcoding `localhost` behind a sticky fallback, `boot()` awaiting `chrome.storage`
+before `panel.mount()` in an orphaned content script, and `console.debug` hiding every
+diagnostic behind Chrome's Verbose level.
 
-Three real defects, now fixed:
-
-1. **`background.js` still hardcoded `http://localhost:8000`.** Commit `402f537` fixed
-   `config.js` and missed the proxy. `api.js` falls back to the background worker the
-   first time a direct fetch fails and **the fallback is sticky**, so from that moment
-   every request went to `localhost` → `::1` while uvicorn was bound to `127.0.0.1` —
-   the bug that was already fixed, surviving on the path where it presents as an
-   intermittently dead backend.
-2. **`boot()` awaited `SALV.loadConfig()` before `panel.mount()`.** In an orphaned
-   content script — the extension reloaded while a claude.ai tab stayed open, which
-   happens on every edit — `chrome.storage.sync.get` **never settles**. It does not
-   reject, so `try/catch` catches nothing and boot parks forever: no panel, no error,
-   no output. That is exactly the reported symptom, and the same signature as the
-   page-context `fetch` that "hung rather than resolving or rejecting". The panel now
-   mounts before anything is awaited, and the storage read races a 1 s timeout.
-3. **Diagnosis was blocked by invisible logging.** `SALV.log` used `console.debug`,
-   which Chrome hides unless the level is set to Verbose — so "no console output" was
-   never evidence of anything. `SALV.banner` (`console.info`) now announces the script
-   at boot.
-
-Also widened `matches` and the context menu to `https://*.claude.ai/*`.
-
-**Remaining:** Chrome 152 removed `--load-extension` and `chrome://` pages cannot be
-driven by automation, so the extension has to be loaded by hand:
-`chrome://extensions` → Developer mode → **Load unpacked** → the `extension/`
-directory (the one holding `manifest.json`). Hard-reload the claude.ai tab afterwards —
-content scripts do not retro-inject into tabs that were already open.
-
-Files: `extension/src/background.js`, `extension/src/content.js`,
-`extension/src/config.js`, `extension/manifest.json`.
+**One operational note worth keeping.** Chrome does not re-read an unpacked extension's
+files until the extension is reloaded in `chrome://extensions`; a page reload is not
+enough. Editing `panel.css` and refreshing claude.ai shows the OLD stylesheet, which
+looks exactly like a CSS change that did not work.
 
 ---
 
-### 4. A maintenance-window resolution is cached permanently
+### 4. L3 verdicts are not reproducible, because the claim splitter is not
+
+**Severity: high — the same answer verified twice gives different verdicts.**
+
+`chunk_output_claims` calls `Summariser.split_claims`, a Haiku call with no seed and no
+cache. The same 2,184-char answer split into 14, 15 and 16 claims across four runs in
+one session. L3's status is driven by the **worst** attributed claim, so one extra
+claim flips the layer and with it the run.
+
+Measured on one real claude.ai answer verified twice, nothing else changed:
+
+| Run | claims | attributed | L3 | verdict |
+|---|---|---|---|---|
+| First | 14 | 3 | **pass** 0.545 | warn |
+| Replay | 15 | 4 | **fail** 0.279 | fail |
+
+It also silently corrupts any A/B run through the orchestrator: comparing the three
+`L3_CONTEXTUAL_PREFIX` arms gave 3/14, 4/16 and 4/16 claims — three different claim
+sets — and a clean-looking table that measured the splitter, not the prefix. F16's
+numbers are only meaningful because the split is pinned across arms.
+
+Pre-existing, not introduced by the prefix change, but it was masked while the prefix
+was failing things outright, and it is why F14's live failure looked intermittent.
+
+**Next step, cheapest first:**
+- Cache the split on `sha256(ai_output) + model + prompt_version`, exactly as
+  `document_summaries` caches the document summary. A re-verification of the same
+  answer then cannot drift, which is most of the problem.
+- Set `temperature=0` on the split call if the provider exposes it.
+- Report `claim_strategy` and the claim count in the panel, so a verdict that rests on
+  4 claims rather than 3 is visible rather than inferred.
+- Longer term, the deterministic `window_claims` fallback is reproducible by
+  construction. It is worth measuring whether it is good enough to be the default.
+
+Files: `src/verifier/semantic/chunking.py`, `src/verifier/providers/*_llm.py`,
+`src/verifier/repos/documents.py` (the summary cache is the pattern to copy).
+
+---
+
+### 5. The L3 floor may be wrong for negative and meta claims
+
+**Severity: medium — one confirmed instance, not yet a pattern.**
+
+All three prefix arms fail this claim from a real Claude answer:
+
+> *"The court expressly declined to treat pure economic loss as attracting a separate or
+> more restrictive control device ..."*
+
+Spandeck [115] says close to the opposite, so it may be a true positive. But L3 asks a
+**retrieval** question, and a claim about what a court *declined* to do is a negative
+proposition that matches no single paragraph well even when accurate — the asymmetry
+arXiv:2504.16318 names, and the reason faithfulness belongs to L5. Here L3 short-
+circuited the judge, so the layer that could actually rule on it never ran.
+
+The floor is calibrated on `n=5` positive assertions. Whether it is the right instrument
+for meta-claims is untested.
+
+**Do not fix by lowering the floor** — that is the tuning-around-a-bug Part 4 forbids.
+Widen the calibration set with negative and meta claims first and find out whether they
+form a separable regime.
+
+---
+
+### 6. A maintenance-window resolution is cached permanently
 
 **Severity: high — one outage poisons the cache for every later run.**
 
@@ -160,7 +200,7 @@ Files: `src/verifier/repos/resolutions.py`, `src/verifier/pipeline/resolver.py`.
 
 ---
 
-### 5. The Docker image does not ship `tests/corpus`, so mock mode cannot verify in a container
+### 7. The Docker image does not ship `tests/corpus`, so mock mode cannot verify in a container
 
 **Severity: medium — the compose file's own promise is untrue.**
 
@@ -179,7 +219,7 @@ Files: `docker/Dockerfile`, `docker-compose.yml`.
 
 ---
 
-### 6. There is no `FETCHER_MODE`
+### 8. There is no `FETCHER_MODE`
 
 **Severity: low — but it is what made bug 5 hard to work around.**
 
@@ -194,7 +234,7 @@ Files: `src/verifier/providers/factory.py`, `src/verifier/settings.py`.
 
 ---
 
-### 4. `make seed-lists` reports success while writing nowhere durable
+### 9. `make seed-lists` reports success while writing nowhere durable
 
 **Severity: medium — cosmetic today, misleading tomorrow.**
 
@@ -214,43 +254,39 @@ Files: `src/verifier/repos/lists.py` (missing), `src/verifier/repos/pg.py`.
 
 ## QoL improvements
 
-### The panel is unreadable in dark mode
+### ~~The panel is unreadable in dark mode~~ — FIXED
 
-**Severity: medium — the verdict is correct and nobody can read it.**
+The dark-mode block overrode surfaces and left the **ink** at its light-mode values.
+`.salv-finding-msg` stayed `#23262e` on a `#1f222a` card — a contrast ratio of
+**1.05:1**, i.e. invisible — while the pills and links were overridden and looked
+correct, so the panel read as working.
 
-Found while driving the extension on live claude.ai. `panel.css` defines the whole
-palette as a light theme — 32 hardcoded `color:` rules — and its
-`@media (prefers-color-scheme: dark)` block overrides only **nine** selectors, almost
-all of them backgrounds. Every text colour therefore keeps its light-mode value on a
-dark panel. Measured in the browser against the panel's own `#191b21`:
+Measured, before and after, in dark mode:
 
-| Element | Size | Contrast | WCAG AA (4.5:1) |
-|---|---|---|---|
-| `.salv-finding-msg` — *the finding itself* | 12px | **1.05** | ✗ |
-| `.salv-section-title` ("LAYERS") | 11px | 2.19 | ✗ |
-| `.salv-code` (`CLAIM_NOT_GROUNDED_IN_SOURCE`) | 10px | 2.69 | ✗ |
-| `.salv-summary` (timing, cache) | 11px | 3.57 | ✗ |
-| `.salv-section-note` | 11px | 4.17 | ✗ |
-| `.salv-layer-meta` / `.salv-duration` / `.salv-score` | 10px | 4.48 | ✗ |
-| `.salv-layer-name` | 12px | 14.31 | ✓ |
-| `.salv-shortcircuit` | 12px | 8.67 | ✓ |
+| | before | after |
+|---|---|---|
+| Finding body on its card | **1.05** | **12.37** |
+| Unresolved citation | 1.79 | 7.89 |
+| Code / meta labels | 4.14 | 6.21 |
+| Worst pair anywhere, either theme | — | **5.23** (AA is 4.5) |
 
-Eight of ten sampled styles fail AA, and the worst is the one that matters most:
-`.salv-finding-msg { color: #23262e }` on `#191b21` is **1.05:1** — the sentence
-explaining *why* an answer was failed is effectively invisible. In the live run the
-panel correctly reported "Nothing in [2007] SGCA 37 closely matches this claim (best
-passage similarity 0.326, floor 0.35)" and a reader simply could not see it.
+Fixed by making every colour a custom property and having the dark block redefine
+**only tokens** — no selector in it styles anything, so light and dark cannot drift
+apart again. Semantic inks are lightened rather than reused: `#8f1d1d` on a dark card
+is 1.79:1 however correct the hue.
 
-That is worse than an ugly panel. This tool exists to tell a lawyer why an answer was
-rejected; a verdict nobody can read is a verdict that will be ignored, and an accuracy
-tool that gets ignored has failed at the only thing it does.
+Type was also raised for the actual readers — lawyers reading dense findings with
+paragraph pinpoints, not developers skimming a debug overlay. Body 13→15 px, finding
+text 12→14 px, evidence 11→13 px, meta 10→12 px, all driven by a single
+`--salv-scale` multiplier so nothing drifts out of proportion.
 
-**The fix:** replace the hardcoded hexes with CSS custom properties on `#salv-panel`,
-and redefine only those variables inside the dark block — so a colour can never again
-be defined in one theme and forgotten in the other. Re-check every token against 4.5:1,
-and raise the 10px metadata sizes while there. Not a repaint; a token pass.
+**Full-screen reading view** added: `⤢` in the header expands the 380 px rail to a
+centred, max-1100 px sheet and raises the same `--salv-scale` to 1.15. The choice is
+remembered in `chrome.storage` — written best-effort and applied only *after* mount,
+because the panel's existence must never depend on a storage round trip (that was the
+orphaned-content-script hang in bug 3).
 
-Files: `extension/src/panel.css`.
+---
 
 ### Smaller things spotted in the same pass
 
