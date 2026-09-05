@@ -7,110 +7,144 @@ context, not as outstanding work.
 
 ## Bugs to fix
 
-### 1. The contextual prefix is hurting L3 retrieval
+### 1. The contextual prefix fails correct legal work — CONFIRMED, not fixed
 
-**Severity: high — it currently fails correct legal work.**
+**Severity: high — measured failing a correct answer on a live run.**
 
-Every chunk is embedded with a document summary and heading path prefixed to it, on
-the theory that this gives each chunk global context. Measured against real
-`voyage-law-2`, the prefix appears to be *diluting* the signal instead.
+No longer a suspicion. See `docs/03-findings.md` F14.
 
-| | genuine claim | foreign claim |
+**Live.** A correct answer citing `[2007] SGCA 37` and quoting paragraph [115]
+verbatim: L1 scored the quote **1.000**, L4 scored **0.751**, and **L3 failed it** at
+0.325 against the 0.35 floor. The failing claim was the quoted sentence itself, and the
+chunk containing [115] was not retrieved at all.
+
+**A/B against real `voyage-law-2`**, four grounded claims, 43 chunks, prefix on vs raw:
+
+| | Prefixed (as shipped) | Raw |
 |---|---|---|
-| **Raw** paragraphs | min **0.501** | max **0.251** |
-| **Prefixed** (live pipeline) | a genuinely grounded claim was **FAILED** | — |
+| Mean max cos | 0.503 | **0.621** |
+| Claims below the 0.35 floor | **1 of 4** | **0 of 4** |
+| The quoted paragraph's own chunk | 0.304, rank **#11** | **0.431**, rank **#4** |
 
-On raw text the separation is wide and the current floor (0.35) fails 0 of 3 genuine
-claims. In the live pipeline the same kind of claim fails. The summary text is long
-relative to the chunk and plausibly dominates the embedding.
+The summary is 1,370 chars (~342 tokens) and is byte-identical across all 43 chunks, so
+it adds a large shared component to every document vector with no counterpart in the
+query vector — claims are embedded bare. It both lowers absolute similarity and
+compresses the differences *between* chunks, which is why it damages L3's verdict and
+L5's evidence by the same mechanism.
 
-**Do not fix this by lowering the threshold.** That tunes around the bug and hides a
-regression behind a green demo. The thresholds are measured and correct for raw text.
+**Still do not fix this by lowering the threshold.** The raw-text figures are the ones
+Part 4 calibrated, and they fail 0 of 4.
 
-**Next step:** A/B three configurations over the same claim set —
-1. raw chunks, no prefix
-2. current summary + heading prefix
-3. `EMBEDDINGS_MODEL=voyage-context-4` (Voyage's native contextualised endpoint,
-   already wired behind `EmbeddingsProvider.contextualized_embed`)
+**The fix, when it is taken:** stop prefixing on the L3 document path. Note there is no
+switch for it today — `get_document_summary` returns `""` only when `summariser is
+None`, and no production path produces that, so the "config 1 vs config 2" A/B in the
+old plan was never runnable in-process.
 
-Option 3 is what the provider interface was built for: it does the contextualisation
-inside the model rather than by string concatenation. If it wins, the hand-built
-prefix and the summariser call on the L3 path both disappear — which also removes a
-Haiku call from the critical path.
+**Correction to what this file used to say:** `EmbeddingsProvider.contextualized_embed`
+does not exist. `VoyageEmbedder.contextualized_embed` and `uses_native_context` do, and
+have **zero call sites in `src/`** — `CachedEmbedder._embed` always calls `embed()` and
+`_embed_source` always prefixes. `EMBEDDINGS_MODEL=voyage-context-4` would today send
+chunks to the ordinary endpoint *and still prefix them by hand*. The one-env-var A/B is
+unimplemented, and that model has no calibrated thresholds either.
 
-Files: `src/verifier/semantic/contextualise.py`, `src/verifier/semantic/embed.py`,
+Files: `src/verifier/semantic/contextualise.py`, `src/verifier/layers/l3_alignment.py`,
 `src/verifier/providers/voyage.py`.
 
 ---
 
-### 2. The judge's verdict tracks whatever passages L3 hands it
+### 2. ~~The judge's verdict tracks whatever passages L3 hands it~~ — FIXED
 
-**Severity: high — it is a correctness sensitivity, not flakiness.**
+Diagnosed to three concrete causes, none of which was the passage cap this file
+originally proposed widening. See `docs/03-findings.md` F13.
 
-Across runs, L5 both **caught and passed the same wrong-holding answer**, following
-the passages it was given. When L3 retrieved paragraph [115] the judge quoted it and
-correctly failed the answer; when it retrieved different passages the judge passed the
-same text.
+- **Retrieval was top-1 per claim.** `best_match` is `top_k(k=1)`, so the candidate
+  pool was one passage per (citation × attributed claim). `MAX_JUDGE_PASSAGES = 12`
+  was never the binding constraint and widening it would have changed nothing.
+- **Passages were truncated at 1,800 chars by byte offset.** 22 of Spandeck's 43
+  chunks exceed that (median 2,042, max 7,103), so for half the corpus the judge read
+  the opening quarter of a passage — a decisive paragraph could be retrieved correctly
+  and still never reach it.
+- **Provenance was wrong.** A passage was labelled `chunk.paragraph_from`, the first
+  paragraph of a merge, so `at [187]` could head text from [188]–[190].
+- **The harvest cap applied to arrival order**, and the orchestrator supplies L1 before
+  L3, so incidental quote evidence could displace what L3 actually ranked.
 
-This is not the judge being unreliable. It is doing exactly what it was told: reason
-from the supplied evidence and do not fill gaps from memory. The weakness is upstream
-— **L5 is only as good as L3's retrieval**, and nothing currently guarantees the
-decisive passage is among the ones selected.
+Fixed: top-k per claim; an over-long chunk split into its own numbered paragraphs and
+ranked; passages labelled with the range they cover; the budget spent round-robin so
+every attributed claim is represented before any gets depth; the harvest ranked by
+score. Live, the judge's evidence went from 5 passages to **21**.
 
-Worth noting this interacts with bug 1: better retrieval fixes both.
+**The score is untouched** — L3 still scores `max cos(claim, chunks)`, so Part 4's
+thresholds stand. `test_widening_retrieval_does_not_move_the_score` pins it.
 
-**Options, roughly in order of cost:**
-- Widen `MAX_JUDGE_PASSAGES` (currently 12) and check whether recall of the decisive
-  paragraph improves. Cheap, and measurable.
-- Retrieve per *claim* rather than per document, so each claim contributes its own
-  best passage rather than competing for slots.
-- Add a lexical (BM25) retrieval pass alongside the vector one and union the results —
-  the decisive paragraph often shares distinctive terms with the claim even when the
-  embedding does not rank it first.
-- Report retrieval coverage in `LayerResult.detail` so a thin evidence set is visible
-  in the panel rather than silently producing a confident verdict.
+Retrieval coverage now rides in `LayerResult.detail["retrieval"]` (claims attributed vs
+total, passages generated vs kept, best dropped score, whether a split was applied), so
+a thin evidence set is visible in the panel rather than inferred from a confident
+verdict arriving with nothing behind it.
 
-The honest framing for the writeup: the deterministic layers are model-independent,
-but **L5's reliability is bounded by retrieval quality**, and that bound should be
-stated rather than discovered by a judge.
+The honest framing for the writeup is unchanged and now demonstrated: the deterministic
+layers are model-independent, but **L5's reliability is bounded by retrieval quality**.
 
-Files: `src/verifier/layers/l3_alignment.py`, `src/verifier/layers/l5_judge.py`.
+---
+
+### 3. The Chrome extension does not inject — code defects fixed, load pending
+
+**Severity: high for the demo.**
+
+Ruled out by direct inspection: the manifest parses with no BOM, all 11 referenced
+paths exist case-correctly, the icons are valid PNGs at their declared sizes, all seven
+JS files pass `node --check`, there is no ES-module syntax anywhere, load order is
+correct, and there is no build step to have skipped. CORS already allows
+`https://claude.ai` and `chrome-extension://`.
+
+Three real defects, now fixed:
+
+1. **`background.js` still hardcoded `http://localhost:8000`.** Commit `402f537` fixed
+   `config.js` and missed the proxy. `api.js` falls back to the background worker the
+   first time a direct fetch fails and **the fallback is sticky**, so from that moment
+   every request went to `localhost` → `::1` while uvicorn was bound to `127.0.0.1` —
+   the bug that was already fixed, surviving on the path where it presents as an
+   intermittently dead backend.
+2. **`boot()` awaited `SALV.loadConfig()` before `panel.mount()`.** In an orphaned
+   content script — the extension reloaded while a claude.ai tab stayed open, which
+   happens on every edit — `chrome.storage.sync.get` **never settles**. It does not
+   reject, so `try/catch` catches nothing and boot parks forever: no panel, no error,
+   no output. That is exactly the reported symptom, and the same signature as the
+   page-context `fetch` that "hung rather than resolving or rejecting". The panel now
+   mounts before anything is awaited, and the storage read races a 1 s timeout.
+3. **Diagnosis was blocked by invisible logging.** `SALV.log` used `console.debug`,
+   which Chrome hides unless the level is set to Verbose — so "no console output" was
+   never evidence of anything. `SALV.banner` (`console.info`) now announces the script
+   at boot.
+
+Also widened `matches` and the context menu to `https://*.claude.ai/*`.
+
+**Remaining:** Chrome 152 removed `--load-extension` and `chrome://` pages cannot be
+driven by automation, so the extension has to be loaded by hand:
+`chrome://extensions` → Developer mode → **Load unpacked** → the `extension/`
+directory (the one holding `manifest.json`). Hard-reload the claude.ai tab afterwards —
+content scripts do not retro-inject into tabs that were already open.
+
+Files: `extension/src/background.js`, `extension/src/content.js`,
+`extension/src/config.js`, `extension/manifest.json`.
 
 ---
 
-### 3. The Chrome extension does not inject
+### 4. `make seed-lists` reports success while writing nowhere durable
 
-**Severity: high for the demo — the UI overlay never appears.**
+**Severity: medium — cosmetic today, misleading tomorrow.**
 
-`#salv-panel` is absent on `claude.ai`, no `salv-*` node exists, no console output and
-no errors. `boot()` calls `panel.mount()` unconditionally, so the content script
-cannot be running at all.
+`repos/lists.py` was never implemented. `repos/pg.py` was written to tolerate its
+absence and falls back to `InMemoryListRepo`, so `make seed-lists` prints "Seeded 37
+source trust entries" and the rows vanish with the process. `GET /v1/lists` returns
+`[]` on a Postgres backend.
 
-Ruled out so far:
-- Not a code error — nothing is thrown, and no content-script execution context is
-  created at all (checked via CDP `Runtime.executionContextCreated`; only the page's
-  own worlds appear).
-- Not the API — it is up, and CORS is verified for both `https://claude.ai` and
-  `chrome-extension://` origins.
-- **Not `localhost` any more** — that *was* a real bug (`localhost` resolves to `::1`
-  first while uvicorn binds `127.0.0.1`), fixed in #2. But the extension is not
-  reaching the network stage at all.
-- CLI loading is a dead end: Chrome 152 restricts `--load-extension` (removed for
-  security in 137+), and `--disable-extensions-except` stopped it loading entirely.
+L2 is unaffected — it lazily builds its own seeded in-memory repo — so this is not a
+correctness bug in the verdict. But the list-management API is inert, and a claim of
+persistence that is false is the same shape as the document-cache bug already in the
+fixed table below.
 
-**Next step:** confirm in `chrome://extensions` that *SAL Verifier* is listed, toggled
-**on**, and shows no error badge, then hard-reload the claude.ai tab. If it is listed
-and enabled, open its service-worker console from that page and reload — the failure
-is then in `content.js` before `panel.mount()`, most likely `SALV.loadConfig()`
-awaiting a `chrome.storage` call that never resolves.
-
-A page-context `fetch` to the API also **hung** rather than resolving or rejecting,
-which is worth re-testing once the extension is confirmed loaded — a hang is not the
-signature of a CSP block (which rejects immediately) and may be a second issue.
-
-Files: `extension/src/content.js`, `extension/src/config.js`, `extension/manifest.json`.
-
----
+Files: `src/verifier/repos/lists.py` (missing), `src/verifier/repos/pg.py`.
 
 ## Calibration debt
 
@@ -153,3 +187,7 @@ Files: `extension/src/content.js`, `extension/src/config.js`, `extension/manifes
 | `response_format` overriding the judge prompt's own output contract | installing the user's prompt |
 | L5 crashing on `None` scores for unpopulated rubric dimensions | installing the user's prompt |
 | L4's 0.50 threshold failing 3 of 5 correct answers | real `voyage-law-2` |
+| The judge given one passage per claim, truncated at a byte offset, labelled with the wrong paragraph | first full e2e |
+| The harvest cap applied to arrival order, so L1 evidence displaced L3's ranking | reading the orchestrator's layer order |
+| `background.js` still on `localhost` after the 127.0.0.1 fix — on the sticky proxy path | grepping the extension |
+| `boot()` awaiting a `chrome.storage` read that never settles, before mounting the panel | tracing the injection symptom |

@@ -175,6 +175,8 @@ If the cited judgment supports the claim no better than a random unrelated judgm
 
 > Keep `voyage-law-2` as default. The `EmbeddingsProvider` interface also exposes `contextualized_embed()`, so `EMBEDDINGS_MODEL=voyage-context-4` switches to Voyage's native contextual endpoint and skips the manual prefix — a one-env-var A/B.
 
+**Not built.** `VoyageEmbedder.contextualized_embed` and `uses_native_context` exist but have zero call sites: `CachedEmbedder._embed` always calls `embed()` and `_embed_source` always prefixes by hand. Setting `EMBEDDINGS_MODEL=voyage-context-4` today sends chunks to the *ordinary* endpoint and still prefixes them. See `docs/03-findings.md` F15.
+
 **L4 — responsiveness** (`layers/l4_responsiveness.py`). Independent, starts at t=0, no LLM call. **Does the output answer the user's question?** Straight cosine — embed the question as it arrived, embed the answer's chunks, take the max:
 
 ```python

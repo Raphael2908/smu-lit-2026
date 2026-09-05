@@ -224,3 +224,98 @@ They are enough to replace a demonstrably wrong threshold with a measured one; t
 are not enough to quote a confidence interval. Widen the sample before relying on
 them, and re-run everything for any other embedding model — no cosine threshold
 transfers ([arXiv:2504.16318](https://arxiv.org/html/2504.16318v3)).
+
+---
+
+## Part 5 — measured during the first full end-to-end run
+
+Everything here comes from running the real pipeline (mock fetcher over the real
+corpus HTML, real `voyage-law-2`, real `anthropic/claude-sonnet-5` judge via
+OpenRouter) against Spandeck, and from measuring the chunker directly. eLitigation was
+in a maintenance window throughout, so the live-fetch path is untested here — F12's
+third page state, again, and the reason the mock fetcher serves real bytes.
+
+### F13 — the judge was reading a quarter of each passage, chosen by byte offset
+
+`RetrievedPassage.render()` truncated at 1,800 characters. Measured against
+`tests/corpus/2007_SGCA_37.html` through the production parser and chunker:
+
+| | |
+|---|---|
+| Paragraphs / characters | 257 / 112,762 |
+| Chunks | 43 |
+| Chunk characters — min / median / max | 225 / **2,042** / **7,103** |
+| Chunks exceeding the 1,800-char passage budget | **22 of 43** |
+
+So for half the corpus the judge received the opening quarter of a passage, cut at a
+byte offset rather than by relevance. Worse, the passage was labelled with
+`chunk.paragraph_from` — the *first* paragraph of a merge — so `at [187]` could head
+text drawn from [188]–[190], inviting the judge to attribute a proposition to a
+paragraph it was never shown.
+
+Compounding it, retrieval was **top-1 per claim**: `best_match` is `top_k(k=1)`, so the
+candidate pool was one passage per (citation × attributed claim). `MAX_JUDGE_PASSAGES
+= 12` was never the binding constraint, and widening it — the obvious fix — would have
+changed nothing.
+
+Fixed: top-k per claim, an over-long chunk split back into its own numbered paragraphs
+and ranked, passages labelled with the range they actually cover, and the budget spent
+round-robin so every attributed claim is represented before any claim gets depth. On
+the live run this took the judge's evidence from 5 passages to 21. **The score is
+untouched** — L3 still scores `max cos(claim, chunks)`, so every threshold in Part 4
+stands, and `test_widening_retrieval_does_not_move_the_score` pins that.
+
+### F14 — the contextual prefix is confirmed to fail correct legal work
+
+Part 4 left this as "the open contradiction". It is no longer open.
+
+**Live, first run.** A correct answer citing `[2007] SGCA 37` and quoting paragraph
+[115] verbatim: L1 scored the quote **1.000**, L4 scored responsiveness **0.751**, and
+**L3 failed it** at 0.325 against the 0.35 floor. The failing claim was the quoted
+sentence itself. The chunk containing [115] was not among the retrieved passages at
+all.
+
+**A/B against real `voyage-law-2`**, same four claims, same 43 chunks, once with the
+prefix the pipeline applies today (a 1,370-character ≈ 342-token summary prepended to
+every chunk) and once on raw chunk text:
+
+| | Prefixed (as shipped) | Raw |
+|---|---|---|
+| Mean max cos over 4 grounded claims | 0.503 | **0.621** |
+| Claims falling below the 0.35 floor | **1 of 4** | **0 of 4** |
+| The quoted paragraph's own chunk, for the failing claim | 0.304, rank **#11** | **0.431**, rank **#4** |
+
+Every claim scores lower with the prefix. The failing one goes 0.506 → 0.346, crossing
+the floor. And the chunk holding the quoted paragraph falls from rank #4 to rank #11,
+which is why it never reached the judge even under top-3 retrieval — **the prefix
+damages L3 and L5 by the same mechanism.**
+
+The prefix is byte-identical across all 43 chunks of a judgment, so it adds a large
+shared component to every document vector that has no counterpart in the query vector
+(claims are embedded bare). After L2 normalisation that component costs magnitude the
+claim-relevant part used to have, and it compresses the differences *between* chunks —
+which is precisely ranking, the one thing cosine is supposed to survive anisotropy for.
+
+Still **not** fixed by lowering the threshold. The raw-text figures are the ones Part 4
+calibrated, and they fail 0 of 4.
+
+### F15 — the documented `voyage-context-4` A/B does not exist
+
+`VoyageEmbedder.contextualized_embed` and `uses_native_context` have **zero call sites
+in `src/`**. `CachedEmbedder._embed` calls `embed()` unconditionally, and
+`l3_alignment._embed_source` applies the manual prefix unconditionally. Setting
+`EMBEDDINGS_MODEL=voyage-context-4` today would send chunks to the *ordinary* embed
+endpoint under a contextual model's name **and still prefix them by hand** — the
+opposite of what `providers/voyage.py`'s own docstring claims. The "one-env-var A/B"
+promised in `todo.md` and `docs/v1-plan.md` is unimplemented, and no threshold block
+exists for that model either.
+
+### The pipeline, end to end
+
+| Path | Result |
+|---|---|
+| Grounded answer, `[2007] SGCA 37` | **PASS** — L1/L2/L3 (0.405)/L4 (0.755) then L5 `correctness 1, material_completeness 1` from `anthropic/claude-sonnet-5`, 21 passages, $0.098 |
+| Fabricated `[2019] SGCA 999` | **FAIL** in ~9 s — `CITATION_NOT_FOUND`, judge never invoked, **$0.00** |
+
+The cache claim holds under measurement: the second run touching Spandeck reported
+**43 cache hits and 1 miss**, the miss being its own question.
