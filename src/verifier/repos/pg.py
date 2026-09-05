@@ -96,8 +96,14 @@ def get_repos() -> Repos:
     silently create a second, empty database."""
     global _repos
     if _repos is None:
-        _repos = build_memory_repos() if settings.is_mock else build_pg_repos()
-        log.info("repos_selected", backend="memory" if settings.is_mock else "postgres")
+        use_pg = settings.uses_postgres
+        _repos = build_pg_repos() if use_pg else build_memory_repos()
+        log.info(
+            "repos_selected",
+            backend="postgres" if use_pg else "memory",
+            repo_backend=settings.REPO_BACKEND,
+            provider_mode=settings.PROVIDER_MODE,
+        )
     return _repos
 
 
@@ -108,8 +114,14 @@ def set_repos(repos: Repos | None) -> None:
 
 
 async def ping_database(timeout: float = 1.5) -> bool:
-    """``/readyz`` probe. In mock mode there is no database to be ready."""
-    if settings.is_mock:
+    """``/readyz`` probe.
+
+    Keyed on whether Postgres is actually in use, not on vendor mode. Reporting
+    ``database: false`` while a healthy Postgres serves every request would make
+    /readyz worse than useless -- an operator checking it before a demo would read a
+    working system as broken.
+    """
+    if not settings.uses_postgres:
         return False
     from verifier.repos.session import ping
 

@@ -3,8 +3,15 @@
   "name": "SAL Verifier",
   "version": "0.1.0",
   "description": "Verifies Claude's legal answers: citation existence, source trust, grounding, responsiveness and faithfulness.",
-  "permissions": ["storage", "contextMenus", "activeTab"],
-  "host_permissions": ["http://localhost:8000/*"],
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*"
+  ],
   "background": {
     "service_worker": "src/background.js"
   },
@@ -23,7 +30,9 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://claude.ai/*"],
+      "matches": [
+        "https://claude.ai/*"
+      ],
       "js": [
         "src/config.js",
         "src/selectors.js",
@@ -32,7 +41,9 @@
         "src/panel.js",
         "src/content.js"
       ],
-      "css": ["src/panel.css"],
+      "css": [
+        "src/panel.css"
+      ],
       "run_at": "document_idle"
     }
   ]

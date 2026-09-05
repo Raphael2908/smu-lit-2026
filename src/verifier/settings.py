@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3000,chrome-extension://*"
 
     # --- Infrastructure ---
+    #: Storage backend, kept SEPARATE from PROVIDER_MODE on purpose.
+    #:
+    #: Vendor selection and storage selection are different concerns, and coupling
+    #: them made the Postgres path unreachable without paid API keys: `make dev`
+    #: would start a database that the API then ignored, so the repos went
+    #: unexercised until production. "auto" preserves the old behaviour (memory in
+    #: mock mode, Postgres in real mode); "postgres" with PROVIDER_MODE=mock is the
+    #: demo configuration -- real persistence, no keys, no network.
+    REPO_BACKEND: Literal["auto", "memory", "postgres"] = "auto"
     DATABASE_URL: str = "postgresql+psycopg://verifier:verifier@localhost:5432/verifier"
     REDIS_URL: str = "redis://localhost:6379/0"
 
@@ -132,6 +141,13 @@ class Settings(BaseSettings):
     @property
     def is_mock(self) -> bool:
         return self.PROVIDER_MODE == "mock"
+
+    @property
+    def uses_postgres(self) -> bool:
+        """Whether the Postgres repos are in play, independent of vendor mode."""
+        if self.REPO_BACKEND == "auto":
+            return not self.is_mock
+        return self.REPO_BACKEND == "postgres"
 
     @model_validator(mode="after")
     def _require_keys_in_real_mode(self) -> Settings:
