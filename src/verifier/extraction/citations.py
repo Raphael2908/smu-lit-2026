@@ -94,8 +94,20 @@ def _case_name_spans(text: str, blocked: list[tuple[int, int]]) -> list[tuple[in
 
         # Recompute the span over the *cleaned* text so the highlight, the raw_text and
         # the search phrase are all the same string.
+        #
+        # Both sides need the containment guard. ``_clean_party`` rejoins its tokens on
+        # single spaces, so a party name that wrapped across a newline -- which is how
+        # markdown renders any long case name -- is NOT a substring of the text it came
+        # from, and ``index`` raises. That exception propagates out of L0 and the
+        # orchestrator degrades the whole run to an empty extraction: no citations, no
+        # propositions, nothing checked, on exactly the well-formatted answers this
+        # system is meant to verify.
         start = match.start("left") + raw_left.index(left) if left in raw_left else match.start()
-        end = match.start("right") + raw_right.index(right) + len(right)
+        end = (
+            match.start("right") + raw_right.index(right) + len(right)
+            if right in raw_right
+            else match.end()
+        )
         if any(bs < end and start < be for bs, be in blocked):
             continue
         sep = match.group("sep")
@@ -165,7 +177,10 @@ def extract_citations(text: str) -> list[ExtractedCitation]:
                     raw_text=match.group(0),
                     citation_type=CitationType.REPORT,
                     span=Span(start=match.start(), end=match.end()),
-                    year=int(match.group("year")),
+                    # The SLR Style Guide uses brackets for year-organised series and
+                    # parentheses for volume-organised ones (2021 ed, para 2-1.1.2), so
+                    # the year arrives in whichever group matched.
+                    year=int(match.group("year") or match.group("paren_year")),
                 ),
             )
         )

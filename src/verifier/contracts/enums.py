@@ -127,16 +127,54 @@ class ChunkKind(StrEnum):
 
 
 class AttributionMethod(StrEnum):
-    """How a quote was tied to a citation. Ordered by descending confidence."""
+    """How a quote or proposition was tied to a citation. Descending confidence."""
 
     PINPOINT = "pinpoint"  # 'at [115]' -- also narrows the search scope
     EXPLICIT = "explicit"  # same sentence
     PROXIMITY = "proximity"  # same paragraph, <=400 chars
+    #: Governed by a citation earlier in the same paragraph, at any distance. Legal
+    #: writing cites once and then discusses for several sentences; without this,
+    #: every sentence after the first would read as uncited. L1a only.
+    CARRIED = "carried"
     NONE = "none"  # unattributed -> INFO, never a failure
+
+
+class PropositionKind(StrEnum):
+    """Why a sentence was judged to require authority (L1a).
+
+    Narrow by design: only sentences carrying an explicit legal-assertion cue qualify.
+    A classifier that fires on ordinary framing prose would manufacture uncited-claim
+    findings against correct legal writing, which is the same class of error as a false
+    fabrication claim.
+    """
+
+    HOLDING = "holding"  # 'the Court of Appeal held that ...'
+    LEGAL_TEST = "legal_test"  # 'the test for a duty of care is ...'
+    ESTABLISHED = "established"  # 'it is well established that ...'
+    STATUTE = "statute"  # 'under the Act, a developer must ...'
+
+
+class AuthorityKind(StrEnum):
+    """What, if anything, supports a proposition."""
+
+    NONE = "none"
+    CITATION = "citation"  # a CitationCluster
+    STATUTE = "statute"  # a specific statutory reference
 
 
 class FindingCode(StrEnum):
     """Every way the system can complain. Stable identifiers -- the UI maps these to copy."""
+
+    # --- L1a: is the proposition supported by any authority at all? ---
+    #: The output asserts law and cites nothing, anywhere. The ONLY L1a FAIL, and it
+    #: needs no attribution to reach: it is a count over the whole output, so there is
+    #: no "which citation covers which claim" judgement in it. Downgraded to WARN on a
+    #: follow-up turn, where the authority legitimately sits in the previous turn.
+    OUTPUT_UNCITED = "OUTPUT_UNCITED"
+    #: One assertion with no citation in scope. WARN by default (L1A_UNCITED_SEVERITY):
+    #: attribution in prose has no fixed structure, so coverage is deliberately
+    #: generous and this finding's errors fall towards silence, not accusation.
+    PROPOSITION_UNCITED = "PROPOSITION_UNCITED"
 
     # --- L1: citation existence and quote verification ---
     CITATION_NOT_FOUND = "CITATION_NOT_FOUND"

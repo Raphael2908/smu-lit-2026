@@ -17,7 +17,7 @@ uv run python -m tests.contracts.test_schema_snapshot   # regenerate deliberatel
 |---|---|---|
 | `contracts/**`, `settings.py`, `*/base.py`, `alembic/**` | shared, frozen | changes require announcement |
 | `extraction/**`, `sources/**`, `providers/fetcher_http.py`, `providers/mock/fetcher.py` | Stream A | |
-| `layers/l1_existence.py`, `layers/l2_lists.py`, `repos/lists.py`, `repos/seed_lists.py` | Stream B | |
+| `layers/l1_existence.py`, `layers/l2_lists.py`, `extraction/propositions.py`, `repos/lists.py`, `repos/seed_lists.py` | Stream B | |
 | `semantic/**`, `layers/l3_*.py`, `layers/l4_*.py`, `providers/voyage.py`, `providers/mock/embeddings.py` | Stream C | |
 | `layers/l5_judge.py`, `layers/prompts/**`, `pipeline/**`, `worker/**`, judge providers | Stream D | |
 | `repos/` (Postgres), `api/**`, `extension/**` | Stream E | |
@@ -26,7 +26,25 @@ uv run python -m tests.contracts.test_schema_snapshot   # regenerate deliberatel
 front. Each stream fills in one line rather than adding structure — that is why they
 merge cleanly despite being touched by everyone.
 
-## Three contract decisions that are load-bearing
+## Contract changes
+
+### 2026-09-05 — `ExtractionResult.propositions` and `.statutes` (L1a)
+
+**Added:** `ExtractedProposition`, `StatuteReference`, `PropositionKind`,
+`AuthorityKind`, `AttributionMethod.CARRIED`, `FindingCode.OUTPUT_UNCITED`,
+`FindingCode.PROPOSITION_UNCITED`, `ExtractionResult.propositions`,
+`ExtractionResult.statutes`, `ExtractionResult.authority_count`.
+
+**Nothing was removed or renamed**, so every existing consumer compiles unchanged; the
+new fields default to empty. The snapshot was regenerated and now covers the two new
+models.
+
+Why it landed on the contract rather than inside L1: propositions are L0's output, and
+L1 is pure with respect to `LayerInput` like every other layer. Putting them on
+`ExtractionResult` also makes them visible to the panel and to L5, which is what lets
+the judge take over the attribution question L1a deliberately refuses to decide.
+
+## Four contract decisions that are load-bearing
 
 ### 1. `ExtractedQuote.delimiter` is required
 
@@ -41,7 +59,25 @@ Making `delimiter` required means the type system enforces what a comment would 
 "LLM judge (advisory)" section. That visual separation is the user-facing form of the
 invariant that the judge cannot clear a deterministic failure.
 
-### 3. `Verdict` is an ordered lattice, and `PENDING` is excluded from it
+### 3. L1a splits "no authority anywhere" from "no authority *here*"
+
+`OUTPUT_UNCITED` can FAIL; `PROPOSITION_UNCITED` never can. The split is not a
+severity preference, it is a statement about what each finding knows.
+
+`authority_count == 0` is a **count over the whole output**. It contains no attribution
+judgement, so there is nothing in it to be wrong about beyond whether the text contains
+a citation at all — which is why it can carry a verdict that skips the judge, exactly
+as L1b's `CITATION_NOT_FOUND` does.
+
+Deciding *which* citation supports *which* sentence is a different kind of claim.
+Authority may precede its proposition, follow it, or sit once at the head of a
+paragraph that discusses it for five sentences, and no rule over prose gets that right
+every time. So coverage is deliberately generous (`AttributionMethod.CARRIED` clears
+everything after a citation in its scope), per-proposition findings only WARN, and the
+residue is handed to L5's `citation_integrity` dimension — where a reasoning model may
+convict on it, labelled `llm`, and still cannot acquit.
+
+### 4. `Verdict` is an ordered lattice, and `PENDING` is excluded from it
 
 `VERDICT_ORDER` covers FAIL < WARN < PASS only. `PENDING` is a lifecycle state, not a
 verdict; letting it into a comparison would silently mask aggregation bugs, so it is

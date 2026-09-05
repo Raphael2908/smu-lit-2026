@@ -1,8 +1,16 @@
-"""L1 -- citation existence and quote verification.
+"""L1 -- citation integrity, in three stages.
 
-This is the hallucination defence. It answers exactly one question per citation --
-*does this document exist, and is it the document the output says it is?* -- plus one
-question per quotation: *is this text actually in that document?*
+This is the hallucination defence, and it runs in the order the questions actually
+depend on each other:
+
+* **L1a -- is the proposition cited at all?** Asked first because everything below it
+  presumes the output offered authority in the first place. L1b and L1c only ever
+  examine citations that were written down, so an answer that states the law from
+  memory -- confidently, fluently, with nothing behind it -- would otherwise pass the
+  citation-integrity layer without a mark against it. Fabricating no citations is not
+  the same as citing correctly.
+* **L1b -- does the citation exist, and is it the document the output says it is?**
+* **L1c -- is the quoted text actually in that document?**
 
 THE GOVERNING RULE: "cannot verify" is never "fabricated."
 
@@ -24,6 +32,14 @@ Paraphrased attribution is L3's job, where the tool suits the question.
 Fuzzy, not Ctrl+F: curly quotes, en/em dashes, non-breaking spaces, NFKD variants and
 case each break exact substring matching on their own, and all of them appear in real
 judgment HTML. Normalisation removes what it can; ``partial_ratio`` absorbs the rest.
+
+L1a obeys the same governing rule from the other direction. Deciding *which* citation
+supports *which* sentence is a genuine judgement -- authority may precede its
+proposition, follow it, or sit once at the head of a paragraph -- so per-proposition
+findings are WARN and their coverage rule is deliberately generous (see
+``extraction/propositions.py``). The single L1a FAIL asks something with no judgement
+in it at all: does this output contain any authority, anywhere? That is a count, which
+is why it can carry a verdict that skips the judge.
 """
 
 from __future__ import annotations
@@ -37,15 +53,18 @@ from rapidfuzz import fuzz
 from verifier.contracts.citations import (
     CitationCluster,
     ExtractedCitation,
+    ExtractedProposition,
     ExtractedQuote,
     Resolution,
 )
 from verifier.contracts.documents import SourceDocument
 from verifier.contracts.enums import (
+    AuthorityKind,
     CitationType,
     FindingCode,
     Layer,
     LayerStatus,
+    PropositionKind,
     ResolutionStatus,
     Severity,
 )
@@ -94,6 +113,16 @@ _TYPE_ORDER = {
     CitationType.CASE_NAME: 1,
     CitationType.URL: 2,
     CitationType.REPORT: 3,
+}
+
+#: How each kind of uncited assertion is described to the user. Phrased as what the
+#: output *did*, not as an accusation: at this stage we know only that authority is
+#: absent, which is a different claim from the assertion being wrong.
+_PROPOSITION_MESSAGE: dict[PropositionKind, str] = {
+    PropositionKind.HOLDING: "This states what a court decided",
+    PropositionKind.LEGAL_TEST: "This states what the law requires",
+    PropositionKind.ESTABLISHED: "This appeals to settled law",
+    PropositionKind.STATUTE: "This states a statutory rule",
 }
 
 #: Resolution states that mean "we did not find out". All WARN, never FAIL.
@@ -268,6 +297,10 @@ class CitationExistenceLayer(BaseLayer):
 
         counts = {
             "clusters": len(clusters),
+            "propositions": len(data.extraction.propositions),
+            "propositions_cited": 0,
+            "propositions_uncited": 0,
+            "authorities": data.extraction.authority_count,
             "resolved": 0,
             "not_found": 0,
             "unverified": 0,
@@ -278,6 +311,9 @@ class CitationExistenceLayer(BaseLayer):
             "quotes_unverifiable": 0,
             "quotes_unattributed": 0,
         }
+
+        # --- L1a, first: is there any authority behind what this output asserts? ----
+        findings.extend(self._check_propositions(data, counts, settings))
 
         for cluster in clusters:
             resolution = _resolution_for(cluster, data.resolutions)
@@ -293,10 +329,19 @@ class CitationExistenceLayer(BaseLayer):
                 self._check_quote(data, quote, by_ordinal, views, counts, scores, settings)
             )
 
-        if not clusters and not quotes:
+        checked_propositions = settings.L1A_ENABLED and bool(data.extraction.propositions)
+        if not clusters and not quotes and not checked_propositions:
+            # Nothing was asserted and nothing was cited. That is a coherent output --
+            # a procedural answer, a clarifying question, a refusal -- and there is no
+            # citation integrity question to ask about it.
             return LayerResult(layer=self.layer, status=LayerStatus.NOT_APPLICABLE)
 
         detail: dict[str, object] = dict(counts)
+        detail["stages"] = {
+            "L1a": "propositions cited at all",
+            "L1b": "citations exist and are the right document",
+            "L1c": "quotations appear in the cited document",
+        }
         if scores:
             # 0-1 for consistency with the cosine-scored layers; the raw 0-100
             # partial_ratio for each quote is on the finding's Evidence.
@@ -310,7 +355,136 @@ class CitationExistenceLayer(BaseLayer):
             detail=detail,
         )
 
-    # -- citations ------------------------------------------------------------------
+    # -- L1a: is the proposition cited at all? --------------------------------------
+
+    def _check_propositions(
+        self,
+        data: LayerInput,
+        counts: dict[str, int],
+        settings: Settings,
+    ) -> list[Finding]:
+        """Whether the output's legal assertions rest on any authority.
+
+        Two findings, doing deliberately different jobs.
+
+        ``OUTPUT_UNCITED`` is the FAIL, and it is reached by counting, not judging: the
+        output asserts law and contains no citation and no specific statutory reference
+        anywhere. No attribution question arises, so none of the "which citation covers
+        which sentence" uncertainty that makes L1a's other finding a WARN applies here.
+
+        ``PROPOSITION_UNCITED`` is per-assertion and WARN by default. Coverage is
+        generous by construction, so a proposition reported here had no authority
+        anywhere in its scope -- but "scope" is still a heuristic over prose that has no
+        fixed citation structure, and a heuristic must not be able to fail a run.
+        """
+        if not settings.L1A_ENABLED:
+            return []
+        propositions = data.extraction.propositions
+        if not propositions:
+            return []
+
+        uncited = [p for p in propositions if not p.is_cited]
+        counts["propositions_cited"] = len(propositions) - len(uncited)
+        counts["propositions_uncited"] = len(uncited)
+        if not uncited:
+            return []
+
+        authorities = data.extraction.authority_count
+        if authorities == 0 and len(uncited) >= settings.L1A_MIN_ASSERTIONS_FOR_FAIL:
+            return [self._output_uncited(data, uncited, propositions)]
+
+        severity = Severity.WARN if settings.L1A_UNCITED_SEVERITY == "warn" else Severity.INFO
+        return [self._proposition_uncited(data, p, severity, authorities) for p in uncited]
+
+    def _output_uncited(
+        self,
+        data: LayerInput,
+        uncited: list[ExtractedProposition],
+        propositions: tuple[ExtractedProposition, ...],
+    ) -> Finding:
+        """The whole-output finding: law asserted, nothing cited, anywhere.
+
+        On a FOLLOW-UP turn this is a WARN instead. "What about the second limb?"
+        answers a question whose authority was established in the previous turn, and
+        demanding that the answer re-cite it would make the single most common shape of
+        real conversation fail. This is the same reasoning that makes L4 downgrade a
+        follow-up, and for the same reason: under fail-fast a false red is unrecoverable.
+        """
+        first = uncited[0]
+        severity = Severity.WARN if data.is_followup else Severity.FAIL
+        followup_note = (
+            " This is a follow-up turn, so the authority may have been given earlier in "
+            "the conversation; it is reported rather than failed."
+            if data.is_followup
+            else ""
+        )
+        return Finding(
+            id=f"{data.run_id}:L1a:output",
+            layer=self.layer,
+            code=FindingCode.OUTPUT_UNCITED,
+            severity=severity,
+            message=(
+                f"This answer states the law but cites no authority at all: "
+                f"{len(uncited)} assertion{'s' if len(uncited) != 1 else ''} with no case, "
+                f"statute or source behind {'them' if len(uncited) != 1 else 'it'}." + followup_note
+            ),
+            output_span=first.span,
+            evidence=Evidence(
+                best_match_text=first.text,
+                extra={
+                    "stage": "L1a",
+                    "assertions": len(propositions),
+                    "uncited": len(uncited),
+                    "authorities": 0,
+                    "is_followup": data.is_followup,
+                    "kinds": sorted({p.kind.value for p in uncited}),
+                    # Every uncited assertion, so the panel can highlight all of them
+                    # under one finding rather than repeating the same message N times.
+                    "propositions": [
+                        {
+                            "ordinal": p.ordinal,
+                            "kind": p.kind.value,
+                            "cue": p.cue,
+                            "text": p.text,
+                            "span": {"start": p.span.start, "end": p.span.end},
+                        }
+                        for p in uncited
+                    ],
+                },
+            ),
+        )
+
+    def _proposition_uncited(
+        self,
+        data: LayerInput,
+        proposition: ExtractedProposition,
+        severity: Severity,
+        authorities: int,
+    ) -> Finding:
+        return Finding(
+            id=f"{data.run_id}:L1a:prop:{proposition.ordinal}",
+            layer=self.layer,
+            code=FindingCode.PROPOSITION_UNCITED,
+            severity=severity,
+            message=(
+                f"{_PROPOSITION_MESSAGE[proposition.kind]} but no authority is cited for it. "
+                "The output cites elsewhere, so this may be an omission rather than an "
+                "invention."
+            ),
+            output_span=proposition.span,
+            evidence=Evidence(
+                best_match_text=proposition.text,
+                extra={
+                    "stage": "L1a",
+                    "kind": proposition.kind.value,
+                    "cue": proposition.cue,
+                    "authority": AuthorityKind.NONE.value,
+                    "authorities_in_output": authorities,
+                },
+            ),
+        )
+
+    # -- L1b: citations ------------------------------------------------------------
 
     def _check_cluster(
         self,
@@ -346,11 +520,12 @@ class CitationExistenceLayer(BaseLayer):
                     FindingCode.CITATION_UNVERIFIED,
                     Severity.WARN,
                     f"{label} was not checked: no resolution was attempted for it.",
-                    Evidence(extra={"citation_key": preferred.citation_key}),
+                    Evidence(extra={"stage": "L1b", "citation_key": preferred.citation_key}),
                 )
             ]
 
         base_extra = {
+            "stage": "L1b",
             "citation_key": resolution.citation_key,
             "resolution_status": resolution.status.value,
             "resolution_method": resolution.method.value,
@@ -518,7 +693,7 @@ class CitationExistenceLayer(BaseLayer):
                     Severity.INFO,
                     "This passage is presented as a direct quotation but is not attributed "
                     "to any citation, so there is nothing to check it against.",
-                    Evidence(extra={"delimiter": quote.delimiter}),
+                    Evidence(extra={"stage": "L1c", "delimiter": quote.delimiter}),
                 )
             ]
 
@@ -568,6 +743,7 @@ class CitationExistenceLayer(BaseLayer):
 
         paragraph_number = scope_number if pinpoint_hit else view.best_paragraph(needle.text)
         extra = {
+            "stage": "L1c",
             "scope": "paragraph" if pinpoint_hit else "document",
             "pinpoint_paragraph": scope_number,
             "pinpoint_found": pinpoint_hit if scope_number is not None else None,

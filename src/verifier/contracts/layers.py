@@ -6,7 +6,13 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from verifier.contracts.citations import CitationCluster, ExtractedQuote, Resolution
+from verifier.contracts.citations import (
+    CitationCluster,
+    ExtractedProposition,
+    ExtractedQuote,
+    Resolution,
+    StatuteReference,
+)
 from verifier.contracts.documents import SourceDocument
 from verifier.contracts.enums import Layer, LayerStatus
 from verifier.contracts.findings import Finding
@@ -19,9 +25,26 @@ class ExtractionResult(BaseModel):
 
     clusters: tuple[CitationCluster, ...] = ()
     quotes: tuple[ExtractedQuote, ...] = ()
+    #: Sentences that assert law and therefore need authority. L1a checks whether each
+    #: one has any, which is the question that precedes "does the citation exist": an
+    #: output can be perfectly free of fabricated citations by citing nothing at all.
+    propositions: tuple[ExtractedProposition, ...] = ()
+    #: Statutory references. Authority for L1a, but never resolved against the judgment
+    #: corpus -- see StatuteReference for why they are not clusters.
+    statutes: tuple[StatuteReference, ...] = ()
     #: Domains written out explicitly in the output (bare URLs, "according to x.com").
     #: These carry a domain already, so L2a can check them before anything is fetched.
     explicit_domains: tuple[str, ...] = ()
+
+    @property
+    def authority_count(self) -> int:
+        """Every distinct piece of authority the output offers, of any kind.
+
+        L1a's FAIL turns on this being zero, which is why it is a plain count and not a
+        judgement: no attribution, no thresholds, nothing to be wrong about beyond
+        whether the text contains a citation at all.
+        """
+        return len(self.clusters) + sum(1 for s in self.statutes if s.specific)
 
 
 class LayerInput(BaseModel):
