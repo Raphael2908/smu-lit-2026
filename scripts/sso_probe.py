@@ -94,11 +94,19 @@ def _summarise(slug: str, why: str, status: int | None, html: str) -> dict[str, 
 
 
 async def probe(save_dir: Path | None, headless: bool) -> None:
-    from verifier.providers.fetcher_browser import BrowserFetcher
+    """Fetches through the ADAPTER'S OWN fetcher, whatever strategy it declares.
+
+    Not through a hand-rolled client. Part 4's thresholds were once derived against a
+    reimplementation of the scoring path and turned out to describe a configuration the
+    pipeline never ran; the same mistake is available here, and this is how it is avoided.
+    """
     from verifier.settings import settings
+    from verifier.sources.sso import SsoAdapter
 
     settings.BROWSER_HEADLESS = headless
-    fetcher = BrowserFetcher()
+    adapter = SsoAdapter()
+    fetcher = adapter.fetcher
+    print(f"strategy={adapter.fetch_strategy.value}  ua={settings.SSO_USER_AGENT!r}\n")
     rows: list[dict[str, object]] = []
 
     for slug, why in TARGETS:
@@ -120,7 +128,9 @@ async def probe(save_dir: Path | None, headless: bool) -> None:
             name = slug.replace("/", "_").replace("?", "_").replace("=", "_")
             (save_dir / f"sso_{name}.html").write_text(html, encoding="utf-8")
 
-    await fetcher.close()
+    close = getattr(fetcher, "close", None)
+    if callable(close):
+        await close()
 
     print("\n--- class tokens, per page (the provision-markup lead) ---")
     for row in rows:

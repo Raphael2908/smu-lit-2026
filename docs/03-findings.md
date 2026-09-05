@@ -598,3 +598,85 @@ because it is the regime Part 4's thresholds were derived in. Not for its scores
 **Ranking those four arms by mean, or by floor failures, gets the second row wrong.**
 That is the finding.
 
+
+---
+
+## Part 7 — Singapore Statutes Online, measured
+
+eLitigation went into a maintenance window (F12, a fifth time) and the demo answer was
+pointed at legislation instead. Everything below was measured on 2026-09-05 through the
+adapter's own fetcher, not a hand-rolled client, because Part 4's thresholds were once
+derived against a reimplementation of the scoring path and turned out to describe a
+configuration the pipeline never ran.
+
+### F20 — SSO's `<title>` separates three states; length only corroborates
+
+| Page | Status | Bytes | `<title>` |
+|---|---|---|---|
+| `Act/IA1959` | 200 | 345,880 | `Immigration Act 1959 - Singapore Statutes Online` |
+| `Act/PC1871` | 200 | 913,524 | `Penal Code 1871 - Singapore Statutes Online` |
+| `Act/ZZZ9999` | 200 | 24,693 | `Page Not Found - Singapore Statutes Online` |
+| `Act/NotARealAct2099` | 200 | 24,701 | `Page Not Found - Singapore Statutes Online` |
+| WAF refusal | **403** | 919 | `ERROR: The request could not be satisfied` |
+
+The same shape as F3/F12 on a different site: **a fabricated Act returns HTTP 200**, so
+the status code carries no signal and the title carries it all.
+
+```
+title contains "page not found" AND the site name  -> NOT_FOUND   (the only FAIL)
+title contains the site name, and does not         -> FOUND
+anything else -- no title, a CDN error, empty body -> UNAVAILABLE (WARN, never FAIL)
+```
+
+The third row is why the WAF page was captured deliberately rather than inferred. A rule
+separating only "real" from "not found" classifies a CloudFront refusal as a fabrication,
+and every SSO citation reads as hallucinated for as long as the block lasts. That is F12
+exactly, arriving at a second source. All three fixtures are in `tests/corpus`.
+
+Byte size corroborates (24.7 kB against 346–913 kB) and is deliberately not branched on,
+the same rule `L1_SOFT_404_MAX_BYTES` already states for eLitigation.
+
+### F21 — a headless browser is the one client SSO refuses
+
+The adapter first declared `FetchStrategy.BROWSER`, on the reasoning that an
+`HTTP 202 / x-amzn-waf-action: challenge` meant the source was browser-only. Measured:
+
+| Client | Result |
+|---|---|
+| `sal-verifier/0.1 (SMU LIT 2026 research prototype)` | **403** blocked |
+| `Mozilla/5.0 (compatible; sal-verifier/0.1; SMU LIT 2026 research prototype)` | **200**, 346 kB |
+| Playwright Chromium, `HeadlessChrome/151.0.7922.34` | **403** blocked |
+| ~12 requests in quick succession | **202**, `x-amzn-waf-action: challenge` |
+
+Both halves of the original reasoning were wrong. The challenge was **rate-based** and
+cleared on its own within the hour; and the browser path was strictly worse than httpx,
+because headless Chromium is refused outright. What the WAF wants is a conventionally
+shaped user agent and a polite request rate — both of which we can give it honestly, since
+the `(compatible; …)` form still names the tool and the project.
+
+Two consequences worth stating plainly. First, `SOURCE_USER_AGENT` cannot be one global
+value: eLitigation accepts the bare form and SSO answers it with 403, so the user agent is
+now per-source (`SSO_USER_AGENT`). Second, nothing was done about the headless block. A
+site refusing automated browsers is a preference to respect rather than an obstacle to
+route around, and the plain-HTTP path needs no workaround.
+
+The browser fetcher survives this finding because it was never really about SSO: it exists
+for LawNet, which is login-walled and has no HTTP path at all. Wiring it up did find two
+real defects in it — see `todo.md`.
+
+### F22 — SSO serves a table of contents, not an Act
+
+`Act/IA1959` is 346 kB of which **1,968 characters are statutory text**: a 106-entry table
+of contents and four provisions. The rest of the Act is fetched by the page's own
+JavaScript, and `?WholeDoc=1` — the target of the site's own "Whole Document" button —
+returns the identical four.
+
+This is the sharpest finding of the three, because the naive handling is catastrophic
+rather than merely wrong. A `SourceDocument` built from that HTML contains sections 1–4;
+quote-checking section 57 against it scores near zero and emits `QUOTE_NOT_FOUND`, which
+is a FAIL. **A real statute, quoted correctly, reported as fabricated.**
+
+`SsoAdapter.document_for` therefore returns `None`. L1c's "no document" branch is silence
+rather than a finding, and L3 returns NOT_APPLICABLE, so the failure cannot occur. The
+honest description of SSO coverage today is: **an Act can be confirmed to exist, and can
+never be checked for what it says.** See `todo.md` bug 17.

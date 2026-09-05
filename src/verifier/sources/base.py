@@ -106,12 +106,11 @@ def fetcher_for(strategy: FetchStrategy, *, user_agent: str | None = None) -> Fe
     """
     from verifier.providers.factory import get_browser_fetcher, get_http_fetcher
 
+    # Always pass the argument, never call bare: f() and f(None) are DIFFERENT lru_cache
+    # keys, and for the browser that would mean two Chromium processes racing one profile.
     if strategy is FetchStrategy.BROWSER:
-        # Always pass the argument, never call bare: get_browser_fetcher() and
-        # get_browser_fetcher(None) are DIFFERENT lru_cache keys and would build two
-        # browsers -- two Chromium processes, and two profiles racing one directory.
         return get_browser_fetcher(user_agent)
-    return get_http_fetcher()
+    return get_http_fetcher(user_agent)
 
 
 def host_of(url: str | None) -> str | None:

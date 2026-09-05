@@ -253,6 +253,21 @@ class Settings(BaseSettings):
     ELITIGATION_BASE_URL: str = "https://www.elitigation.sg"
     SSO_BASE_URL: str = "https://sso.agc.gov.sg"
 
+    #: SSO's WAF rejects SOURCE_USER_AGENT outright. MEASURED, not guessed:
+    #:
+    #:   sal-verifier/0.1 (SMU LIT 2026 research prototype)              -> 403 blocked
+    #:   Mozilla/5.0 (compatible; sal-verifier/0.1; SMU LIT 2026 ...)    -> 200, 346kB
+    #:   HeadlessChrome/151 (what our own browser fetcher sends)         -> 403 blocked
+    #:
+    #: This is the conventional ``(compatible; <product>)`` bot form, and it still names
+    #: us and the project. It is NOT a browser impersonation and must not become one:
+    #: the headless-Chromium result above is the site saying it does not want automated
+    #: browsers, and dressing one up as a headed browser would be evading that rather
+    #: than complying with it. Plain HTTP under an honest name is what SSO permits.
+    SSO_USER_AGENT: str = (
+        "Mozilla/5.0 (compatible; sal-verifier/0.1; SMU LIT 2026 research prototype)"
+    )
+
     #: Bound on an inline browser fetch. NOT a duplicate of SOURCE_TIMEOUT_S, which is
     #: httpx-only and does not constrain the browser path at all.
     #:

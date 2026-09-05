@@ -240,8 +240,8 @@ async def test_the_single_flight_resolver_fetches_each_judgment_once(mock_mode):
 # real proof the registry drops in; these two make it visible rather than incidental.
 
 SSO_ANSWER = (
-    "Cheating is defined in section 415 of the Penal Code 1871: see "
-    "https://sso.agc.gov.sg/Act/PC1871 for the full text of the provision."
+    "Entry into Singapore is governed by the Immigration Act 1959: see "
+    "https://sso.agc.gov.sg/Act/IA1959 for the full text."
 )
 
 
@@ -256,9 +256,10 @@ async def test_an_sso_citation_warns_and_never_fails(mock_mode):
     """An SSO URL now reaches an adapter that owns its host, instead of being rejected
     off-domain by eLitigation without a single request being made.
 
-    It must still never FAIL: phase 1 fetches and classifies but extracts nothing, and
-    SSO's soft-404 has not been measured through the browser path (see
-    sources/sso/parser.py on why PageState has no NOT_FOUND member).
+    A real Act must resolve and must not FAIL. Note the corpus caveat, which is bug 8's
+    shape arriving at a second source: the mock only holds IA1959, so any OTHER real Act
+    classifies as NOT_FOUND offline. That is a property of the fixture set, not of the
+    classifier -- against the live site every real Act carries its own title.
     """
     judge = RecordingJudgeLayer()
     state = await _orchestrator(judge).run(

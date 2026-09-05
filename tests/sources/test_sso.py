@@ -20,6 +20,7 @@ from verifier.providers.base import FetchResult
 from verifier.providers.mock.fetcher import MockFetcher
 from verifier.sources.base import SourceAdapter
 from verifier.sources.sso import PageState, SearchUnavailable, SsoAdapter
+from verifier.sources.sso.parser import classify
 
 ACT = "https://sso.agc.gov.sg/Act/IA1959"
 
@@ -42,9 +43,10 @@ def test_implements_the_source_adapter_protocol() -> None:
     assert isinstance(adapter(), SourceAdapter)
 
 
-def test_declares_the_browser_strategy() -> None:
-    """SSO is open but not fetchable over HTTP -- different questions, hence the flag."""
-    assert SsoAdapter.fetch_strategy is FetchStrategy.BROWSER
+def test_declares_the_http_strategy() -> None:
+    """MEASURED: SSO serves 200 to a (compatible; ...) UA over httpx and 403 to headless
+    Chromium, so the browser path was strictly worse. See client.py."""
+    assert SsoAdapter.fetch_strategy is FetchStrategy.HTTP
 
 
 @pytest.mark.parametrize("kind", list(CitationType))
@@ -70,29 +72,62 @@ async def test_search_raises_rather_than_returning_zero_hits() -> None:
 # -- the absence that carries the design ------------------------------------------
 
 
-def test_page_state_has_no_not_found_member() -> None:
-    """Structural enforcement, not discipline.
+def test_three_states_are_separated_not_two() -> None:
+    """The bar for a NOT_FOUND: a positive marker on a page SSO itself served.
 
-    eLitigation earned its NOT_FOUND from a measurement (F3). SSO has not been measured
-    through the path the adapter actually uses, so there must be no state here that could
-    express absence. Add it in the same commit as the probe results, or not at all.
+    The first version of this adapter had no NOT_FOUND at all, and a test asserting the
+    member did not exist, because nothing had been measured. These are the measurements
+    that replaced it -- all three captured in tests/corpus through the adapter's own
+    fetcher, all three at the status code SSO actually returns.
     """
-    assert not hasattr(PageState, "NOT_FOUND")
-    assert {s.value for s in PageState} == {"found", "unavailable"}
+    assert {s.value for s in PageState} == {"found", "not_found", "unavailable"}
 
 
-@pytest.mark.parametrize(
-    "url",
-    [
-        ACT,
-        "https://sso.agc.gov.sg/Act/ZZZ9999",
-        "https://sso.agc.gov.sg/SL/ANYTHING",
-        "https://sso.agc.gov.sg/Act-Rev/IA1959",
-    ],
-)
-async def test_no_resolution_can_be_not_found(url: str) -> None:
-    result = await adapter().resolve(url_cite(url))
+def _fixture(name: str) -> str:
+    from verifier.providers.mock.fetcher import DEFAULT_CORPUS_DIR
+
+    return (DEFAULT_CORPUS_DIR / name).read_text(encoding="utf-8")
+
+
+def test_a_real_act_classifies_as_found() -> None:
+    verdict = classify(_fixture("sso_IA1959.html"), ACT)
+    assert verdict.state is PageState.FOUND
+    assert verdict.title == "Immigration Act 1959 - Singapore Statutes Online"
+
+
+def test_a_bogus_slug_classifies_as_not_found() -> None:
+    """HTTP 200 with 'Page Not Found' in the title. The status code carries no signal."""
+    verdict = classify(_fixture("sso_not_found.html"), "https://sso.agc.gov.sg/Act/ZZZ9999")
+    assert verdict.state is PageState.NOT_FOUND
+
+
+def test_a_waf_refusal_is_unavailable_and_never_a_fabrication_claim() -> None:
+    """THE trap this classifier exists to avoid, and the reason the third fixture was
+    captured deliberately. A rule separating only 'real' from 'not found' would call a
+    CloudFront block a fabrication, and every SSO citation would read as hallucinated for
+    as long as the block lasted. Same failure as F12, different site.
+    """
+    verdict = classify(_fixture("sso_waf_blocked.html"), ACT)
+    assert verdict.state is PageState.UNAVAILABLE
+    assert verdict.state is not PageState.NOT_FOUND
+    assert verdict.detail == "not_served_by_sso"
+
+
+@pytest.mark.parametrize("html", ["", "   ", "<html><body>no title</body></html>"])
+def test_anything_unrecognisable_is_unavailable(html: str) -> None:
+    assert classify(html, ACT).state is PageState.UNAVAILABLE
+
+
+async def test_a_blocked_fetch_never_reports_not_found() -> None:
+    result = await adapter().resolve(url_cite(f"{ACT}?__blocked__=1"))
+    assert result.status is ResolutionStatus.ERROR
     assert result.status is not ResolutionStatus.NOT_FOUND
+
+
+async def test_a_bogus_act_resolves_as_not_found() -> None:
+    result = await adapter().resolve(url_cite("https://sso.agc.gov.sg/Act/ZZZ9999"))
+    assert result.status is ResolutionStatus.NOT_FOUND
+    assert result.confidence == 1.0
 
 
 # -- resolution -------------------------------------------------------------------
@@ -102,10 +137,10 @@ async def test_a_legislation_url_resolves() -> None:
     result = await adapter().resolve(url_cite(ACT))
     assert result.status is ResolutionStatus.RESOLVED
     assert result.domain == "sso.agc.gov.sg"
-    assert result.fetch_strategy is FetchStrategy.BROWSER
+    assert result.fetch_strategy is FetchStrategy.HTTP
     # Phase 1 fetches and classifies but extracts nothing; the detail says so rather
     # than letting a bare RESOLVED imply the text was read.
-    assert result.detail == "resolved_unparsed"
+    assert result.detail == "resolved_title_only"
 
 
 async def test_an_off_domain_url_is_unresolvable() -> None:
@@ -167,7 +202,7 @@ async def test_an_inline_fetch_is_bounded_by_its_timeout(monkeypatch: pytest.Mon
 
     result = await adapter(Hanging()).resolve(url_cite(ACT))
     assert result.status is ResolutionStatus.ERROR
-    assert result.detail == "browser_fetch_timeout"
+    assert result.detail == "fetch_timeout"
 
 
 async def test_no_document_is_memoised_before_the_parser_is_measured() -> None:
@@ -180,3 +215,33 @@ async def test_no_document_is_memoised_before_the_parser_is_measured() -> None:
     sso = adapter()
     result = await sso.resolve(url_cite(ACT))
     assert sso.document_for(result.url) is None
+
+
+def test_sso_uses_its_own_user_agent_not_the_global_one() -> None:
+    """MEASURED, and the reason this setting exists at all.
+
+    sso.agc.gov.sg answers SOURCE_USER_AGENT with 403 and the (compatible; ...) form with
+    200. One global default cannot satisfy both sources, so the UA is per-adapter.
+    """
+    from verifier.settings import settings
+
+    assert settings.SSO_USER_AGENT != settings.SOURCE_USER_AGENT
+    assert settings.SSO_USER_AGENT.startswith("Mozilla/5.0 (compatible;")
+    # Still names us. This is a conventional bot UA, not a browser impersonation.
+    assert "sal-verifier" in settings.SSO_USER_AGENT
+
+
+async def test_the_adapter_asks_for_its_own_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_fetcher_for(strategy, *, user_agent=None):
+        seen["strategy"] = strategy
+        seen["user_agent"] = user_agent
+        return MockFetcher()
+
+    monkeypatch.setattr("verifier.sources.sso.client.fetcher_for", fake_fetcher_for)
+    from verifier.settings import settings
+
+    _ = SsoAdapter().fetcher
+    assert seen["strategy"] is FetchStrategy.HTTP
+    assert seen["user_agent"] == settings.SSO_USER_AGENT

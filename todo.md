@@ -444,31 +444,55 @@ Files: `docker-compose.yml`, `docker/Dockerfile`.
 
 ---
 
-### 16. SSO's soft-404 has not been measured, so it has no FAIL path
+### 16. ~~SSO's soft-404 has not been measured~~ — FIXED, measured
 
-**Severity: medium — this is a known coverage gap, deliberately left open.**
+Measured through the adapter's own fetcher, three states, all captured in `tests/corpus`:
 
-`sources/sso/parser.py` ships a `PageState` with exactly two members, `FOUND` and
-`UNAVAILABLE`, and `tests/sources/test_sso.py` asserts that `NOT_FOUND` does not exist.
-That is not an oversight to be tidied up; it is the invariant.
+| Page | Status | Bytes | `<title>` |
+|---|---|---|---|
+| `Act/IA1959` | 200 | 345,880 | `Immigration Act 1959 - Singapore Statutes Online` |
+| `Act/ZZZ9999` | 200 | 24,693 | `Page Not Found - Singapore Statutes Online` |
+| WAF refusal | 403 | 919 | `ERROR: The request could not be satisfied` |
 
-eLitigation earned its `NOT_FOUND` from a measurement (F3): 150,389 bytes carrying the
-citation in `<title>` against 3,549 with an empty one. Everything currently known about
-SSO — 24,693 bytes for a bogus slug against 339kB–913kB for a real Act — was measured
-over plain HTTP, and plain HTTP is **not the path the adapter uses**: SSO answers httpx
-with `202` and `x-amzn-waf-action: challenge` and an empty body. Those figures came from
-a client the adapter is not.
+The title carries it and length only corroborates — F12's finding, reached independently
+for a different site. `PageState` now has all three members and `NOT_FOUND` is wired.
 
-So an SSO citation today resolves or degrades, and can never be reported as fabricated.
-The consequence is a real gap: a link to a non-existent Act reads as unverified rather
-than as a fabrication.
+It also corrected the fetch strategy. The adapter first declared `BROWSER`, reasoning that
+a `202 x-amzn-waf-action: challenge` meant "browsers only". Both halves were wrong: the
+challenge was RATE-based and cleared on its own, and a headless browser is the client SSO
+blocks hardest (403), so the browser path was strictly worse than httpx. What the WAF
+wants is a conventionally-shaped UA and a polite rate, both of which we give it honestly
+via `SSO_USER_AGENT`. Nothing is done about the headless block: a site refusing automated
+browsers is a preference to respect, and the HTTP path needs no workaround anyway.
 
-Closing it needs `scripts/sso_probe.py` run through a browser, separating **three**
-states — real Act, bogus slug, and WAF-challenge-or-outage. Not two. F12 is the standing
-record of what separating only two costs. Byte size is corroboration and must not enter
-a branch.
+---
 
-Files: `src/verifier/sources/sso/parser.py`, `scripts/sso_probe.py`.
+### 17. SSO does not serve an Act's text, so no statute can be quote-checked
+
+**Severity: high — it is the ceiling on what L1c and L3 can ever say about legislation.**
+
+`Act/IA1959` is 346kB containing a 106-entry table of contents and **four** provisions —
+1,968 characters of statutory text. The body is fetched by the page's own JavaScript (a
+Knockout app; the control is `data-bind="click: OnGetProvisions"`), and `?WholeDoc=1`,
+which the site's own "Whole Document" button navigates to, returns the identical four.
+
+The consequence if this were ignored is the worst failure this system has: a document
+built from that HTML holds sections 1–4, so quote-checking section 57 would score near
+zero and emit `QUOTE_NOT_FOUND`, which is a FAIL — **a real statute, correctly quoted,
+reported as fabricated.**
+
+What prevents it today is that `SsoAdapter.document_for` returns `None`, so L1c's
+"no document" branch stays silent and L3 returns NOT_APPLICABLE. That is the conservative
+direction and it holds, but it is a floor, not a fix: an SSO citation can be confirmed to
+EXIST and can never be checked for what it SAYS.
+
+Two ways out, neither in scope yet: a browser that runs the page's JS (SSO answers
+headless Chromium with 403, so this needs a headed or stealth browser — the first is
+impractical for a server, the second is evasion and is out of the question), or the
+provisions endpoint the page's own JS calls, used under the same honest UA and rate limit.
+The second is the one worth investigating.
+
+Files: `src/verifier/sources/sso/client.py`, `src/verifier/sources/sso/parser.py`.
 
 ---
 

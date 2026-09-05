@@ -76,23 +76,25 @@ async def test_an_sso_url_is_dispatched_on_its_host_not_its_path() -> None:
     result = await MockFetcher().fetch("https://sso.agc.gov.sg/gd/s/2007_SGCA_37")
     assert result.status_code == 200
     assert "Spandeck" not in result.html
-    assert "Synthetic SSO document" in result.html
 
 
-async def test_an_sso_legislation_url_serves_a_synthetic_page() -> None:
-    result = await MockFetcher(strategy="browser").fetch("https://sso.agc.gov.sg/Act/IA1959")
+async def test_a_known_act_serves_the_captured_page() -> None:
+    result = await MockFetcher().fetch("https://sso.agc.gov.sg/Act/IA1959")
     assert result.status_code == 200
-    assert "legisContent" in result.html
+    assert "Immigration Act 1959 - Singapore Statutes Online" in result.html
 
 
-def test_there_is_no_synthetic_sso_soft_404_fixture() -> None:
-    """Deliberate. SSO's soft-404 has never been observed through the path the adapter
-    uses, so an invented fixture would let a test establish a NOT_FOUND branch that no
-    measurement supports -- which is precisely how a fabrication verdict gets built on an
-    assumption. Add one in the same commit as scripts/sso_probe.py's results."""
-    from verifier.providers.mock import fetcher as mock_fetcher
+async def test_an_unknown_act_serves_ssos_own_page_not_found_at_http_200() -> None:
+    """SSO answers a fabricated Act with 200, exactly as eLitigation does (F3), so a mock
+    that returned 404 would hide the problem the classifier exists to solve."""
+    result = await MockFetcher().fetch("https://sso.agc.gov.sg/Act/ZZZ9999")
+    assert result.status_code == 200
+    assert "Page Not Found" in result.html
 
-    source = (mock_fetcher.__file__ or "").replace(".pyc", ".py")
-    text = open(source, encoding="utf-8").read()
-    assert "SSO_SOFT_404" not in text
-    assert "sso_not_found" not in text
+
+async def test_the_waf_refusal_state_can_be_forced() -> None:
+    """The third state, and the one that cannot be summoned from the live site on demand
+    -- the same reason MAINTENANCE_TOKEN exists for eLitigation's outage page."""
+    result = await MockFetcher().fetch("https://sso.agc.gov.sg/Act/IA1959?__blocked__=1")
+    assert result.status_code == 403
+    assert "Singapore Statutes Online" not in result.html

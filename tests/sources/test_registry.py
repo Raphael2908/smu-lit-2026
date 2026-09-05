@@ -55,7 +55,7 @@ def test_exposes_the_entry_points_the_orchestrator_calls(name: str) -> None:
 def test_registers_both_sources() -> None:
     by_name = {a.name: a for a in registry.adapters()}
     assert by_name["elitigation"].fetch_strategy is FetchStrategy.HTTP
-    assert by_name["sso"].fetch_strategy is FetchStrategy.BROWSER
+    assert by_name["sso"].fetch_strategy is FetchStrategy.HTTP
     assert by_name["sso"].domain == "sso.agc.gov.sg"
 
 
