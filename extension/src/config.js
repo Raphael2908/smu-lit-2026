@@ -58,6 +58,17 @@ SALV.config = {
    * through findings wants the big view on every answer, not to re-open it each time.
    */
   panelView: 'panel',
+
+  /**
+   * 'light' | 'dark'.
+   *
+   * LIGHT IS THE DEFAULT ON EVERY MACHINE. The panel used to follow
+   * prefers-color-scheme, which meant its appearance was decided by a setting the
+   * reader had made about their operating system months earlier and was not thinking
+   * about now. Two people comparing the same verdict saw two different documents. The
+   * theme is a choice made in the panel, or it is not a choice.
+   */
+  panelTheme: 'light',
 };
 
 /** How long to wait for chrome.storage before falling back to the defaults above. */

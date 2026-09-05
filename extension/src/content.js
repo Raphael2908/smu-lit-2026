@@ -292,6 +292,7 @@
     // a nicety and the panel must already be on the page by the time we ask storage
     // anything at all.
     panel.setView(SALV.config.panelView, false);
+    panel.setTheme(SALV.config.panelTheme, false);
 
     if (!panel.highlightsSupported()) {
       SALV.log('CSS.highlights unavailable; findings will be listed but not painted');

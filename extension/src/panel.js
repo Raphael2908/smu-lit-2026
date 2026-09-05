@@ -46,6 +46,9 @@ globalThis.SALV = globalThis.SALV || {};
   /** 'panel' (380px rail) | 'full' (expanded reading view). See panel.css. */
   let view = 'panel';
   let expandBtn = null;
+  /** 'light' (the default everywhere) | 'dark'. Never read from the OS. See panel.css. */
+  let theme = 'light';
+  let themeBtn = null;
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -64,6 +67,9 @@ globalThis.SALV = globalThis.SALV || {};
     const title = el('div', 'salv-title', 'SAL Verifier');
     const verdict = el('span', 'salv-verdict-pill', 'idle');
     verdict.id = 'salv-verdict';
+    themeBtn = el('button', 'salv-toggle', '☾');
+    themeBtn.addEventListener('click', () => setTheme(theme === 'dark' ? 'light' : 'dark', true));
+
     // Expand to the full-screen reading view. A 380px rail is the right shape for
     // glancing at a verdict beside an answer and the wrong one for working through
     // twenty findings against paragraph pinpoints, which is what this is actually for.
@@ -85,11 +91,12 @@ globalThis.SALV = globalThis.SALV || {};
       root.remove();
     });
 
-    headerEl.append(title, verdict, expandBtn, toggle, close);
+    headerEl.append(title, verdict, themeBtn, expandBtn, toggle, close);
     bodyEl = el('div', 'salv-body');
     root.append(headerEl, bodyEl);
     document.body.appendChild(root);
     setView(view, false);
+    setTheme(theme, false);
     return root;
   }
 
@@ -117,6 +124,28 @@ globalThis.SALV = globalThis.SALV || {};
     }
   }
 
+  /**
+   * Switch between the light and dark palettes.
+   *
+   * Deliberately NOT wired to prefers-color-scheme: light is the panel's design and its
+   * default on every machine, and dark is something the reader asks for here. Same
+   * `persist` contract as setView above -- restoring a stored preference must never
+   * write it back, and nothing in the mount path may await storage.
+   */
+  function setTheme(next, persist) {
+    theme = next === 'dark' ? 'dark' : 'light';
+    if (root) root.setAttribute('data-theme', theme);
+    if (themeBtn) {
+      themeBtn.textContent = theme === 'dark' ? '\u2600\uFE0E' : '☾';
+      themeBtn.title = theme === 'dark' ? 'Switch to light' : 'Switch to dark';
+      themeBtn.setAttribute('aria-pressed', theme === 'dark' ? 'true' : 'false');
+    }
+    if (persist) {
+      SALV.config.panelTheme = theme;
+      SALV.saveConfig({ panelTheme: theme });
+    }
+  }
+
   function setVerdict(text, kind) {
     mount();
     root.setAttribute('data-state', kind || 'idle');
@@ -141,13 +170,27 @@ globalThis.SALV = globalThis.SALV || {};
     return 'muted';
   }
 
+  /**
+   * The backend's status enum, as a human reads it.
+   *
+   * These travel as `not_found`, `not_applicable`, `unauthenticated`. That is the right
+   * shape for a contract and the wrong shape on a chip: rendered as-is under the
+   * panel's sentence casing they come out "Not_found", which is neither a label nor
+   * legibly raw data. Only the underscore goes. The words are the contract's and are
+   * not paraphrased here -- `not_applicable` means something specific (the layer got no
+   * document to score) and softening it into "skipped" would be a lie about the run.
+   */
+  function statusLabel(status) {
+    return String(status === null || status === undefined ? '' : status).replace(/_/g, ' ');
+  }
+
   function layerRow(code, result) {
     const row = el('div', 'salv-layer');
     row.appendChild(el('span', 'salv-layer-code', code));
     row.appendChild(el('span', 'salv-layer-name', LAYER_LABELS[code] || code));
 
     const status = result ? result.status : 'skipped';
-    const pill = el('span', 'salv-pill', status);
+    const pill = el('span', 'salv-pill', statusLabel(status));
     pill.setAttribute('data-kind', statusKind(status));
     row.appendChild(pill);
 
@@ -175,7 +218,7 @@ globalThis.SALV = globalThis.SALV || {};
     item.setAttribute('data-source', finding.source);
 
     const head = el('div', 'salv-finding-head');
-    const sev = el('span', 'salv-pill salv-pill-sm', finding.severity);
+    const sev = el('span', 'salv-pill salv-pill-sm', statusLabel(finding.severity));
     sev.setAttribute('data-kind', statusKind(finding.severity));
     head.append(sev, el('code', 'salv-code', finding.code));
     item.appendChild(head);
@@ -363,10 +406,13 @@ globalThis.SALV = globalThis.SALV || {};
 
   function citationRow(key, resolution) {
     const row = el('div', 'salv-citation');
-    row.appendChild(el('span', 'salv-citation-key', resolution.case_name || key));
+    // citationLabel, not the raw key: an unreachable or fabricated citation has no
+    // case_name (it comes off the fetched page), and naming the thing that failed as
+    // `sgca:2018:12` is not naming it. Same helper the coverage banner uses.
+    row.appendChild(el('span', 'salv-citation-key', resolution.case_name || citationLabel(key, resolution)));
 
     const status = resolution.status;
-    const pill = el('span', 'salv-pill salv-pill-sm', status);
+    const pill = el('span', 'salv-pill salv-pill-sm', statusLabel(status));
     pill.setAttribute('data-kind', status === 'resolved' ? 'pass' : status === 'not_found' ? 'fail' : 'warn');
     row.appendChild(pill);
 
@@ -579,6 +625,7 @@ globalThis.SALV = globalThis.SALV || {};
   SALV.panel = {
     mount,
     setView,
+    setTheme,
     renderIdle,
     renderVerifying,
     renderError,
