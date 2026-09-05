@@ -72,6 +72,12 @@ ATTRIBUTION_WINDOW_CHARS = 400
 PARAGRAPHS_PER_OVERSIZED_CHUNK = 2
 
 
+#: How deep a ranking to record per claim. Reporting only, never scored: it exists so a
+#: reader can see WHERE the paragraph they expected landed, which is invisible from a
+#: single max. Deep enough to show a near-miss, short enough not to bloat every run.
+RANKED_CHUNKS_REPORTED = 8
+
+
 class SourceGroundingLayer(BaseLayer):
     """Source documents arrive on ``LayerInput.documents``; this layer never fetches.
 
@@ -177,6 +183,7 @@ class SourceGroundingLayer(BaseLayer):
         cache_misses = 0
         assessed_clusters = 0
         background_seen = False
+        claim_scores: list[dict[str, object]] = []
         attributed_total = 0
         split_applied = False
 
@@ -255,6 +262,35 @@ class SourceGroundingLayer(BaseLayer):
                 margin = None if s_background is None else s_cited - s_background
                 if margin is not None:
                     margins.append(margin)
+
+                # Every claim's numbers, whatever the verdict. Findings are emitted
+                # only on FAIL and WARN, so without this a PASSING claim's score is
+                # invisible -- which makes a regime or threshold change unmeasurable
+                # from outside the layer, and leaves the panel unable to show why a
+                # green L3 is green. ``ranked_chunks`` is what reveals a decisive
+                # paragraph sitting just below the retrieval cut-off.
+                claim_scores.append(
+                    {
+                        "claim": claim.text,
+                        "cluster_ordinal": cluster.ordinal,
+                        "citation": cluster.preferred.raw_text,
+                        "s_cited": s_cited,
+                        "s_background": s_background,
+                        "margin": margin,
+                        "ranked_chunks": [
+                            {
+                                "rank": rank,
+                                "score": candidate.score,
+                                "paragraph_from": source_chunks[candidate.index].paragraph_from,
+                                "paragraph_to": source_chunks[candidate.index].paragraph_to,
+                            }
+                            for rank, candidate in enumerate(
+                                top_k(vector, source_result.vectors, k=RANKED_CHUNKS_REPORTED),
+                                start=1,
+                            )
+                        ],
+                    }
+                )
 
                 finding = self._assess(
                     data=data,

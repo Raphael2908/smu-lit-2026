@@ -45,7 +45,7 @@ Citation forms follow the sponsor's house style, the SAL *SLR Style Guide* (2021
 neutral citations, both bracket conventions for law reports, the four statute forms, and
 the subsequent-reference shorthand (`("ANJ")`, `([1] supra)`) that SLR style makes
 pervasive. That guide is a specification here, not a nicety: a form we fail to recognise
-is authority the answer gets no credit for. See `docs/03-findings.md` F13.
+is authority the answer gets no credit for. See `docs/03-findings.md` F13a.
 
 **L1a comes first, before anything is fetched.** L1b and L1c only ever examine
 authority the output actually wrote down, so an answer that states the law from memory

@@ -342,12 +342,12 @@ async def run_arm(
         # nothing. ``self._summariser`` drives two unrelated things -- the document
         # summary AND ``chunk_output_claims`` -- so withholding it changes the claim
         # set, and calling it per arm re-rolls a non-deterministic split. Sharing one
-        # memoised instance fixes both. ``prefix_mode`` alone decides whether the
+        # memoised instance fixes both. ``contextual_prefix`` alone decides whether the
         # summary is actually prefixed; see _embed_source.
         summariser=summariser,
         doc_repo=None,
         embedding_repo=repo,
-        prefix_mode=mode,
+        contextual_prefix=mode,
         chunk_strategy=chunk,
     )
     background_chunks = await seed_background(layer, repo)
