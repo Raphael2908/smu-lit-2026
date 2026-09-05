@@ -21,10 +21,15 @@ from typing import Any
 
 from verifier.contracts.documents import SourceDocument
 from verifier.providers.anthropic_llm import sentence_split
-from verifier.providers.base import JudgeResult, JudgeRubric
+from verifier.providers.base import (
+    CitationCandidate,
+    CitationExtraction,
+    JudgeResult,
+    JudgeRubric,
+)
 from verifier.providers.openrouter_llm import coerce_judge_result, unparseable_result
 
-__all__ = ["MockJudge", "MockSummariser"]
+__all__ = ["MockCitationExtractor", "MockJudge", "MockSummariser"]
 
 
 class MockSummariser:
@@ -53,6 +58,58 @@ class MockSummariser:
     async def split_claims(self, text: str) -> list[str]:
         self.claim_calls += 1
         return sentence_split(text)
+
+
+class MockCitationExtractor:
+    """The regex extractor, wearing the extractor interface.
+
+    This is NOT a stub returning canned strings, and it is not a production fallback.
+    ``extraction.extract_citations`` is a real, heavily tested parser built against the
+    SAL SLR Style Guide (docs/03-findings.md F13), so running it here means
+    ``PROVIDER_MODE=mock`` still finds the citations in an answer with no key, no network
+    and no tokens. That is what keeps the offline suite meaningful, ``make dev`` usable
+    without secrets, and the demo a working product rather than an empty one.
+
+    The same idea as ``MockSummariser.split_claims`` delegating to the real
+    ``sentence_split``: mock the vendor, not the behaviour.
+
+    ``citations`` overrides the regex entirely, for tests that need one specific
+    candidate -- a fabricated citation, a foreign one, a string that is not in the
+    output at all.
+    """
+
+    provider = "mock"
+
+    def __init__(
+        self,
+        citations: list[CitationCandidate] | None = None,
+        *,
+        model: str | None = None,
+        degraded: str | None = None,
+    ) -> None:
+        from verifier.settings import settings
+
+        self.model = model or settings.EXTRACTOR_MODEL
+        self.calls = 0
+        self._citations = citations
+        self._degraded = degraded
+
+    async def extract_citations(self, ai_output: str) -> CitationExtraction:
+        self.calls += 1
+        if self._degraded is not None:
+            return CitationExtraction(
+                model=self.model, provider=self.provider, degraded=self._degraded
+            )
+        if self._citations is not None:
+            found = tuple(self._citations)
+        else:
+            from verifier.extraction import extract_citations
+
+            found = tuple(
+                CitationCandidate(raw_text=c.raw_text, url=c.url)
+                for c in extract_citations(ai_output)
+            )
+        return CitationExtraction(citations=found, model=self.model, provider=self.provider)
 
 
 #: Malformed shapes the parse ladder must survive. Keyed by the rung expected to win.

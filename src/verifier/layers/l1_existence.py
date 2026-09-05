@@ -40,6 +40,14 @@ findings are WARN and their coverage rule is deliberately generous (see
 ``extraction/propositions.py``). The single L1a FAIL asks something with no judgement
 in it at all: does this output contain any authority, anywhere? That is a count, which
 is why it can carry a verdict that skips the judge.
+
+The count is still a count, but what it counts is now found by a model (see
+``extraction/llm.py``): a regex only recognises the citation forms someone enumerated,
+and each one it misses is authority the answer gets no credit for. That changes nothing
+here except one thing, and it is the important one. Zero authority used to mean the
+answer cited nothing. It can now also mean the extractor timed out, had no key, or
+returned something unreadable -- so ``extraction.extractor_degraded`` gates the FAIL.
+An outage reported as a fabrication is precisely the F12 mistake arriving by a new route.
 """
 
 from __future__ import annotations
@@ -390,8 +398,23 @@ class CitationExistenceLayer(BaseLayer):
             return []
 
         authorities = data.extraction.authority_count
-        if authorities == 0 and len(uncited) >= settings.L1A_MIN_ASSERTIONS_FOR_FAIL:
+        degraded = data.extraction.extractor_degraded
+        if (
+            authorities == 0
+            and degraded is None
+            and len(uncited) >= settings.L1A_MIN_ASSERTIONS_FOR_FAIL
+        ):
             return [self._output_uncited(data, uncited, propositions)]
+        if authorities == 0 and degraded is not None:
+            # THE GOVERNING RULE, in the one place it is easiest to get wrong.
+            #
+            # "This output cited nothing" is only a claim about the output if something
+            # actually looked. The citation extractor did not -- it timed out, had no
+            # key, or returned something unreadable -- so zero authority here means we
+            # do not know, and the FAIL above would be an accusation built on an outage.
+            # The per-proposition WARNs still run: the reader is told the assertions are
+            # unsupported so far as we can tell, and state.errors carries why.
+            counts["extractor_degraded"] = 1
 
         severity = Severity.WARN if settings.L1A_UNCITED_SEVERITY == "warn" else Severity.INFO
         return [self._proposition_uncited(data, p, severity, authorities) for p in uncited]

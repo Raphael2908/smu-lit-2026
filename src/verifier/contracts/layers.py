@@ -35,6 +35,22 @@ class ExtractionResult(BaseModel):
     #: Domains written out explicitly in the output (bare URLs, "according to x.com").
     #: These carry a domain already, so L2a can check them before anything is fetched.
     explicit_domains: tuple[str, ...] = ()
+    #: Citations the extractor found and the deterministic parser cannot type.
+    #:
+    #: An unenumerated report series ("(2005) 3 SCC 123"), a practice direction, a
+    #: textbook. These are authority -- the answer offered them -- but they are not work
+    #: items: resolving one means searching a Singapore judgment corpus for a phrase that
+    #: is not in it, and zero hits is exactly what this system reads as fabrication (F6).
+    #: So they COUNT for L1a and are never clustered, resolved or fetched. Kept as raw
+    #: strings because there is, by definition, nothing parsed to keep.
+    untyped: tuple[str, ...] = ()
+    #: Why the citation extractor contributed nothing, when it did not run.
+    #:
+    #: Load-bearing, not diagnostic. L1a's FAIL asserts "this output cited nothing",
+    #: which is only a statement about the output if the extractor actually looked. A
+    #: timeout, a missing key or unparseable output leave the two indistinguishable, so
+    #: L1a must not FAIL while this is set -- "cannot verify" is never "fabricated".
+    extractor_degraded: str | None = None
 
     @property
     def authority_count(self) -> int:
@@ -44,7 +60,7 @@ class ExtractionResult(BaseModel):
         judgement: no attribution, no thresholds, nothing to be wrong about beyond
         whether the text contains a citation at all.
         """
-        return len(self.clusters) + sum(1 for s in self.statutes if s.specific)
+        return len(self.clusters) + sum(1 for s in self.statutes if s.specific) + len(self.untyped)
 
 
 class LayerInput(BaseModel):

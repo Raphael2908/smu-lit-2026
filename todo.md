@@ -153,7 +153,140 @@ Files: `src/verifier/semantic/chunking.py`, `src/verifier/providers/*_llm.py`,
 
 ---
 
-### 5. The L3 floor may be wrong for negative and meta claims
+### 5. The Haiku citation extractor has not been measured, and is not cached
+
+**Severity: high — L1a now has no deterministic floor under it.**
+
+L1a used to count regex matches. It now counts what Haiku returns, and there is no
+union with the regex: if the model returns a well-formed but *short* list on an answer
+that cites one thing, L1a reports "cites nothing" and fails the run. That is the same
+false red the change was built to remove, arriving by a new route, and nothing in the
+test suite can catch it — every test supplies its own candidates.
+
+Two guards exist and neither closes this. A candidate must appear **verbatim** in the
+answer, which stops invention but not omission. A degraded extractor never fails, which
+stops an outage being read as an uncited answer but says nothing about a bad list.
+
+**What to do, in order:**
+
+1. **Measure recall.** Run five or six real claude.ai answers through
+   `extract_with_llm` and diff the model's citation list against `extract()`'s on each.
+   Anything the regex found and the model missed is the bug. This is the evidence that
+   decides whether dropping the regex floor was right; until it exists, the decision is
+   a design judgement, not a measured one, and is deliberately absent from
+   `docs/03-findings.md` for that reason.
+2. **Cache the call**, keyed `sha256(ai_output) + model + EXTRACTOR_PROMPT_VERSION`.
+   This is the same defect as bug 4 above and wants the same fix — `document_summaries`
+   is the pattern, and one cache should serve both the claim splitter and the extractor.
+   L0's output feeds *every* layer and is persisted (`finding.citation_ordinal`), so
+   drift here is worse than drift in the splitter. `temperature=0` is pinned on the call
+   already, which narrows it but does not close it.
+3. **Consider a floor.** If (1) shows misses, the cheapest fix is to union the regex
+   citations back in for the FAIL count only — the model can then add authority but
+   never remove it. That was the original design and was dropped for simplicity; the
+   measurement should decide.
+
+### 6. Two different cases merge into one cluster when a report citation follows a neutral one
+
+**Severity: medium — the second case is never resolved, so it is never checked.**
+
+`_would_conflict` (`extraction/citations.py:213-228`) allows unlimited REPORT members in
+a cluster, on the reasoning that parallel report series for a single case are common and
+none of them resolves anyway. That is true of `[2018] 1 SLR 1` sitting beside
+`[2018] SGCA 41`. It is not true of a *different case* cited within the 80-character
+window.
+
+Seen on a live Haiku run over an answer citing NTUC Foodfare and then Caparo:
+
+```
+cluster 2: [('case_name', 'NTUC Foodfare ... v SIA Engineering Co Ltd'),
+            ('neutral',   '[2018] SGCA 41'),
+            ('report',    '[1990] 2 AC 605')]     <- this is Caparo
+```
+
+Caparo is now a "parallel citation" of NTUC. `_resolve_all` keys on
+`cluster.preferred.citation_key`, which is the neutral one, so Caparo is never looked up
+and never checked. It still counts as authority for L1a, so it produces no visible
+error — the citation simply goes unverified while the panel shows the run as covered.
+
+Pre-existing, not introduced by the LLM extractor, but the extractor makes it easier to
+hit: a model finds citations the regex missed, so more of them land in the window.
+
+**Fix:** a report citation should only join a cluster that has no *intervening* citation
+of another case, or more simply, a cluster should not absorb a REPORT that is separated
+from its neutral sibling by a case name. Worth a test in
+`tests/extraction/test_citations.py` either way.
+
+### 7. The cached HTTP client outlives the event loop, so every other run loses its first fetch
+
+**Severity: high — citations are silently not checked, and it looks like a source outage.**
+
+Reproduced deterministically inside the api container:
+
+```
+task 1: 200 848b
+task 2: RuntimeError: Event loop is closed
+task 3: 200 848b
+```
+
+Three pieces, each reasonable alone:
+
+* `get_http_fetcher()` is `@lru_cache`d (`providers/factory.py:17`), so there is one
+  `HttpFetcher` per process.
+* `HttpFetcher._ensure_client()` (`providers/fetcher_http.py:126-138`) builds one
+  `httpx.AsyncClient` on first use and keeps it on the instance.
+* `worker/tasks.py:88` runs each Celery task with `asyncio.run(coro)`, which creates a
+  fresh event loop **and closes it** when the task ends. The forked worker process is
+  then reused for the next task.
+
+So the connection pool holds keep-alive connections bound to a loop that no longer
+exists. The next task's first fetch picks one up and raises; the pool then evicts it and
+the task after that succeeds — which is why it presents as intermittent rather than as a
+hard failure, and why it is invisible in the test suite (nothing there crosses two
+`asyncio.run` calls with a live client).
+
+**What it costs.** `client.py:179-187` catches any transport failure and returns
+`ResolutionStatus.ERROR` with `detail="fetch_failed:RuntimeError"`, which L1b reports as
+`CITATION_UNVERIFIED` — "could not be checked". That is the safe direction, so it never
+manufactures a fabrication. But the citation is simply not verified, and the panel says
+"the lookup failed", which is exactly what a genuine source outage says. Observed live:
+a browser run against `[2013] SGCA 39` reported the lookup as failed while eLitigation
+was answering other requests in the same run.
+
+**Fix:** build the client per event loop rather than per process — cheapest is to drop
+the instance-level cache and open an `AsyncClient` per `fetch` (or per run), or key the
+cached client on `asyncio.get_running_loop()`. Worth a test that calls `asyncio.run`
+twice against one cached fetcher, since that is the shape no existing test has.
+
+### 8. `docker-compose.override.yml` reports real cases as fabricated
+
+**Severity: high — the demo config produces the exact failure the product exists to prevent.**
+
+The override exists to survive an eLitigation maintenance window, and stubs the fetcher
+by flipping `PROVIDER_MODE: mock` while keeping embeddings, summariser and judge real.
+But the mock fetcher serves `tests/corpus`, which contains **two real judgments**:
+
+```
+2007_SGCA_37.html  2021_SGHC_100.html  maintenance_notice.html  soft404_2019_SGCA_999.html
+```
+
+Every other citation resolves as a soft-404, which is `NOT_FOUND`, which is the one
+citation-level **FAIL**. Observed live on a real claude.ai answer: `[2013] SGCA 29`,
+`[2021] SGCA 28` and `[2020] SGHC 32` — all real Court of Appeal and High Court
+decisions — were reported to the user as *"3 fabricated citations … The source was
+reachable and reported no such judgment. This is positive evidence the authority does
+not exist."*
+
+The same answer re-verified with the real fetcher, during the same maintenance window,
+returns four `CITATION_UNVERIFIED` warnings and a deterministic **WARN**. The maintenance
+handling (F12) works; the demo override defeats it.
+
+**Fix:** the override should not be the default `docker compose up` configuration. Either
+rename it so it is opt-in (`-f`), or have `MockFetcher` return `UNRESOLVABLE` rather than
+a soft-404 for anything outside the corpus — a stub that does not hold a document has not
+established that the document does not exist.
+
+### 9. The L3 floor may be wrong for negative and meta claims
 
 **Severity: medium — one confirmed instance, not yet a pattern.**
 
@@ -177,7 +310,7 @@ form a separable regime.
 
 ---
 
-### 6. A maintenance-window resolution is cached permanently
+### 10. A maintenance-window resolution is cached permanently
 
 **Severity: high — one outage poisons the cache for every later run.**
 
@@ -207,7 +340,7 @@ Files: `src/verifier/repos/resolutions.py`, `src/verifier/pipeline/resolver.py`.
 
 ---
 
-### 7. The Docker image does not ship `tests/corpus`, so mock mode cannot verify in a container
+### 11. The Docker image does not ship `tests/corpus`, so mock mode cannot verify in a container
 
 **Severity: medium — the compose file's own promise is untrue.**
 
@@ -226,13 +359,13 @@ Files: `docker/Dockerfile`, `docker-compose.yml`.
 
 ---
 
-### 8. There is no `FETCHER_MODE`
+### 12. There is no `FETCHER_MODE`
 
-**Severity: low — but it is what made bug 5 hard to work around.**
+**Severity: low — but it is what made bug 9 hard to work around.**
 
-`EMBEDDINGS_MODE`, `SUMMARISER_MODE` and `JUDGE_MODE` can each be set independently of
-`PROVIDER_MODE`. The fetcher cannot: `get_http_fetcher()` keys on `settings.is_mock`,
-which is the global switch. So "real models, local corpus" — the exact configuration
+`EMBEDDINGS_MODE`, `SUMMARISER_MODE`, `JUDGE_MODE` and `EXTRACTOR_MODE` can each be set
+independently of `PROVIDER_MODE`. The fetcher cannot: `get_http_fetcher()` keys on
+`settings.is_mock`, which is the global switch. So "real models, local corpus" — the exact configuration
 used for every calibration run in `docs/03-findings.md` Parts 4 and 5, and the only way
 to exercise L3/L5 while eLitigation is down — requires flipping the global to `mock`
 and setting the other three back to `real`.
@@ -241,7 +374,7 @@ Files: `src/verifier/providers/factory.py`, `src/verifier/settings.py`.
 
 ---
 
-### 9. `make seed-lists` reports success while writing nowhere durable
+### 13. `make seed-lists` reports success while writing nowhere durable
 
 **Severity: medium — cosmetic today, misleading tomorrow.**
 

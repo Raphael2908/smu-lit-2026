@@ -23,6 +23,7 @@ os.environ["PROVIDER_MODE"] = "mock"
 os.environ["EMBEDDINGS_MODE"] = "mock"
 os.environ["SUMMARISER_MODE"] = "mock"
 os.environ["JUDGE_MODE"] = "mock"
+os.environ["EXTRACTOR_MODE"] = "mock"
 os.environ["REPO_BACKEND"] = "memory"
 # Blank the keys too, so a real provider constructed by mistake fails loudly with
 # ProviderKeyMissing instead of quietly spending the user's money.

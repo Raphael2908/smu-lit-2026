@@ -23,9 +23,9 @@ Two consequences:
 ```
 POST /v1/verify {question, ai_output, context, is_followup}
    │
-   ├─ L0 extract citations, quotes, propositions, explicit source URLs  (sync, <50 ms)
+   ├─ L0 Haiku finds the citations; regex extracts quotes, propositions, source URLs
    │     ├─ L1a: output asserts law and cites NOTHING → FAIL now.
-   │     │       No fetch, no worker, no tokens. ~5 ms.
+   │     │       No fetch, no worker. ~5 ms deterministic, ~1 s with the LLM extractor.
    │     └─ L2a: blacklisted domain named outright → FAIL now.
    │             No fetch, no worker, no tokens. ~5 ms.
    │
@@ -50,9 +50,24 @@ is authority the answer gets no credit for. See `docs/03-findings.md` F13a.
 **L1a comes first, before anything is fetched.** L1b and L1c only ever examine
 authority the output actually wrote down, so an answer that states the law from memory
 — confidently, fluently, citing nothing — passes them both without a mark against it.
-Fabricating no citations is not the same as citing correctly. L1a is pure text, so it
-reaches its verdict in the same ~5 ms budget as the L2a blacklist check: no fetch, no
-worker, no tokens.
+Fabricating no citations is not the same as citing correctly. L1a needs no fetch and no
+worker: it reaches its verdict from the text alone.
+
+**Finding a citation is a recognition problem; typing one is a parsing problem.** A
+regex can only recognise the forms someone enumerated, and every form it misses is
+authority the answer gets no credit for — six such gaps were found against the SLR Style
+Guide (F13) and each was a false red waiting to happen. So Haiku reads the answer and
+says which spans are citations, and `extraction/citations.py` decides what each one
+actually is. The model never types a citation: `build_url` trusts `CitationType.NEUTRAL`
+without checking the court is Singaporean, so a model-typed `[2019] UKSC 32` would be
+fetched from eLitigation and its soft-404 read as proof the case does not exist.
+
+Two consequences follow, and both are load-bearing. Every candidate must be found
+**verbatim** in the answer before it counts, so a citation the model invented can never
+supply the authority that clears the FAIL. And when the extractor does not run at all —
+timeout, no key, unreadable output — the run carries `extractor_degraded` and L1a
+declines to fail: "we did not look" is not "it cited nothing". There is deliberately no
+regex fallback, because falling back would report a run as checked when it was not.
 
 **L2 follows L1** because a bare citation like `[2007] SGCA 37` has no source until L1
 resolves it to a document on a domain. L2 asks "is this source trustworthy?", which
@@ -147,7 +162,7 @@ cosine to decide truth — see `docs/03-findings.md` Part 2.
 
 | Layer | Question | Task type |
 |---|---|---|
-| L1a | Is the proposition supported by any authority at all? | Deterministic count |
+| L1a | Is the proposition supported by any authority at all? | Model finds, deterministic count |
 | L1b | Does this citation exist, and is it the right document? | Deterministic lookup |
 | L1c | Is the quote really in it? | Deterministic lookup |
 | L2 | Is the source trustworthy? | Deterministic lookup |
@@ -160,7 +175,7 @@ cosine to decide truth — see `docs/03-findings.md` Part 2.
 | Path | Deterministic verdict | Final |
 |---|---|---|
 | Blacklisted URL named in the output | ~5 ms | ~5 ms |
-| Output asserts law and cites nothing | ~5 ms | ~5 ms (judge skipped) |
+| Output asserts law and cites nothing | ~5 ms + one Haiku call | same (judge skipped) |
 | Fabricated citation | ~0.6 s = `max(L1, L4)` | ~0.6 s (judge skipped) |
 | Cold pass, open source | ~4 s | ~12–19 s |
 | Cold pass, login-walled source | ~7–9 s | ~15–24 s |
@@ -171,6 +186,8 @@ cosine to decide truth — see `docs/03-findings.md` Part 2.
 Every expensive artefact is content-hash keyed, so the second query touching a given
 case pays nothing: `citation_resolutions` skips the fetch (including an expensive
 browser fetch), `document_summaries` skips a Sonnet call, `text_embeddings` skips ~50
-Voyage calls. A deterministic failure costs **zero** LLM tokens. Singapore appellate
+Voyage calls. A deterministic failure costs no judge and no embedding tokens; since L1a
+began asking a model which citations an answer offered it does cost one Haiku call, which
+is not yet cached — see `todo.md`. Singapore appellate
 law has a heavy head, so hit rates should exceed 90% after warm-up. Runs report
 `cache_hits`/`cache_misses` so the claim is measured rather than asserted.

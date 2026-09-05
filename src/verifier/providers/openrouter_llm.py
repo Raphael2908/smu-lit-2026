@@ -28,7 +28,7 @@ import httpx
 
 from verifier.contracts.documents import SourceDocument
 from verifier.errors import FatalError, ProviderKeyMissing, RetryableError
-from verifier.providers.base import JudgeResult, JudgeRubric
+from verifier.providers.base import CitationExtraction, JudgeResult, JudgeRubric
 
 __all__ = [
     "PARSE_PATH_UNPARSEABLE",
@@ -155,8 +155,13 @@ def _try_balanced(text: str) -> dict[str, Any] | None:
     return None
 
 
-def parse_judge_payload(text: str) -> tuple[dict[str, Any] | None, str]:
-    """Run the ladder. Returns ``(object_or_none, parse_path)``."""
+def parse_json_payload(text: str) -> tuple[dict[str, Any] | None, str]:
+    """Run the ladder over any JSON response. Returns ``(object_or_none, parse_path)``.
+
+    Judge-independent, so the citation extractor gets the same three rungs rather than a
+    second, subtly different parser. Structured output is an optimisation; the ladder is
+    the contract, and there should be exactly one of it.
+    """
     if not text or not text.strip():
         return None, PARSE_PATH_UNPARSEABLE
     for path, parser in (
@@ -168,6 +173,11 @@ def parse_judge_payload(text: str) -> tuple[dict[str, Any] | None, str]:
         if obj is not None:
             return obj, path
     return None, PARSE_PATH_UNPARSEABLE
+
+
+def parse_judge_payload(text: str) -> tuple[dict[str, Any] | None, str]:
+    """Run the ladder. Returns ``(object_or_none, parse_path)``."""
+    return parse_json_payload(text)
 
 
 def validate_judge_object(obj: dict[str, Any]) -> tuple[bool, JudgeRubric, list[str]]:
@@ -654,3 +664,102 @@ def parse_native_verdict(text: str) -> tuple[int, int, list[str]] | None:
         " ".join(m.group("body").replace("**", "").split())[:600] for m in _DEFECT_RE.finditer(text)
     ]
     return found["correctness"], found["material_completeness"], defects
+
+
+class OpenRouterCitationExtractor:
+    """``CitationExtractor`` over OpenRouter.
+
+    Exists because the rest of this stack runs on an OpenRouter key, and an extractor
+    that only speaks to Anthropic would leave a working real-mode deployment with no
+    citations at all -- L0 permanently degraded, every run reporting that nothing could
+    be checked. Same model, same prompt, different door.
+
+    ``temperature=0`` for the same reason the Anthropic path pins it: the same answer
+    must extract the same citations twice (docs/03-findings.md F17).
+    """
+
+    provider = "openrouter"
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str = OPENROUTER_URL,
+        timeout: float | None = None,
+        max_tokens: int = 4096,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        from verifier.settings import settings
+
+        key = api_key if api_key is not None else settings.OPENROUTER_API_KEY
+        if not key or not key.strip():
+            raise ProviderKeyMissing("OpenRouter", "OPENROUTER_API_KEY")
+        self._api_key = key
+        # EXTRACTOR_MODEL is the bare first-party id; OpenRouter wants it namespaced.
+        bare = (model or settings.EXTRACTOR_MODEL).split("/")[-1]
+        self.model = model if model and "/" in model else f"anthropic/{bare}"
+        self._base_url = base_url
+        self._timeout = timeout if timeout is not None else settings.EXTRACTOR_TIMEOUT_S
+        self._max_tokens = max_tokens
+        self._client = client
+
+    async def extract_citations(self, ai_output: str) -> CitationExtraction:
+        from verifier.extraction.prompt import load_citation_prompt
+
+        started = time.perf_counter()
+        body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": load_citation_prompt()},
+                {"role": "user", "content": ai_output},
+            ],
+            "max_tokens": self._max_tokens,
+            "temperature": 0,
+        }
+        owns_client = self._client is None
+        client = self._client or httpx.AsyncClient(timeout=self._timeout)
+        try:
+            response = await client.post(
+                self._base_url,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                    "X-Title": "sal-verifier",
+                },
+                json=body,
+            )
+            if response.status_code >= 400:
+                raise FatalError(f"OpenRouter {response.status_code}: {response.text[:200]}")
+            raw = _first_message_text(response.json())
+        except Exception as exc:  # noqa: BLE001 - a provider outage is not a verdict
+            return CitationExtraction(
+                model=self.model,
+                provider=self.provider,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                degraded=f"openrouter extraction failed: {exc}",
+            )
+        finally:
+            if owns_client:
+                await client.aclose()
+
+        from verifier.providers.anthropic_llm import candidates_from
+
+        elapsed = int((time.perf_counter() - started) * 1000)
+        candidates = candidates_from(raw)
+        if candidates is None:
+            # Unparseable is NOT an empty list: reporting it as one would let a garbled
+            # response fail an answer for citing nothing.
+            return CitationExtraction(
+                model=self.model,
+                provider=self.provider,
+                latency_ms=elapsed,
+                parse_path=PARSE_PATH_UNPARSEABLE,
+                degraded="openrouter extraction returned unparseable output",
+            )
+        return CitationExtraction(
+            citations=candidates,
+            model=self.model,
+            provider=self.provider,
+            latency_ms=elapsed,
+        )
