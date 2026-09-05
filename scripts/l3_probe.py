@@ -5,9 +5,26 @@
     uv run python -m scripts.l3_probe --chunk grouped    # pin one chunk strategy
     uv run python -m scripts.l3_probe --answer my.txt    # your own answer text
 
-Arms are the GRID of --mode x --chunk. The default compares chunk strategies at
-prefix_mode=none, because the prefix question is settled (F14 and the commit that
-removed it) and granularity is the one still open.
+Arms are the GRID of --mode x --chunk, and each arm reports TWO things.
+
+*The live run* -- L3 through the layer on a real answer, with whatever claims the
+splitter produces. This is what the pipeline actually does.
+
+*Separation* -- a fixed calibration set of GENUINE claims (verified present in the
+cited judgment, by paragraph) and FOREIGN ones (true Singapore law the judgment does
+not decide), scored the way L3 scores: max cos(claim, chunks).
+
+The second exists because the first cannot answer the question on its own. A change
+that raises every score looks like an improvement when measured on genuine claims
+alone -- floor failures fall -- while buying no discrimination at all, because the
+foreign claims rose with them. The number that matters is the GAP: genuine min minus
+foreign max. A config that widens it is better; one that raises both equally is not,
+however much healthier its pass rate looks.
+
+This is not hypothetical. Paragraph granularity was first reported here as closing a
+floor failure (1 of 8 below floor -> 0 of 8) on a genuine-only claim set. Measured
+with foreign claims the gap went +0.372 -> +0.354: slightly worse. The floor failure
+was real but its cause was elsewhere -- see FRAGMENTS below.
 
 WHY THIS EXISTS. Three separate A/Bs of the contextual prefix have been run against
 this pipeline (docs/03-findings.md Part 4, F14) and every one of them was done
@@ -83,6 +100,65 @@ DEFAULT_ANSWER = (
 )
 
 DEFAULT_QUESTION = "What is the test for a duty of care in Singapore?"
+
+#: GENUINE claims: each is stated by the numbered Spandeck paragraph named beside it,
+#: checked against the text rather than remembered. A calibration set whose positives
+#: are not actually supported measures nothing.
+GENUINE_CLAIMS: tuple[tuple[str, str], ...] = (
+    (
+        "[81] proximity",
+        "Proximity includes physical, circumstantial and causal proximity, and includes "
+        "the twin criteria of voluntary assumption of responsibility and reliance.",
+    ),
+    (
+        "[83] policy stage",
+        "Policy considerations are applied only at the second stage, once a prima facie "
+        "duty of care has been established.",
+    ),
+    (
+        "[115] single test",
+        "A single test to determine the existence of a duty of care should be applied "
+        "regardless of the nature of the damage caused.",
+    ),
+)
+
+#: FOREIGN claims: true propositions of Singapore law that this judgment does not
+#: decide. Deliberately from other areas -- an easy off-topic negative flatters any
+#: configuration, and these are the closest thing to hard negatives the corpus allows.
+FOREIGN_CLAIMS: tuple[tuple[str, str], ...] = (
+    (
+        "sentencing",
+        "The court must calibrate the sentence against the applicable "
+        "sentencing framework for drug trafficking offences.",
+    ),
+    (
+        "tenancy",
+        "A landlord must give reasonable notice before exercising a right of "
+        "re-entry under the tenancy agreement.",
+    ),
+    (
+        "illegality",
+        "A contract is void for illegality where its performance necessarily "
+        "requires the commission of a criminal offence.",
+    ),
+    (
+        "hearsay",
+        "Hearsay evidence is inadmissible unless it falls within a recognised statutory exception.",
+    ),
+)
+
+#: A claim the splitter fragmented, and the sentence it came from. The fragment scored
+#: 0.313 and failed the floor; the sentence it was cut out of scores 0.649 in the same
+#: configuration. Carried here so the distinction stays measurable rather than becoming
+#: a remembered anecdote: an unmatchable proposition the answer never actually made.
+FRAGMENTS: tuple[tuple[str, str], ...] = (
+    ("fragment", "Policy considerations are applied only at the second stage"),
+    (
+        "whole sentence",
+        "Policy considerations are applied only at the second stage, once "
+        "a prima facie duty of care has been established.",
+    ),
+)
 
 
 def load(name: str) -> SourceDocument:
@@ -172,6 +248,56 @@ class SharedSummariser:
         return self._summaries[key]
 
 
+async def measure_separation(
+    layer: SourceGroundingLayer, repo: InMemoryEmbeddingRepo, document: SourceDocument
+) -> dict[str, Any]:
+    """Score the calibration set against the cited document under this arm's config.
+
+    Deliberately NOT routed through the layer: the layer derives its claims from the
+    answer via the splitter, and a controlled comparison needs the same claims in every
+    arm. What is computed here is exactly what ``_assess`` consumes -- ``max cos(claim,
+    chunks)`` over the same chunks the layer built -- so the numbers are commensurable
+    with the live run above them.
+    """
+    from verifier.semantic.embed import INPUT_TYPE_QUERY, CachedEmbedder
+    from verifier.semantic.similarity import top_k
+
+    embedder = CachedEmbedder(layer._embedder, repo)
+    chunks, source = await layer._embed_source(embedder, document, document.id or TARGET)
+
+    labelled = [
+        *(("genuine", name, text) for name, text in GENUINE_CLAIMS),
+        *(("foreign", name, text) for name, text in FOREIGN_CLAIMS),
+        *(("fragment", name, text) for name, text in FRAGMENTS),
+    ]
+    # cache=False: query-side vectors must never enter the pool they are scored
+    # against, or a claim is compared with itself.
+    result = await embedder.embed_texts(
+        [text for _, _, text in labelled], input_type=INPUT_TYPE_QUERY, cache=False
+    )
+
+    rows: list[dict[str, Any]] = []
+    for (kind, name, _), vector in zip(labelled, result.vectors, strict=True):
+        best = top_k(vector, source.vectors, k=1)[0]
+        chunk = chunks[best.index]
+        rows.append(
+            {
+                "kind": kind,
+                "name": name,
+                "score": best.score,
+                "where": f"[{chunk.paragraph_from}-{chunk.paragraph_to}]",
+            }
+        )
+    genuine = [r["score"] for r in rows if r["kind"] == "genuine"]
+    foreign = [r["score"] for r in rows if r["kind"] == "foreign"]
+    return {
+        "rows": rows,
+        "genuine_min": min(genuine) if genuine else None,
+        "foreign_max": max(foreign) if foreign else None,
+        "gap": (min(genuine) - max(foreign)) if genuine and foreign else None,
+    }
+
+
 async def run_arm(
     mode: str, chunk: str, question: str, answer: str, summariser: SharedSummariser
 ) -> dict[str, Any]:
@@ -193,6 +319,7 @@ async def run_arm(
     background_chunks = await seed_background(layer, repo)
     document = load(TARGET)
     result = await layer.run(layer_input(question, answer, document))
+    separation = await measure_separation(layer, repo, document)
     return {
         "mode": mode,
         "chunk": chunk,
@@ -202,6 +329,7 @@ async def run_arm(
         "background_chunks": background_chunks,
         "detail": result.detail,
         "findings": result.findings,
+        "separation": separation,
     }
 
 
@@ -252,6 +380,20 @@ def report(arm: dict[str, Any]) -> None:
         f"| below floor {below} of {len(cited)}"
     )
 
+    sep = arm["separation"]
+    print("-" * 78)
+    print("  separation (fixed calibration set, scored as L3 scores)")
+    for row in sep["rows"]:
+        mark = {"genuine": "  +", "foreign": "  -", "fragment": "  ?"}[row["kind"]]
+        flag = " <floor" if row["score"] < floor else ""
+        print(f"  {mark} {row['score']:.3f} {row['where']:>12}  {row['name']}{flag}")
+    if sep["gap"] is not None:
+        print(
+            f"      genuine min {sep['genuine_min']:.3f} | foreign max {sep['foreign_max']:.3f} "
+            f"| GAP {sep['gap']:+.3f}   <-- the number that decides"
+        )
+    print("-" * 78)
+
     ranked = claims[0].get("ranked_chunks") or []
     if ranked:
         per_claim = detail.get("retrieval", {}).get("passages_per_claim")
@@ -301,7 +443,9 @@ async def main() -> int:
 
     if len(arms) > 1:
         print(f"\n{'=' * 78}\nCOMPARISON")
-        header = f"  {'arm':<24} {'status':<8} {'mean':>7} {'min':>7} {'below floor':>12}"
+        header = (
+            f"  {'arm':<24} {'status':<8} {'mean':>7} {'min':>7} {'below floor':>12} {'GAP':>8}"
+        )
         print(header)
         for arm in arms:
             claims = arm["detail"].get("claim_scores") or []
@@ -309,10 +453,16 @@ async def main() -> int:
             if not cited:
                 continue
             below = sum(1 for v in cited if v < settings.L3_ABSOLUTE_FLOOR)
+            gap = arm["separation"]["gap"]
             print(
                 f"  {arm['label']:<24} {arm['status']:<8} {sum(cited) / len(cited):>7.3f} "
                 f"{min(cited):>7.3f} {f'{below} of {len(cited)}':>12}"
+                f" {'--' if gap is None else format(gap, '+.3f'):>8}"
             )
+        print(
+            "\n  GAP = genuine min - foreign max, on the fixed calibration set. A config"
+            "\n  that raises every score without widening this has bought nothing."
+        )
 
         # The claim that motivated the granularity axis: it clears the contrastive
         # margin comfortably and still fails the absolute floor. Tracking it per arm is

@@ -6,10 +6,13 @@ then used as a TARGET, which is a different question: how large a unit should a
 one-sentence claim be compared against? Measured on Spandeck, grouping produced 43
 chunks of ~6 paragraphs (median 2,042 chars) while the median paragraph is 338.
 
-Against real voyage-law-2 over 8 shared claims, paragraph granularity moved the mean
-max cosine 0.566 → 0.626 and took the one claim that still failed the 0.35 floor from
-0.313 to 0.390. These tests pin the mechanism, not those numbers — the offline embedder
-is a different model and nothing transfers between models.
+Paragraph granularity is kept for the PASSAGE L5 reasons over, not for scores: on the
+fixed calibration set it raises genuine and foreign claims alike and leaves the gap
+unchanged (+0.386 grouped, +0.380 paragraph). What it changes is that the unit for [83]
+is [83-83] rather than [83-86], provenance is exact, and the quoted paragraph ranks #1.
+
+These tests pin the mechanism, not any cosine number — the offline embedder is a
+different model and nothing transfers between models.
 """
 
 from __future__ import annotations
@@ -94,10 +97,9 @@ def test_strategy_is_recorded_on_the_chunk(spandeck):
 
 
 def test_the_default_is_paragraph():
-    """Measured, not assumed: paragraph granularity cleared the one claim that still
-    failed the floor after the prefix was removed (0.313 -> 0.390, 0 of 8 below floor).
-    Part 4's thresholds were themselves derived on raw paragraphs, so this is also the
-    setting that matches the calibration."""
+    """Chosen for evidence precision, and for matching the regime Part 4's thresholds
+    were derived in (raw paragraphs). NOT for discrimination: the genuine-to-foreign gap
+    is unchanged, which is why the probe now reports it."""
     assert Settings(PROVIDER_MODE="mock").CHUNK_STRATEGY == "paragraph"
 
 

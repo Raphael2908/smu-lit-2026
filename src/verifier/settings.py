@@ -179,16 +179,22 @@ class Settings(BaseSettings):
     # size to retrieve against a one-sentence claim" are different questions, and only
     # the first one was ever answered. Measured on Spandeck: 43 grouped chunks, median
     # 2,042 chars and ~6 paragraphs each, against a median paragraph of 338 chars.
-    # Default MEASURED, not assumed. Against real voyage-law-2 over 8 shared claims,
-    # one shared background and prefix_mode=none:
+    # Default chosen for EVIDENCE PRECISION, not for scores. Against real voyage-law-2
+    # on the fixed calibration set (scripts/l3_probe.py), at prefix_mode=none:
     #
-    #   grouped     mean 0.566  min 0.313  1 of 8 below the 0.35 floor   FAIL
-    #   paragraph   mean 0.626  min 0.390  0 of 8                        PASS
+    #   strategy     genuine min   foreign max   GAP
+    #   grouped         0.640         0.254     +0.386
+    #   paragraph       0.700         0.320     +0.380
     #
-    # The claim that survived the prefix fix went 0.313 -> 0.390, and the decisive
-    # paragraph [115] moved from rank #3 (inside a [115-116] merge) to rank #1, so it
-    # now reaches the judge as well. Part 4's thresholds were themselves derived on raw
-    # PARAGRAPHS, so this is the setting that matches the calibration.
+    # Every score rises and the gap does not -- finer chunks match unrelated material
+    # better too. So this buys no discrimination, and must not be justified as though
+    # it did. What it buys is the passage L5 reasons over: the unit for [83] is [83-83]
+    # rather than [83-86], provenance is exact so "at [N]" names the text actually
+    # supplied, and paragraph [115] moves from rank #3 to #1. L5's reliability is
+    # bounded by retrieval quality, and that bound is what this moves.
+    #
+    # It is also the regime Part 4's L3 thresholds were derived in, since those were
+    # measured against raw paragraphs.
     #
     # Costs ~4x the vectors per document (170 chunks vs 43 on Spandeck), paid once per
     # judgment and cached forever. Revert with CHUNK_STRATEGY=grouped.
