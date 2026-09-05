@@ -35,20 +35,28 @@ SALV.config = {
   /**
    * Give up on a run that never reaches a terminal state.
    *
-   * MUST EXCEED THE SERVER'S OWN BUDGET, or the client calls a healthy run a failure.
-   * The server allows RUN_SOFT_LIMIT_S (150) for the deterministic phase and then
-   * JUDGE_SOFT_LIMIT_S (90) for the judge on its own queue, so 240 s is the longest a
-   * run can legitimately take; this sits just past it.
+   * 180 s: SET DELIBERATELY BELOW THE SERVER'S WORST CASE, which is a trade, not an
+   * oversight. The server allows RUN_SOFT_LIMIT_S (150) for the deterministic phase and
+   * then JUDGE_SOFT_LIMIT_S (90) for the judge on its own queue, so 240 s is the
+   * longest a run can legitimately take. A run that actually uses most of both budgets
+   * will therefore be reported as timed out by the panel while it is still healthy, and
+   * its verdict will land in the backend that nobody is now watching for.
    *
-   * 45 s was the old value and matched the old RUN_SOFT_LIMIT. Raising the server
-   * budget to fit a measured 46 s cold run without raising this one would have moved
-   * the false timeout from the worker to the panel and changed nothing the user sees:
-   * a cold run takes ~79 s and completes, and the panel used to give up at 45 s and
-   * report "The verification timed out" over a verdict that was already on its way.
-   * A warm run is ~26 s (docs/03-findings.md F30), so this only ever bites the first
-   * run to touch a given judgment.
+   * What buys that risk is the other failure: four minutes of a spinner is indis-
+   * tinguishable from a hang, and a reader who has given up is not helped by a verdict
+   * arriving after they have. The measured runs sit far below either number -- ~79 s
+   * cold, ~26 s warm (docs/03-findings.md F30) -- so 180 s still leaves better than 2x
+   * headroom over the slowest run actually observed.
+   *
+   * The number to watch is the FALSE timeout rate. If "The verification timed out"
+   * starts appearing on runs that the backend shows completing, this is the line that
+   * is wrong, and 240000 -- the value matched to the server's own budget -- is what it
+   * should go back to.
+   *
+   * (45 s was the original value, matched to the old RUN_SOFT_LIMIT of 45. It gave up
+   * over verdicts that were already on their way once the server budget was raised.)
    */
-  pollTimeoutMs: 240000,
+  pollTimeoutMs: 180000,
 
   /**
    * Streaming-completion debounce. Verifying a half-written answer is the main
@@ -90,6 +98,24 @@ SALV.config = {
 SALV.STORAGE_TIMEOUT_MS = 1000;
 
 /**
+ * The ONLY keys that round-trip through chrome.storage.
+ *
+ * These are the two the user actually sets, through the panel header. Everything else
+ * in `config` is a tuning constant that ships with the extension, and persisting one
+ * freezes it forever on that machine.
+ *
+ * That is not hypothetical: `saveConfig` used to store `{...SALV.config}` -- the whole
+ * object -- so the first ever click on the full-screen or theme toggle wrote a complete
+ * snapshot of that session's config, `pollTimeoutMs: 45000` included. `loadConfig` then
+ * applied the blob over the defaults on every boot, so raising the default to 240000 and
+ * even reloading the extension changed nothing: the panel kept abandoning healthy runs at
+ * 45 s, and the stale value was invisible because it lived in browser storage rather than
+ * in any file. Filtering on READ as well as write is what heals an already-poisoned
+ * profile without asking anyone to clear site data by hand.
+ */
+SALV.PERSISTED_KEYS = ['panelView', 'panelTheme'];
+
+/**
  * User overrides from chrome.storage.sync, applied over the defaults above.
  *
  * The timeout is the whole point, and try/catch is not a substitute for it. In an
@@ -110,7 +136,14 @@ SALV.loadConfig = async function loadConfig() {
     if (stored === null) {
       SALV.warn('chrome.storage did not answer; using defaults (is this tab orphaned?)');
     } else if (stored.config) {
-      Object.assign(SALV.config, stored.config);
+      // Allowlisted, NOT Object.assign(config, stored.config): a stored blob from an
+      // older version carries every tuning constant it had at the time, and applying it
+      // wholesale silently pins them forever. See PERSISTED_KEYS.
+      for (const key of SALV.PERSISTED_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(stored.config, key)) {
+          SALV.config[key] = stored.config[key];
+        }
+      }
     }
   } catch (err) {
     // Storage is unavailable in some contexts; defaults are always usable.
@@ -131,7 +164,8 @@ SALV.loadConfig = async function loadConfig() {
 SALV.saveConfig = function saveConfig(patch) {
   Object.assign(SALV.config, patch);
   try {
-    const stored = { ...SALV.config };
+    const stored = {};
+    for (const key of SALV.PERSISTED_KEYS) stored[key] = SALV.config[key];
     void Promise.resolve(chrome.storage.sync.set({ config: stored })).catch((err) => {
       SALV.warn('config save skipped:', (err && err.message) || err);
     });

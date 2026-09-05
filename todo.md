@@ -642,11 +642,40 @@ Now 240000, derived from the server's own budget rather than picked: `RUN_SOFT_L
 queue is the longest a run can legitimately take. The stale comment claiming "a run is
 <=20 s" went with it.
 
-**Reload the extension in `chrome://extensions` for this to take effect** — Chrome does
-not re-read an unpacked extension's files on a page refresh (bug 3's operational note).
+**Necessary but not sufficient.** Changing the default did not change the behaviour,
+because `chrome.storage` held a stale copy that overrode it on every boot — bug 26.
+Both fixes are needed, and the extension must be reloaded in `chrome://extensions`
+(Chrome does not re-read an unpacked extension's files on a page refresh).
 
 The general lesson is worth keeping: a client timeout and a server timeout are one
 setting in two files, and changing either alone just relocates the failure.
+
+---
+
+### 26. ~~`saveConfig` persisted the whole config, freezing every tuning constant~~ — FIXED
+
+**Severity: high — it silently defeated every later change to a default, in a place no
+file shows.**
+
+`saveConfig` is only ever called with `{panelView}` or `{panelTheme}`, but it stored
+`{...SALV.config}` — the **entire** object — and `loadConfig` did
+`Object.assign(SALV.config, stored.config)`, applying that blob over the defaults.
+
+So the first time anyone clicked the full-screen or theme toggle, the extension wrote a
+complete snapshot of that session's config into `chrome.storage.sync`, `pollTimeoutMs:
+45000` included. From then on the shipped defaults were dead on arrival. That is why
+bug 25's fix appeared not to work: the default was raised to 240000, then to 180000, the
+extension was reloaded, and the panel still gave up at exactly 45 s — the stale value was
+not in any file, so nothing in the repo showed it, and reloading could not clear it.
+
+**Fixed** with a `PERSISTED_KEYS = ['panelView', 'panelTheme']` allowlist applied on
+**read as well as write**. Filtering the read is the half that matters for anyone who
+already has the bad blob: it heals an existing profile without asking them to clear site
+data. Verified against a simulated poisoned profile — the file's default wins, both real
+preferences survive, and a save now writes only those two keys.
+
+Same family as bug 3's `background.js` sticky `localhost` fallback: a value cached
+somewhere invisible, outliving the code that set it.
 
 ---
 
