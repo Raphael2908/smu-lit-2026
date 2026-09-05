@@ -53,6 +53,16 @@ services:
 
   api:
     <<: *app
+    # Chromium here, not only in browserworker. Browser fetches run INLINE in the
+    # orchestrator's asyncio.gather rather than on QUEUE_BROWSER (todo.md bug 14), so
+    # they execute in whichever process runs the pipeline -- api (inline dispatch) or
+    # worker. browserworker never sees one (todo.md bug 15). Costs ~400MB per image;
+    # the alternative is every SSO citation raising "Playwright is not installed in
+    # this image", which is a WARN and safe, but silently useless.
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args: {INSTALL_BROWSER: "true"}
     environment:
       ROLE: api
       DATABASE_URL: postgresql+psycopg://verifier:verifier@postgres:5432/verifier
@@ -65,6 +75,10 @@ services:
 
   worker:
     <<: *app
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args: {INSTALL_BROWSER: "true"}
     environment:
       ROLE: worker
       DATABASE_URL: postgresql+psycopg://verifier:verifier@postgres:5432/verifier
@@ -77,6 +91,10 @@ services:
       DATABASE_URL: postgresql+psycopg://verifier:verifier@postgres:5432/verifier
       REDIS_URL: redis://redis:6379/0
 
+  # CURRENTLY UNREACHABLE. Nothing dispatches to QUEUE_BROWSER -- the whole pipeline runs
+  # inside run_verification on the default queue via asyncio.gather -- so this service
+  # starts, connects and waits forever. Kept rather than deleted because it is the shape
+  # of the fix for todo.md bug 14, not because it is doing anything today.
   browserworker:
     <<: *app
     build:

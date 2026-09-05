@@ -844,8 +844,12 @@ def _load_source_adapter() -> Any | None:
         resolve = getattr(source_registry, "resolve_citation", None)
         if callable(resolve):
             return source_registry
-    except Exception:  # noqa: BLE001 - the registry is optional; fall through to eLitigation
-        pass
+    except Exception as exc:  # noqa: BLE001 - the registry is optional; fall back below
+        # LOUD, because the fallback is silent and total. A one-character typo anywhere
+        # under sources/ takes the registry down, every citation quietly reverts to the
+        # eLitigation-only path, and nothing in the run says so. That failure has already
+        # happened once in this codebase's history; it must not happen invisibly twice.
+        log.warning("source_registry_unavailable", error=str(exc))
     try:
         from verifier.sources.elitigation import ElitigationAdapter
 

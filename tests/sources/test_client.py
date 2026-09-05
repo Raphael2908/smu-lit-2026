@@ -42,7 +42,14 @@ def neutral(text: str, court: str, year: int, number: int) -> ExtractedCitation:
 
 
 def test_implements_the_source_adapter_protocol() -> None:
+    """Also the enforcement point for ``fetch_strategy``.
+
+    SourceAdapter is a runtime_checkable Protocol, and on 3.12 isinstance() against one
+    checks DATA members by hasattr. So adding fetch_strategy to the protocol without
+    adding it to this adapter fails here -- which is why the two must land together.
+    """
     assert isinstance(adapter(), SourceAdapter)
+    assert adapter().fetch_strategy is FetchStrategy.HTTP
 
 
 async def test_real_neutral_citation_resolves() -> None:

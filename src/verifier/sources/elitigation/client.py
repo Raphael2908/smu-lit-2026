@@ -31,15 +31,20 @@ from verifier.contracts.enums import (
 )
 from verifier.providers.base import Fetcher, SearchHit
 from verifier.settings import settings
+from verifier.sources.base import RETRYABLE_STATUSES as _RETRYABLE_STATUSES
+from verifier.sources.base import (
+    DocumentCache,
+    fetcher_for,
+    host_of,
+    resolve_cluster_in_order,
+)
 from verifier.sources.elitigation import citation_url, search
 from verifier.sources.elitigation.parser import PageState, parse, parse_document
 
-#: Statuses that mean "we could not check", and may therefore be retried through another
-#: member of the same cluster. NOT_FOUND is deliberately absent: once we have positive
-#: evidence that a neutral citation does not exist, finding the case name by another
-#: route does not make the citation right, and silently upgrading it to RESOLVED would
-#: erase the finding.
-RETRYABLE_STATUSES = frozenset({ResolutionStatus.UNRESOLVABLE, ResolutionStatus.ERROR})
+#: Re-exported from ``sources.base``, where it now lives alongside the cluster fallback
+#: loop that is the only thing that reads it. Kept importable from here because callers
+#: and tests already import it from this module.
+RETRYABLE_STATUSES = _RETRYABLE_STATUSES
 
 
 class ElitigationAdapter:
@@ -47,6 +52,9 @@ class ElitigationAdapter:
 
     name = "elitigation"
     domain = "www.elitigation.sg"
+    #: Static HTML, no login, no JS (F2). Fetched over plain HTTP in ~0.26s; a browser
+    #: here would add seconds for nothing.
+    fetch_strategy = FetchStrategy.HTTP
 
     def __init__(self, fetcher: Fetcher | None = None, *, base_url: str | None = None) -> None:
         self._fetcher = fetcher
@@ -54,7 +62,7 @@ class ElitigationAdapter:
         #: url -> document, so resolve() and a later layer share one fetch. The
         #: politeness budget is 2 concurrent requests at 250ms apart; re-fetching the
         #: same 150kB judgment for L1 and again for L3 spends it for nothing.
-        self._documents: dict[str, SourceDocument] = {}
+        self._documents = DocumentCache()
 
     @property
     def fetcher(self) -> Fetcher:
@@ -64,9 +72,7 @@ class ElitigationAdapter:
         and the test suite flips ``PROVIDER_MODE`` between cases.
         """
         if self._fetcher is None:
-            from verifier.providers.factory import get_http_fetcher
-
-            self._fetcher = get_http_fetcher()
+            self._fetcher = fetcher_for(self.fetch_strategy)
         return self._fetcher
 
     # -- SourceAdapter -----------------------------------------------------
@@ -106,56 +112,28 @@ class ElitigationAdapter:
     async def resolve_cluster(self, cluster: CitationCluster) -> Resolution:
         """Resolve a cluster through its preferred member, falling back down the order.
 
-        This is what rescues a report-only citation (F7): on its own it is UNRESOLVABLE,
-        but in real writing it travels with a neutral citation or a case name, and the
-        cluster resolves through that sibling instead.
-
-        The fallback never fires on NOT_FOUND. A neutral citation that does not exist is
-        a finding; finding the case by name afterwards does not retract it.
+        The loop itself is corpus-neutral and lives in ``sources.base`` so a second
+        adapter inherits it rather than copying ~25 lines of subtle failure-direction
+        logic. See ``resolve_cluster_in_order`` for why an ERROR outranks a later
+        NOT_FOUND.
         """
-        order = {
-            CitationType.NEUTRAL: 0,
-            CitationType.CASE_NAME: 1,
-            CitationType.URL: 2,
-            CitationType.REPORT: 3,
-        }
-        members = sorted(cluster.members, key=lambda m: order[m.citation_type])
-        result = await self.resolve(members[0])
-        for member in members[1:]:
-            if result.status not in RETRYABLE_STATUSES:
-                return result
-            fallback = await self.resolve(member)
-            if fallback.status is ResolutionStatus.NOT_FOUND and result.status is (
-                ResolutionStatus.ERROR
-            ):
-                # An ERROR means the source is not answering reliably. No NEGATIVE
-                # conclusion drawn after it can be trusted -- during an outage every
-                # path fails, and "the search found nothing" then means "the site is
-                # down", not "the case does not exist". Keep the ERROR, which is a WARN.
-                # (An UNRESOLVABLE first result is different: nothing was fetched and
-                # nothing failed, so a genuine zero-hit search still stands as F6
-                # evidence.)
-                continue
-            if fallback.status not in RETRYABLE_STATUSES:
-                # Keep the key of the member the caller will look the cluster up by.
-                return fallback.model_copy(update={"citation_key": result.citation_key})
-            result = result if result.status is ResolutionStatus.ERROR else fallback
-        return result
+        return await resolve_cluster_in_order(self.resolve, cluster)
 
     # -- documents ---------------------------------------------------------
 
     async def fetch_document(self, url: str) -> SourceDocument:
         """Fetch and parse a judgment, memoised per adapter instance."""
-        if url in self._documents:
-            return self._documents[url]
+        memoised = self._documents.get(url)
+        if memoised is not None:
+            return memoised
         result = await self.fetcher.fetch(url)
         _, document = parse_document(
             result.html,
             url,
             http_status=result.status_code,
-            fetch_strategy=FetchStrategy.HTTP,
+            fetch_strategy=self.fetch_strategy,
         )
-        self._documents[url] = document
+        self._documents.put(url, document)
         return document
 
     def document_for(self, url: str | None) -> SourceDocument | None:
@@ -164,7 +142,7 @@ class ElitigationAdapter:
         ``Resolution`` carries a ``document_id`` for the persisted case; until a run is
         persisted this is how a layer gets from a resolution to the text it needs.
         """
-        return self._documents.get(url) if url else None
+        return self._documents.get(url)
 
     # -- internals ---------------------------------------------------------
 
@@ -186,8 +164,10 @@ class ElitigationAdapter:
                 detail=f"fetch_failed:{type(exc).__name__}",
             )
 
-        verdict, document = parse_document(result_html, url, http_status=status_code)
-        self._documents[url] = document
+        verdict, document = parse_document(
+            result_html, url, http_status=status_code, fetch_strategy=self.fetch_strategy
+        )
+        self._documents.put(url, document)
 
         if verdict.state is PageState.NOT_FOUND:
             return Resolution(
@@ -196,7 +176,7 @@ class ElitigationAdapter:
                 method=ResolutionMethod.URL,
                 url=url,
                 domain=self.domain,
-                fetch_strategy=FetchStrategy.HTTP,
+                fetch_strategy=self.fetch_strategy,
                 confidence=1.0,
                 cached=cached,
                 detail=verdict.detail,
@@ -213,7 +193,7 @@ class ElitigationAdapter:
                 method=ResolutionMethod.URL,
                 url=url,
                 domain=self.domain,
-                fetch_strategy=FetchStrategy.HTTP,
+                fetch_strategy=self.fetch_strategy,
                 cached=cached,
                 detail=verdict.detail,
             )
@@ -224,7 +204,7 @@ class ElitigationAdapter:
             method=ResolutionMethod.CACHE if cached else ResolutionMethod.URL,
             url=url,
             domain=self.domain,
-            fetch_strategy=FetchStrategy.HTTP,
+            fetch_strategy=self.fetch_strategy,
             title=document.neutral_citation,
             case_name=document.case_name,
             confidence=1.0 if verdict.citation_matches else 0.5,
@@ -295,7 +275,7 @@ class ElitigationAdapter:
                 method=ResolutionMethod.SEARCH,
                 url=best.url,
                 domain=self.domain,
-                fetch_strategy=FetchStrategy.HTTP,
+                fetch_strategy=self.fetch_strategy,
                 title=best.neutral_citation,
                 case_name=(document.case_name if document else None) or best.case_name or None,
                 candidates=tuple(hit.url for hit in hits[:5]),
@@ -332,7 +312,7 @@ class ElitigationAdapter:
             citation_key=key,
             status=ResolutionStatus.UNRESOLVABLE,
             url=url,
-            domain=_host(url),
+            domain=host_of(url),
             detail="url_not_on_this_source",
         )
 
@@ -380,9 +360,3 @@ def _citation_parts(neutral: str | None) -> dict[str, object]:
         "year": int(match.group("year")),
         "number": int(match.group("number")),
     }
-
-
-def _host(url: str) -> str | None:
-    from urllib.parse import urlsplit
-
-    return (urlsplit(url if "//" in url else "//" + url).hostname or "").lower() or None

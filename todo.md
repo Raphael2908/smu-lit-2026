@@ -340,9 +340,9 @@ Files: `src/verifier/repos/resolutions.py`, `src/verifier/pipeline/resolver.py`.
 
 ---
 
-### 11. The Docker image does not ship `tests/corpus`, so mock mode cannot verify in a container
+### 11. ~~The Docker image does not ship `tests/corpus`~~ — FIXED
 
-**Severity: medium — the compose file's own promise is untrue.**
+**Was: medium — the compose file's own promise was untrue.**
 
 `docker-compose.yml` opens with "The whole stack boots with an empty .env in
 PROVIDER_MODE=mock." It boots, but it cannot verify anything: `MockFetcher` reads
@@ -352,16 +352,21 @@ PROVIDER_MODE=mock." It boots, but it cannot verify anything: `MockFetcher` read
 Verified by running the acceptance pair inside the `api` container: both returned
 `CITATION_UNVERIFIED`. The same script run natively, against the same Postgres, passed.
 
-**Next step:** COPY `tests/corpus` into the image (it is ~500 kB), or mount it in
-compose for the mock profile.
+**Fixed** by `COPY tests/corpus ./tests/corpus` in `docker/Dockerfile`, alongside the
+browser work. ~240 kB, and it is the difference between mock mode working and mock mode
+lying: without it every citation in a container soft-404s, and a soft-404 is `NOT_FOUND`,
+which is the only citation-level FAIL — so the offline demo reported real cases as
+fabricated. Note this makes bug 8 sharper rather than softer: the stubbed fetcher now
+genuinely resolves the two judgments the corpus holds and still fails every other real
+case, which looks more convincing and is just as wrong.
 
-Files: `docker/Dockerfile`, `docker-compose.yml`.
+Files: `docker/Dockerfile`.
 
 ---
 
 ### 12. There is no `FETCHER_MODE`
 
-**Severity: low — but it is what made bug 9 hard to work around.**
+**Severity: low — but it is what made bug 10 hard to work around.**
 
 `EMBEDDINGS_MODE`, `SUMMARISER_MODE`, `JUDGE_MODE` and `EXTRACTOR_MODE` can each be set
 independently of `PROVIDER_MODE`. The fetcher cannot: `get_http_fetcher()` keys on
@@ -389,6 +394,81 @@ persistence that is false is the same shape as the document-cache bug already in
 fixed table below.
 
 Files: `src/verifier/repos/lists.py` (missing), `src/verifier/repos/pg.py`.
+
+---
+
+### 14. A browser fetch runs inline, in front of the fabrication check
+
+**Severity: high — it is a timeout away from taking a whole run down.**
+
+`worker/celery_app.py` says why `QUEUE_BROWSER` exists:
+
+> `browser` -- login-walled fetches. Heavyweight and long-lived; isolated so a hung
+> browser session cannot take the fast path down with it.
+
+Nothing dispatches to it. The whole pipeline runs inside `run_verification` on
+`QUEUE_DEFAULT` via `asyncio.gather`, so an SSO fetch — which launches Chromium, waits
+out an AWS WAF challenge, and renders a 900kB page — sits directly in front of the ~0.6s
+deterministic fabrication check that is the product's fastest and most valuable signal.
+
+The numbers do not leave much room: `BROWSER_TIMEOUT_S` is 45.0 against a `RUN_SOFT_LIMIT`
+of 45, plus a multi-second `_ensure_context` cold start, and `SOURCE_TIMEOUT_S` is
+httpx-only and does not bound the browser path at all.
+
+`SOURCE_BROWSER_INLINE_TIMEOUT_S` (default 20s) is the mitigation and is deliberately not
+called a fix: it bounds the damage, it does not restore the isolation. The fix is to
+dispatch browser fetches to `QUEUE_BROWSER` — which means the resolver awaiting a Celery
+result mid-pipeline, i.e. exactly the nested-coordination shape `orchestrator.py`'s
+docstring rejects ("the failure mode is a run that silently never finishes"). That
+tension is the real work, and it is why this was not done under time pressure.
+
+Files: `src/verifier/pipeline/orchestrator.py`, `src/verifier/worker/celery_app.py`,
+`src/verifier/sources/sso/client.py`.
+
+---
+
+### 15. `browserworker` is unreachable
+
+**Severity: low — it is dead weight, not a wrong answer.**
+
+Direct consequence of bug 14. The profile-gated `browserworker` service starts, connects
+to Redis, subscribes to `QUEUE_BROWSER` and waits forever, because nothing ever puts
+anything there. Meanwhile `api` and `worker` are now built with `INSTALL_BROWSER=true`,
+which is the thing the build arg was introduced to avoid — roughly 400MB of Chromium in
+two images that were meant to stay slim.
+
+Both go away when bug 14 is fixed. Kept rather than deleted so the shape of that fix is
+still visible in the compose file.
+
+Files: `docker-compose.yml`, `docker/Dockerfile`.
+
+---
+
+### 16. SSO's soft-404 has not been measured, so it has no FAIL path
+
+**Severity: medium — this is a known coverage gap, deliberately left open.**
+
+`sources/sso/parser.py` ships a `PageState` with exactly two members, `FOUND` and
+`UNAVAILABLE`, and `tests/sources/test_sso.py` asserts that `NOT_FOUND` does not exist.
+That is not an oversight to be tidied up; it is the invariant.
+
+eLitigation earned its `NOT_FOUND` from a measurement (F3): 150,389 bytes carrying the
+citation in `<title>` against 3,549 with an empty one. Everything currently known about
+SSO — 24,693 bytes for a bogus slug against 339kB–913kB for a real Act — was measured
+over plain HTTP, and plain HTTP is **not the path the adapter uses**: SSO answers httpx
+with `202` and `x-amzn-waf-action: challenge` and an empty body. Those figures came from
+a client the adapter is not.
+
+So an SSO citation today resolves or degrades, and can never be reported as fabricated.
+The consequence is a real gap: a link to a non-existent Act reads as unverified rather
+than as a fabrication.
+
+Closing it needs `scripts/sso_probe.py` run through a browser, separating **three**
+states — real Act, bogus slug, and WAF-challenge-or-outage. Not two. F12 is the standing
+record of what separating only two costs. Byte size is corroboration and must not enter
+a branch.
+
+Files: `src/verifier/sources/sso/parser.py`, `scripts/sso_probe.py`.
 
 ---
 

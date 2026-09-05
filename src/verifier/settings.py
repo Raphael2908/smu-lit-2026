@@ -251,9 +251,28 @@ class Settings(BaseSettings):
     SOURCE_TIMEOUT_S: float = 20.0
     SOURCE_USER_AGENT: str = "sal-verifier/0.1 (SMU LIT 2026 research prototype)"
     ELITIGATION_BASE_URL: str = "https://www.elitigation.sg"
+    SSO_BASE_URL: str = "https://sso.agc.gov.sg"
+
+    #: Bound on an inline browser fetch. NOT a duplicate of SOURCE_TIMEOUT_S, which is
+    #: httpx-only and does not constrain the browser path at all.
+    #:
+    #: Browser fetches currently run inline in the orchestrator's asyncio.gather rather
+    #: than on QUEUE_BROWSER (todo.md bug 14), which puts them in front of the ~0.6s
+    #: fabrication check. BROWSER_TIMEOUT_S is 45.0 and RUN_SOFT_LIMIT is 45, so an
+    #: unbounded browser nav can consume the whole run. This is the mitigation, not the
+    #: fix; the fix is the queue.
+    SOURCE_BROWSER_INLINE_TIMEOUT_S: float = 20.0
 
     # --- Browser (login-walled sources) ---
     BROWSER_PROFILE_DIR: str = "./browser-profile"
+    #: Blank means "send whatever Chromium sends", which is the correct default.
+    #:
+    #: This used to be SOURCE_USER_AGENT, which is a non-browser string. Handing it to a
+    #: real browser is worse than useless in front of a bot filter: it advertises a
+    #: script from something that renders like a browser, which is precisely the
+    #: mismatch such a filter looks for. Set this only for a source that demands a
+    #: specific string.
+    BROWSER_USER_AGENT: str = ""
     BROWSER_TIMEOUT_S: float = 45.0
     BROWSER_HEADLESS: bool = True
 

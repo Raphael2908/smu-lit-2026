@@ -230,3 +230,45 @@ async def test_the_single_flight_resolver_fetches_each_judgment_once(mock_mode):
 
     judgment_fetches = [u for u in fetcher.calls if u.endswith("/gd/s/2007_SGCA_37")]
     assert len(judgment_fetches) == 1
+
+
+# -- the registry drop-in ----------------------------------------------------------
+#
+# Every test above passes no `resolve_citation`, so the orchestrator resolves through
+# `_load_source_adapter()`. That used to return a hardcoded ElitigationAdapter and now
+# returns `verifier.sources.registry`. The contrast tests above passing UNCHANGED is the
+# real proof the registry drops in; these two make it visible rather than incidental.
+
+SSO_ANSWER = (
+    "Cheating is defined in section 415 of the Penal Code 1871: see "
+    "https://sso.agc.gov.sg/Act/PC1871 for the full text of the provision."
+)
+
+
+async def test_the_contrast_runs_through_the_registry(mock_mode):
+    from verifier.pipeline.orchestrator import _load_source_adapter
+    from verifier.sources import registry
+
+    assert _load_source_adapter() is registry
+
+
+async def test_an_sso_citation_warns_and_never_fails(mock_mode):
+    """An SSO URL now reaches an adapter that owns its host, instead of being rejected
+    off-domain by eLitigation without a single request being made.
+
+    It must still never FAIL: phase 1 fetches and classifies but extracts nothing, and
+    SSO's soft-404 has not been measured through the browser path (see
+    sources/sso/parser.py on why PageState has no NOT_FOUND member).
+    """
+    judge = RecordingJudgeLayer()
+    state = await _orchestrator(judge).run(
+        make_request(question="What is cheating under Singapore law?", ai_output=SSO_ANSWER),
+        run_id="run-sso",
+    )
+
+    sso = [r for r in state.resolutions.values() if (r.domain or "") == "sso.agc.gov.sg"]
+    assert sso, "the SSO URL should have been dispatched to the SSO adapter"
+    assert all(r.status is not ResolutionStatus.NOT_FOUND for r in sso)
+
+    l1 = state.layers[Layer.L1_EXISTENCE]
+    assert not any(f.code is FindingCode.CITATION_NOT_FOUND for f in l1.findings)

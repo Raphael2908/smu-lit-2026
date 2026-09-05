@@ -65,3 +65,34 @@ async def test_calls_are_recorded_for_assertions() -> None:
 
 async def test_unknown_path_is_a_404() -> None:
     assert (await MockFetcher().fetch(f"{BASE}/nope")).status_code == 404
+
+
+# -- SSO --------------------------------------------------------------------------
+
+
+async def test_an_sso_url_is_dispatched_on_its_host_not_its_path() -> None:
+    """Path-only dispatch was fine with one source. With two it would serve eLitigation
+    judgment fixtures for any SSO URL that happened to contain /gd/s/."""
+    result = await MockFetcher().fetch("https://sso.agc.gov.sg/gd/s/2007_SGCA_37")
+    assert result.status_code == 200
+    assert "Spandeck" not in result.html
+    assert "Synthetic SSO document" in result.html
+
+
+async def test_an_sso_legislation_url_serves_a_synthetic_page() -> None:
+    result = await MockFetcher(strategy="browser").fetch("https://sso.agc.gov.sg/Act/IA1959")
+    assert result.status_code == 200
+    assert "legisContent" in result.html
+
+
+def test_there_is_no_synthetic_sso_soft_404_fixture() -> None:
+    """Deliberate. SSO's soft-404 has never been observed through the path the adapter
+    uses, so an invented fixture would let a test establish a NOT_FOUND branch that no
+    measurement supports -- which is precisely how a fabrication verdict gets built on an
+    assumption. Add one in the same commit as scripts/sso_probe.py's results."""
+    from verifier.providers.mock import fetcher as mock_fetcher
+
+    source = (mock_fetcher.__file__ or "").replace(".pyc", ".py")
+    text = open(source, encoding="utf-8").read()
+    assert "SSO_SOFT_404" not in text
+    assert "sso_not_found" not in text

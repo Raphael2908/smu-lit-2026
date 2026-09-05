@@ -38,6 +38,9 @@ MAINTENANCE_TOKEN = "__maintenance__"
 #: Minimal search index. Phrases are matched case-insensitively as substrings, mirroring
 #: F6's finding that a real case name hits at rank 1 and a fabricated one returns
 #: nothing at all.
+#: Singapore Statutes Online. Host-dispatched, see ``_resolve``.
+SSO_HOST = "sso.agc.gov.sg"
+
 SEARCH_INDEX: tuple[tuple[str, str, str], ...] = (
     (
         "spandeck",
@@ -84,9 +87,16 @@ class MockFetcher:
     def _resolve(self, url: str) -> tuple[str, int]:
         parts = urlsplit(url)
         path = parts.path
+        host = (parts.hostname or "").lower()
 
         if MAINTENANCE_TOKEN in url:
             return self._read(MAINTENANCE_FIXTURE), 200
+
+        # HOST FIRST for SSO, not path. Everything below dispatches on path alone, which
+        # was fine while one source existed; with two it would serve eLitigation
+        # judgment fixtures for an sso.agc.gov.sg URL that happened to contain /gd/s/.
+        if host == SSO_HOST or host.endswith("." + SSO_HOST):
+            return self._sso_page(path), 200
 
         if path.startswith("/gd/s/"):
             slug = path[len("/gd/s/") :].strip("/")
@@ -103,6 +113,26 @@ class MockFetcher:
             return self._search_page(phrase), 200
 
         return "<html><head><title></title></head><body></body></html>", 404
+
+    def _sso_page(self, path: str) -> str:
+        """SYNTHETIC legislation markup. Not a fixture -- there is no SSO corpus yet.
+
+        SSO answers a plain HTTP client with 202 and ``x-amzn-waf-action: challenge``, so
+        its real bytes cannot be captured until ``scripts/sso_probe.py`` has run through
+        a browser. This exists to exercise the adapter's plumbing offline, nothing more.
+
+        NOTE WHAT IS DELIBERATELY MISSING: there is no synthetic not-found page. SSO's
+        soft-404 has never been observed through the path the adapter uses, so modelling
+        one here would let a test establish a NOT_FOUND branch that no measurement
+        supports -- and a test passing against an invented fixture is exactly how a
+        fabrication verdict gets built on an assumption.
+        """
+        return (
+            "<html><head><title>Synthetic SSO document</title></head><body>"
+            f'<div id="legisContent" data-path="{path}">'
+            "<p>Synthetic legislation body. Not real statutory text.</p>"
+            "</div></body></html>"
+        )
 
     def _search_page(self, phrase: str) -> str:
         """SYNTHETIC results markup.
