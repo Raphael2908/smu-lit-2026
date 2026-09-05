@@ -43,4 +43,7 @@ The whole stack boots in `PROVIDER_MODE=mock` with an empty `.env`.
 
 - `docs/01-architecture.md` — layer DAG, fail-fast gate, aggregation invariant
 - `docs/02-contracts.md` — the frozen contract every module compiles against
-- `docs/03-findings.md` — live-probe evidence and the threshold literature
+- `docs/03-findings.md` — live-probe evidence, the threshold literature, and the
+  measured calibration against real `voyage-law-2`
+- `docs/v1-plan.md` — the approved plan, with what changed during the build
+- `todo.md` — open bugs, calibration debt, and deferred scope

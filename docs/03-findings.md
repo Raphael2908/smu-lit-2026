@@ -95,14 +95,19 @@ Each layer attempts only the task its tool is proven for:
 Nothing asks cosine to decide truth — that was the design error the literature warns
 against, and it is confined to L5 where a reasoning model belongs.
 
-### Thresholds
+### Thresholds — now measured against voyage-law-2, not estimated
 
 | Layer | Signal | FAIL | WARN | PASS |
 |---|---|---|---|---|
 | L1 quote | `rapidfuzz.partial_ratio` 0–100 | `< 75` | `75–90` | `≥ 90` |
-| L4 | `max cos(question, output_chunks)` | `< 0.50` | `0.50–0.70` | `≥ 0.70` |
+| **L4** | `max cos(question, output_chunks)` | **`< 0.40`** | `0.40–0.45` | `≥ 0.45` |
 | L3 | `max cos(claim, cited) − max cos(claim, BACKGROUND)` | `≤ 0.02` | `0.02–0.08` | `> 0.08` |
 | L3 floor | `max cos(claim, cited)` | `< 0.35` regardless of margin | | |
+
+#### L4, measured (Part 4 below): the 0.50 seed was failing correct answers
+
+The original `0.50 / 0.70` figures were reasoned, not measured. Run against real
+`voyage-law-2` they **failed three of five correct answers**. See Part 4.
 
 L3 scores on a **margin** because a difference of two cosines is far more stable than
 either alone — anisotropy inflates both in the same direction and largely cancels.
@@ -160,3 +165,62 @@ The 75 / 90 seeds sit cleanly between the regimes; no change needed.
 
 A "0.7 retrieval threshold" that appeared in search summaries **could not be verified**
 in the source PDF, so it is cited nowhere.
+
+
+---
+
+## Part 4 — measured against real `voyage-law-2`
+
+Everything above this point was either estimated or measured against the mock
+embedder. These are the first numbers from the real model, using the pipeline's own
+`input_type` asymmetry (`query` for questions and claims, `document` for chunks).
+
+### L4 — question → answer
+
+| Regime | n | μ | σ | min / max |
+|---|---|---|---|---|
+| On-point | 5 | 0.528 | 0.119 | min **0.434** |
+| Hard negative — *same area of law, different question* | 4 | 0.280 | 0.055 | max **0.369** |
+| Off-topic | 2 | 0.196 | — | max 0.235 |
+
+**The 0.50 seed failed 3 of 5 correct answers.** The threshold now sits at **0.40**,
+in the gap between on-point minimum (0.434) and hard-negative maximum (0.369): zero
+false fails on correct answers, all four hard negatives caught.
+
+Note how close the regimes are. The literature's warning that absolute cosine values
+are uninterpretable is not abstract — a plausible-sounding 0.50 sits *inside* the
+correct-answer distribution, and under fail-fast that silently rejects good legal
+work. This is the single clearest vindication of the "prefer a false green to a false
+red" rule.
+
+### L3 — claim → cited document, on **raw** paragraphs
+
+| Regime | cited (min/max) | margin (min/max) |
+|---|---|---|
+| Genuine — supported by Spandeck (n=3) | min **0.501** | min **+0.205** |
+| Foreign — true law, not from Spandeck (n=2) | max **0.251** | max **+0.117** |
+
+Separation is wide on both signals, and the current floor (0.35) and margin (0.02)
+fail **0 of 3** genuine claims. Unlike the mock embedder — where the margin was
+anti-discriminative — the contrastive margin **does** work with a real model, which is
+what it was designed for.
+
+### The open contradiction: the contextual prefix appears to hurt retrieval
+
+Those L3 numbers are from **raw** paragraphs. In the live pipeline every chunk is
+embedded with a document summary and heading path prefixed to it, and there a
+genuinely grounded claim was **failed** by L3.
+
+The prefix is diluting the signal. The thresholds were deliberately **not** lowered to
+compensate: that would be tuning around a bug rather than fixing it, and it would hide
+a real regression behind a green demo. `EMBEDDINGS_MODEL=voyage-context-4` exists
+precisely to A/B this — Voyage's native contextualised endpoint does the same job
+without hand-built prefixes. See `todo.md`.
+
+### Caveat that applies to every number here
+
+`n=11` for L4 and `n=5` for L3. These are **working calibrations, not benchmarks**.
+They are enough to replace a demonstrably wrong threshold with a measured one; they
+are not enough to quote a confidence interval. Widen the sample before relying on
+them, and re-run everything for any other embedding model — no cosine threshold
+transfers ([arXiv:2504.16318](https://arxiv.org/html/2504.16318v3)).

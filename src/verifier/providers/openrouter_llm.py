@@ -20,11 +20,13 @@ behaviour shows up as a metric rather than as a mystery.
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
 import httpx
 
+from verifier.contracts.documents import SourceDocument
 from verifier.errors import FatalError, ProviderKeyMissing, RetryableError
 from verifier.providers.base import JudgeResult, JudgeRubric
 
@@ -225,9 +227,37 @@ def coerce_judge_result(
     single repair retry; if the caller has already retried it should build the
     unparseable result instead.
     """
+    # The active prompt returns prose with explicit verdict markers, so try that
+    # first. Only if it is absent do we fall through to the JSON ladder, which serves
+    # a differently prompted judge.
+    native = parse_native_verdict(text)
+    if native is not None:
+        correctness, completeness, defects = native
+        return (
+            JudgeResult(
+                # Both dimensions must hold. They are assessed independently because
+                # an answer can be entirely true and still materially misleading by
+                # omission.
+                passed=bool(correctness) and bool(completeness),
+                rubric=JudgeRubric(correctness=correctness, material_completeness=completeness),
+                reasons=defects,
+                raw_response=text,
+                parse_path="native",
+                retries=retries,
+                latency_ms=latency_ms,
+                cost_usd=cost_usd,
+                model=model,
+                provider=provider,
+            ),
+            None,
+        )
+
     obj, path = parse_judge_payload(text)
     if obj is None:
-        return None, "the response contained no JSON object"
+        return None, (
+            "the response contained neither the required 'Correctness = 0/1' and "
+            "'Material completeness = 0/1' lines nor a JSON object"
+        )
     try:
         passed, rubric, reasons = validate_judge_object(obj)
     except JudgeValidationError as exc:
@@ -280,6 +310,17 @@ def unparseable_result(
 # --- the provider -----------------------------------------------------------------
 
 
+def _prompt_defines_its_own_format(system_prompt: str) -> bool:
+    """Whether the prompt already specifies its output contract.
+
+    Detected rather than configured: a setting for this is one more thing to forget,
+    and forgetting it silently produces a judge whose carefully specified verdict
+    format is overridden by ours.
+    """
+    lowered = system_prompt.lower()
+    return "material completeness" in lowered and "correctness" in lowered
+
+
 class OpenRouterJudge:
     """``Judge`` implementation over OpenRouter's OpenAI-compatible endpoint."""
 
@@ -318,25 +359,35 @@ class OpenRouterJudge:
         }
 
     def _body(self, system_prompt: str, user_turn: str) -> dict[str, Any]:
-        return {
+        """Build the request.
+
+        A JSON schema is requested ONLY when the system prompt does not define its own
+        output contract. The active prompt ends by specifying exactly what to emit
+        ("**Correctness = 0 or 1**"), and sending a competing `response_format`
+        overrides it -- observed live: the model returned the schema's fields and
+        ignored the prompt's, so the judge's own rubric never arrived. Two output
+        contracts in one request means the prompt loses.
+        """
+        body: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_turn},
             ],
             "max_tokens": self._max_tokens,
-            # Requested, never relied upon -- see the module docstring.
-            "response_format": {
+            # Ask OpenRouter to report what the call cost, so the run can price itself.
+            "usage": {"include": True},
+        }
+        if not _prompt_defines_its_own_format(system_prompt):
+            body["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "faithfulness_verdict",
                     "strict": True,
                     "schema": judge_json_schema(),
                 },
-            },
-            # Ask OpenRouter to report what the call cost, so the run can price itself.
-            "usage": {"include": True},
-        }
+            }
+        return body
 
     async def judge(self, *, system_prompt: str, payload: dict) -> JudgeResult:
         started = time.perf_counter()
@@ -362,7 +413,8 @@ class OpenRouterJudge:
             # multi-minute, multi-dollar loop for no measured benefit.
             repair_turn = (
                 f"{_USER_TURN}\n\nYour previous response could not be used: {error}. "
-                "Return the JSON object only."
+                "End your response with the two required lines exactly: "
+                "'**Correctness = 0 or 1**' and '**Material completeness = 0 or 1**'."
             )
             retry_text, retry_cost = await self._post(
                 client, self._body(system_prompt, repair_turn)
@@ -427,3 +479,162 @@ def _cost_of(data: dict[str, Any]) -> float:
         return float(usage.get("cost", 0.0) or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+# --- Summariser -------------------------------------------------------------------
+
+#: Kept short on purpose. This summary is prefixed onto EVERY chunk of the judgment
+#: before embedding, so each token here is paid once per chunk -- and voyage-law-2's
+#: 16K context is already tight against a ~21K-token judgment.
+_SUMMARY_SYSTEM = """You summarise Singapore judgments for a retrieval index.
+
+Return at most 220 words of plain prose covering: the court and year, the parties, the
+issue, the holding, and the ratio. No preamble, no markdown, no bullet points.
+
+State only what the judgment says. If something is not in the text, leave it out --
+this summary is attached to every chunk of the document and an invention here
+propagates into every retrieval decision made about it."""
+
+_CLAIM_SYSTEM = """You split legal writing into atomic factual claims.
+
+Return a JSON array of strings and nothing else. Each element is one self-contained
+assertion, quoted verbatim from the input where possible. Do not merge two assertions,
+do not invent any, and do not add commentary."""
+
+
+class OpenRouterSummariser:
+    """``Summariser`` over OpenRouter. Defaults to Haiku: this runs once per document
+    and once per output, so it is on the latency path but not the accuracy path."""
+
+    provider = "openrouter"
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str = OPENROUTER_URL,
+        timeout: float = 60.0,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        from verifier.settings import settings
+
+        key = api_key if api_key is not None else settings.OPENROUTER_API_KEY
+        if not key or not key.strip():
+            raise ProviderKeyMissing("OpenRouter", "OPENROUTER_API_KEY")
+        self._api_key = key
+        self.model = model or settings.SUMMARISER_MODEL
+        self._base_url = base_url
+        self._timeout = timeout
+        self._client = client
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "X-Title": "sal-verifier",
+        }
+
+    async def _complete(self, system: str, user: str, max_tokens: int) -> str:
+        body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": max_tokens,
+        }
+        owns_client = self._client is None
+        client = self._client or httpx.AsyncClient(timeout=self._timeout)
+        try:
+            response = await client.post(self._base_url, headers=self._headers(), json=body)
+            if response.status_code == 429 or response.status_code >= 500:
+                raise RetryableError(f"OpenRouter {response.status_code}: {response.text[:200]}")
+            if response.status_code >= 400:
+                raise FatalError(f"OpenRouter {response.status_code}: {response.text[:200]}")
+            return _first_message_text(response.json())
+        finally:
+            if owns_client:
+                await client.aclose()
+
+    async def summarise_document(self, doc: SourceDocument) -> str:
+        from verifier.settings import settings
+
+        # Send the head of the judgment: the court, parties, issue and holding are
+        # established early, and sending 110k characters to summarise would cost more
+        # than the rest of the run put together.
+        head = doc.text[:24_000]
+        label = doc.neutral_citation or doc.case_name or doc.source_url
+        return (
+            await self._complete(
+                _SUMMARY_SYSTEM,
+                f"Judgment: {label}\n\n{head}",
+                max_tokens=max(256, settings.SUMMARY_MAX_TOKENS + 64),
+            )
+        ).strip()
+
+    async def split_claims(self, text: str) -> list[str]:
+        """Atomic claims, with a caller-side fallback if the model does not comply.
+
+        Returning [] rather than raising is deliberate: ``semantic/chunking.py`` falls
+        back to deterministic sentence windows, and a summariser hiccup must not fail a
+        verification.
+        """
+        raw = await self._complete(_CLAIM_SYSTEM, text, max_tokens=2048)
+        parsed, _path = parse_judge_payload(raw)
+        if isinstance(parsed, list):
+            return [str(c).strip() for c in parsed if str(c).strip()]
+        try:
+            candidate = json.loads(raw[raw.index("[") : raw.rindex("]") + 1])
+            if isinstance(candidate, list):
+                return [str(c).strip() for c in candidate if str(c).strip()]
+        except Exception:  # noqa: BLE001 - the deterministic fallback covers this
+            pass
+        return []
+
+
+# --- Native verdict format --------------------------------------------------------
+#
+# The active judge prompt returns prose, not JSON:
+#
+#     **Correctness = 0**
+#     **Material completeness = 1**
+#     1. **Incorrect — Overgeneralised:** ...
+#
+# We parse that rather than forcing a JSON schema onto it. Constraining a long
+# reasoning prompt to emit structured output measurably degrades the reasoning, and
+# this format costs one regex to read. The JSON ladder stays as the fallback so a
+# differently prompted judge still works.
+
+_DIMENSION_RE = re.compile(
+    r"\*{0,2}\s*(?P<name>correctness|material\s+completeness)\s*\*{0,2}\s*[=:]\s*\*{0,2}\s*(?P<value>[01])",
+    re.IGNORECASE,
+)
+#: Numbered or bulleted defect entries, e.g. "1. **Incorrect — Overgeneralised:** ..."
+_DEFECT_RE = re.compile(r"^\s*(?:\d+[.)]|[-*])\s+(?P<body>\*\*.+)$", re.MULTILINE)
+
+
+def parse_native_verdict(text: str) -> tuple[int, int, list[str]] | None:
+    """Read ``Correctness`` / ``Material completeness`` and the listed defects.
+
+    Returns ``None`` when the markers are absent, so the caller can fall through to
+    the JSON ladder. Both dimensions must be present: a response carrying only one is
+    truncated or off-format, and guessing the other would invent a verdict.
+    """
+    found: dict[str, int] = {}
+    for match in _DIMENSION_RE.finditer(text):
+        key = (
+            "material_completeness"
+            if "completeness" in match.group("name").lower()
+            else "correctness"
+        )
+        # First occurrence wins: the prompt states the verdict up front, and the
+        # instructions themselves may be echoed back below it.
+        found.setdefault(key, int(match.group("value")))
+    if "correctness" not in found or "material_completeness" not in found:
+        return None
+
+    defects = [
+        " ".join(m.group("body").replace("**", "").split())[:600] for m in _DEFECT_RE.finditer(text)
+    ]
+    return found["correctness"], found["material_completeness"], defects

@@ -9,8 +9,17 @@
 globalThis.SALV = globalThis.SALV || {};
 
 SALV.config = {
-  /** The verifier API. Must match `host_permissions` in manifest.json. */
-  apiBase: 'http://localhost:8000',
+  /**
+   * The verifier API. Must match `host_permissions` in manifest.json.
+   *
+   * 127.0.0.1, NOT localhost. On a dual-stack machine `localhost` resolves to ::1
+   * first, and a server bound to 127.0.0.1 (uvicorn's default) simply is not there --
+   * Chrome gets ECONNREFUSED before the request is made. Measured on macOS: curl
+   * succeeds because it falls back to IPv4, Chrome does not, so the failure appears
+   * only in the browser and looks exactly like "the backend is down". 127.0.0.1 names
+   * one address and cannot be resolved to the wrong one.
+   */
+  apiBase: 'http://127.0.0.1:8000',
 
   /**
    * POLL, DO NOT USE SSE. Three independent reasons, all of which bite on demo day:

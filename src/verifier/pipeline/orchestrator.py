@@ -543,7 +543,48 @@ class Orchestrator:
         keys = [cluster.preferred.citation_key for cluster in extraction.clusters]
         if not keys:
             return {}
-        return await resolver.resolve_many(keys)
+        resolutions = await resolver.resolve_many(keys)
+        await self._persist_resolutions(resolutions)
+        return resolutions
+
+    async def _persist_resolutions(self, resolutions: Mapping[str, Resolution]) -> None:
+        """Write resolved documents and resolutions through to durable storage.
+
+        Without this the only document cache is the adapter's in-process dict, which
+        dies with the worker and is not shared between them -- so every process pays
+        the full fetch for a case any other process already has. Fetching is the most
+        expensive step in the system (worst case an authenticated browser session),
+        and "the second query touching a given case pays nothing" is the whole
+        scalability argument. An in-process cache cannot support that claim across
+        more than one worker.
+
+        Persistence is best-effort: a storage failure must not change a verdict. We
+        would rather re-fetch a judgment than fail a citation over a database blip.
+        """
+        repos = self._repos()
+        if repos is None:
+            return
+
+        documents = self._documents_for(resolutions)
+        for key, resolution in resolutions.items():
+            try:
+                document = documents.get(key)
+                if document is not None:
+                    stored = await repos.documents.upsert(document)
+                    if stored.id and not resolution.document_id:
+                        resolution = resolution.model_copy(update={"document_id": stored.id})
+                await repos.resolutions.put(resolution)
+            except Exception as exc:  # noqa: BLE001 - a cache write is not a verdict
+                log.warning("resolution_persist_failed", citation_key=key, error=str(exc))
+
+    def _repos(self):  # noqa: ANN202 - the Repos bundle is a plain dataclass
+        try:
+            from verifier.repos.pg import get_repos
+
+            return get_repos()
+        except Exception as exc:  # noqa: BLE001 - storage is optional to a verdict
+            log.warning("repos_unavailable", error=str(exc))
+            return None
 
     def _build_judge(self, state: RunState, det_findings: Sequence[Finding]) -> LayerProtocol:
         from verifier.layers.l5_judge import (

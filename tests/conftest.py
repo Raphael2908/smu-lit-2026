@@ -10,8 +10,25 @@ import os
 
 import pytest
 
-os.environ.setdefault("PROVIDER_MODE", "mock")
-os.environ.setdefault("ENV", "test")
+# Pin the whole provider surface BEFORE anything imports settings.
+#
+# setdefault is not enough and os.environ is not enough on its own: pydantic-settings
+# also reads .env, and a developer with real keys configured there would otherwise run
+# the suite against live vendors -- slow, billable, and non-deterministic. A test suite
+# whose result depends on an untracked file is not a test suite. Explicit environment
+# variables take precedence over .env, so setting every mode here makes the run
+# hermetic regardless of local configuration.
+os.environ["ENV"] = "test"
+os.environ["PROVIDER_MODE"] = "mock"
+os.environ["EMBEDDINGS_MODE"] = "mock"
+os.environ["SUMMARISER_MODE"] = "mock"
+os.environ["JUDGE_MODE"] = "mock"
+os.environ["REPO_BACKEND"] = "memory"
+# Blank the keys too, so a real provider constructed by mistake fails loudly with
+# ProviderKeyMissing instead of quietly spending the user's money.
+os.environ["OPENROUTER_API_KEY"] = ""
+os.environ["ANTHROPIC_API_KEY"] = ""
+os.environ["VOYAGE_API_KEY"] = ""
 
 
 @pytest.fixture(autouse=True)

@@ -169,6 +169,11 @@ class FindingCode(StrEnum):
     JUDGE_FAILED_CONTEXTUAL_ACCURACY = "JUDGE_FAILED_CONTEXTUAL_ACCURACY"
     JUDGE_FAILED_CITATION_INTEGRITY = "JUDGE_FAILED_CITATION_INTEGRITY"
     JUDGE_FAILED_RESPONSIVENESS = "JUDGE_FAILED_RESPONSIVENESS"
+    #: The answer is substantively true but omits something a competent lawyer
+    #: needs -- a controlling authority, an essential element, a temporal rule.
+    #: Scored independently of correctness: an answer can be right and still
+    #: materially misleading by omission.
+    JUDGE_FAILED_COMPLETENESS = "JUDGE_FAILED_COMPLETENESS"
     JUDGE_UNPARSEABLE = "JUDGE_UNPARSEABLE"
     JUDGE_ERROR = "JUDGE_ERROR"
 
