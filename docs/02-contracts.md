@@ -28,6 +28,31 @@ merge cleanly despite being touched by everyone.
 
 ## Contract changes
 
+### 2026-09-05 — `ExtractionResult.untyped` and `.extractor_degraded` (L1a's extractor)
+
+**Added:** `ExtractionResult.untyped`, `ExtractionResult.extractor_degraded`,
+`providers/base.CitationCandidate`, `CitationExtraction`, `CitationExtractor`,
+`settings.EXTRACTOR_MODE` / `EXTRACTOR_MODEL` / `EXTRACTOR_TIMEOUT_S` /
+`EXTRACTOR_PROMPT_VERSION`.
+
+**Nothing was removed or renamed.** Both new fields default to empty, so every existing
+consumer compiles unchanged. `authority_count` now also counts `untyped`.
+
+Why they are on the contract rather than inside L0. **`extractor_degraded`** is the one
+that matters. L1a's FAIL asserts "this output cited nothing", which is only a claim about
+the output if something actually looked; once the citations come from a model, a timeout
+and an uncited answer produce the same zero. L1 is pure with respect to `LayerInput`, so
+the only way it can tell them apart is a field on the extraction, and without it an
+extractor outage would be reported to a lawyer as a fabrication.
+
+**`untyped`** holds authority the parser cannot type — an unenumerated report series, a
+practice direction, a textbook. It counts for L1a and is deliberately never clustered:
+resolving one means searching a Singapore judgment corpus for a phrase that is not in
+it, and zero hits is exactly what this system reads as fabrication (F6). A separate
+field rather than a new `CitationType` member, because three dicts index `citation_type`
+without a default (`CitationCluster.preferred`, `l1_existence._TYPE_ORDER`,
+`ElitigationAdapter.resolve_cluster`) and a fourth member reaches them as a `KeyError`.
+
 ### 2026-09-05 — `ExtractionResult.propositions` and `.statutes` (L1a)
 
 **Added:** `ExtractedProposition`, `StatuteReference`, `PropositionKind`,
