@@ -18,8 +18,10 @@ from verifier.contracts.api import AcceptedResponse, ListEntryIn, RunEvent
 from verifier.contracts.citations import (
     CitationCluster,
     ExtractedCitation,
+    ExtractedProposition,
     ExtractedQuote,
     Resolution,
+    StatuteReference,
 )
 from verifier.contracts.documents import Chunk, Paragraph, SourceDocument
 from verifier.contracts.findings import Evidence, Finding
@@ -34,8 +36,10 @@ MODELS = [
     RunEvent,
     ExtractedCitation,
     CitationCluster,
+    ExtractedProposition,
     ExtractedQuote,
     Resolution,
+    StatuteReference,
     Paragraph,
     SourceDocument,
     Chunk,

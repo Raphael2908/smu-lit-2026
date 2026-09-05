@@ -17,8 +17,8 @@
      with the deterministic one and can only lower it; nothing in the output can clear
      an earlier finding, and the aggregator raises ContractViolation if it tried.
 
-  Only the INPUTS section at the foot is machine-generated. Placeholders available:
-  {question} {ai_output} {citations} {retrieved_passages} {deterministic_findings}
+  Available placeholders: {question} {ai_output} {citations} {retrieved_passages}
+  {deterministic_findings} {uncited_propositions}
 -->
 
 You are a strict legal-research evaluator assessing answers to questions of Singapore law.
@@ -630,3 +630,36 @@ verified.
 ## Deterministic checks already performed
 
 {deterministic_findings}
+<<<<<<< HEAD
+=======
+
+ASSERTIONS WITH NO CITATION IN SCOPE (L1a)
+These sentences state law, and the deterministic pass found no authority attached to
+them. It stops there on purpose: it matches citations to sentences by position, and
+position is a weak proxy for support. Judge them under `citation_integrity` — is each
+one actually supported by an authority the answer cites elsewhere, or is it an
+unsupported assertion dressed as settled law? An answer that cites well and then
+smuggles in an uncited proposition is precisely the failure the earlier layers cannot
+see.
+{uncited_propositions}
+
+Score each dimension 0-4 and justify it against the passages above, quoting the text
+you relied on. Do not assert anything about the law that the supplied passages do not
+support — if the passages are insufficient to judge a point, say so rather than
+filling the gap from memory.
+
+- factual_faithfulness — does the answer state anything the sources do not support, or
+  misstate what they hold? Weighted highest.
+- contextual_accuracy — does it use each case for what it actually decides, rather
+  than for surface topical overlap?
+- citation_integrity — is each proposition genuinely attributable to the authority
+  cited for it?
+- responsiveness — does it answer the whole question, including any part a similarity
+  check would miss?
+
+Return JSON only:
+{"passed": bool, "rubric": {"factual_faithfulness": int, "contextual_accuracy": int,
+"citation_integrity": int, "responsiveness": int}, "reasons": [string]}
+
+Set "passed" false if factual_faithfulness <= 2, or any other dimension is 0 or 1.
+>>>>>>> 2998c89 (feat: add citation existence checks)

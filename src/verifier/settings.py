@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     # Governing rule: PREFER A FALSE GREEN TO A FALSE RED. Fail-fast makes a false
     # FAIL unrecoverable, and wrongly accusing correct legal work is what destroys
     # trust in an accuracy tool.
+    # L1a -- is the proposition supported by anything at all?
+    #
+    # The FAIL is a COUNT, not a judgement: zero authority of any kind anywhere in an
+    # output that asserts law. There is no attribution in it and therefore nothing to
+    # be wrong about, which is what lets it sit at the deterministic tier and skip the
+    # judge. Per-proposition findings, where attribution IS a judgement, only WARN --
+    # set L1A_UNCITED_SEVERITY=info to make them display-only.
+    L1A_ENABLED: bool = True
+    L1A_UNCITED_SEVERITY: Literal["warn", "info"] = "warn"
+    #: How many uncited assertions an output must make before a total absence of
+    #: authority is a FAIL. One is enough: a single confident statement of law resting
+    #: on nothing is the failure this layer exists to catch.
+    L1A_MIN_ASSERTIONS_FOR_FAIL: int = 1
+
     L1_QUOTE_FAIL_BELOW: float = 75.0  # rapidfuzz.partial_ratio, 0-100
     L1_QUOTE_PASS_AT: float = 90.0
     L1_MIN_QUOTE_CHARS: int = 40  # shorter strings match anything

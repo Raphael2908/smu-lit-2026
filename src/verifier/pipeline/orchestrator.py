@@ -591,6 +591,7 @@ class Orchestrator:
             FaithfulnessJudgeLayer,
             JudgeContext,
             passages_from_layer_results,
+            propositions_from_findings,
         )
         from verifier.settings import settings
 
@@ -605,6 +606,11 @@ class Orchestrator:
             ),
             retrieved_passages=passages_from_layer_results(grounding),
             deterministic_findings=tuple(det_findings),
+            # L1a stopped at "no citation is in scope for this sentence" and only
+            # warned. Whether the authority cited elsewhere in the answer actually
+            # supports it is a reasoning question, so it goes to the layer allowed to
+            # answer one -- which can convict on it, and never acquit.
+            uncited_propositions=propositions_from_findings(det_findings),
             prompt_version=settings.JUDGE_PROMPT_VERSION,
         )
         if self._judge_factory is not None:

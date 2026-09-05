@@ -66,6 +66,7 @@ PLACEHOLDERS = (
     "citations",
     "retrieved_passages",
     "deterministic_findings",
+    "uncited_propositions",
 )
 
 _PLACEHOLDER_RE = re.compile(r"\{(" + "|".join(PLACEHOLDERS) + r")\}")
@@ -131,6 +132,12 @@ class JudgeContext:
     citations: tuple[str, ...] = ()
     retrieved_passages: tuple[RetrievedPassage, ...] = ()
     deterministic_findings: tuple[Finding, ...] = ()
+    #: Assertions L1a found no authority for. Handed to the judge separately from the
+    #: findings list because attribution in prose is exactly the judgement L1a refuses
+    #: to make deterministically: whether a citation two sentences away really does
+    #: support this claim is a reasoning question, and the judge is where reasoning is
+    #: allowed to reach a verdict. It can only ever convict on them.
+    uncited_propositions: tuple[str, ...] = ()
     prompt_version: str = ""
 
     @classmethod
@@ -218,6 +225,7 @@ class FaithfulnessJudgeLayer(BaseLayer):
             "citations": _render_citations(self.context.citations),
             "retrieved_passages": _render_passages(self.context.retrieved_passages),
             "deterministic_findings": _render_findings(self.context.deterministic_findings),
+            "uncited_propositions": _render_uncited(self.context.uncited_propositions),
         }
         return render_prompt(load_prompt(self.prompt_path), values), values
 
@@ -521,3 +529,36 @@ def _opt_float(value: object) -> float | None:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+
+
+def _render_uncited(propositions: tuple[str, ...]) -> str:
+    """The assertions L1a could find no authority for, as a numbered list.
+
+    L1a deliberately stops at "no citation is in scope for this sentence". Whether the
+    authority cited elsewhere in the answer actually supports it is a reasoning
+    question, and this is the layer permitted to answer one.
+    """
+    if not propositions:
+        return ""
+    return "\n".join(f"{index}. {text}" for index, text in enumerate(propositions, start=1))
+
+
+def propositions_from_findings(findings: Sequence[Finding]) -> tuple[str, ...]:
+    """Pull L1a's uncited assertions back out of the findings it produced.
+
+    Reading them from the findings rather than threading the extraction result through
+    the judge phase keeps ``run_judge_phase`` able to work from a restored ``RunState``
+    alone -- the judge may run in a different process from the deterministic phase.
+    """
+    out: list[str] = []
+    for finding in findings:
+        if finding.code is FindingCode.PROPOSITION_UNCITED:
+            text = finding.evidence.best_match_text
+            if text:
+                out.append(text)
+        elif finding.code is FindingCode.OUTPUT_UNCITED:
+            for item in finding.evidence.extra.get("propositions", []) or []:
+                text = item.get("text") if isinstance(item, dict) else None
+                if text:
+                    out.append(str(text))
+    return tuple(dict.fromkeys(out))

@@ -135,3 +135,22 @@ def test_report_only_citation_yields_a_report_cluster() -> None:
 def test_url_is_extracted_and_not_mistaken_for_a_case_name() -> None:
     citations = extract_citations("See https://www.elitigation.sg/gd/s/2007_SGCA_37 for the text.")
     assert [c.citation_type for c in citations] == [CitationType.URL]
+
+
+def test_a_case_name_wrapping_across_a_newline_does_not_crash_extraction():
+    """Markdown wraps long case names, and ``_clean_party`` rejoins on single spaces.
+
+    The cleaned name is then not a substring of the text it came from, so the span
+    recomputation used to raise ValueError -- out of L0, where the orchestrator turns it
+    into an empty extraction. The run then reports no citations and no propositions on a
+    perfectly well-formed answer: everything downstream silently stops checking.
+    """
+    text = (
+        "The test was confirmed in NTUC Foodfare Co-operative Ltd v SIA\n"
+        "Engineering Co Ltd [2018] SGCA 41, which applied it to pure economic loss."
+    )
+    citations = extract_citations(text)
+    names = [c for c in citations if c.citation_type is CitationType.CASE_NAME]
+    assert names, "the wrapped case name should still be extracted"
+    # The span must cover the name as written, wrap and all, so the panel highlights it.
+    assert "SIA" in text[names[0].span.start : names[0].span.end]

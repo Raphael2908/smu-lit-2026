@@ -23,21 +23,30 @@ Two consequences:
 ```
 POST /v1/verify {question, ai_output, context, is_followup}
    │
-   ├─ L0 extract citations, quotes, explicit source URLs  (sync, <50 ms)
+   ├─ L0 extract citations, quotes, propositions, explicit source URLs  (sync, <50 ms)
+   │     ├─ L1a: output asserts law and cites NOTHING → FAIL now.
+   │     │       No fetch, no worker, no tokens. ~5 ms.
    │     └─ L2a: blacklisted domain named outright → FAIL now.
    │             No fetch, no worker, no tokens. ~5 ms.
    │
    └─ enqueue ─────────────────────────────────────────► 202 {run_id} in ~5 ms
 
         parallel from t=0                                  GATE            final
-        ┌ L1 resolve → existence + quote ─┬─► L2b source trust ─┐
-        │      (shared single-flight       │   (needs L1's        │
-        │       document fetch)            │    resolved domain)  ├─► any L1-L4 FAIL?
-        ├ L3 grounding (shares the fetch) ─┘                     │   ├ yes → FAIL, no judge
-        └ L4 responsiveness (no deps) ────────────────────────────┘   └ no  → L5 judge
+        ┌ L1b/c resolve → existence + quote ┬─► L2b source trust ┐
+        │      (shared single-flight        │   (needs L1b's     │
+        │       document fetch)             │   resolved domain) ├─► any L1-L4 FAIL?
+        ├ L3 grounding (shares the fetch) ──┘                    │   ├ yes → FAIL, no judge
+        └ L4 responsiveness (no deps) ───────────────────────────┘   └ no  → L5 judge
 ```
 
 ### Why this ordering
+
+**L1a comes first, before anything is fetched.** L1b and L1c only ever examine
+authority the output actually wrote down, so an answer that states the law from memory
+— confidently, fluently, citing nothing — passes them both without a mark against it.
+Fabricating no citations is not the same as citing correctly. L1a is pure text, so it
+reaches its verdict in the same ~5 ms budget as the L2a blacklist check: no fetch, no
+worker, no tokens.
 
 **L2 follows L1** because a bare citation like `[2007] SGCA 37` has no source until L1
 resolves it to a document on a domain. L2 asks "is this source trustworthy?", which
@@ -70,10 +79,11 @@ on isolated queues where they cannot starve the fast path.
 
 ## The verdict model
 
-- **FAIL** — any L1–L4 failure: citation not found · soft-404 · title or party
-  mismatch · quote not found · blacklisted source · claim not grounded · question not
-  answered. The judge is skipped.
-- **WARN** — passes, annotated: graylisted source · inexact-but-close quote ·
+- **FAIL** — any L1–L4 failure: **nothing cited at all** · citation not found ·
+  soft-404 · title or party mismatch · quote not found · blacklisted source · claim not
+  grounded · question not answered. The judge is skipped.
+- **WARN** — passes, annotated: an individual assertion with no citation in scope ·
+  nothing cited on a *follow-up* turn · graylisted source · inexact-but-close quote ·
   `UNVERIFIED` citation (report-only, source unavailable, session expired).
 - **PASS** — clear; the judge then runs and returns the final verdict.
 
@@ -114,7 +124,9 @@ cosine to decide truth — see `docs/03-findings.md` Part 2.
 
 | Layer | Question | Task type |
 |---|---|---|
-| L1 | Does this citation exist, and is the quote really in it? | Deterministic lookup |
+| L1a | Is the proposition supported by any authority at all? | Deterministic count |
+| L1b | Does this citation exist, and is it the right document? | Deterministic lookup |
+| L1c | Is the quote really in it? | Deterministic lookup |
 | L2 | Is the source trustworthy? | Deterministic lookup |
 | L3 | Does the output *use* this source? | Retrieval / ranking |
 | L4 | Does the output answer *this* question? | Retrieval / ranking |
@@ -125,6 +137,7 @@ cosine to decide truth — see `docs/03-findings.md` Part 2.
 | Path | Deterministic verdict | Final |
 |---|---|---|
 | Blacklisted URL named in the output | ~5 ms | ~5 ms |
+| Output asserts law and cites nothing | ~5 ms | ~5 ms (judge skipped) |
 | Fabricated citation | ~0.6 s = `max(L1, L4)` | ~0.6 s (judge skipped) |
 | Cold pass, open source | ~4 s | ~12–19 s |
 | Cold pass, login-walled source | ~7–9 s | ~15–24 s |

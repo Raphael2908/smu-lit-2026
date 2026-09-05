@@ -358,3 +358,158 @@ SENTENCE_BREAK = re.compile(
 #: run of non-breaking spaces in the 2007-era markup and an em space in the 2021-era
 #: markup, so the class has to cover both plus ordinary whitespace.
 JUDGMENT_PARA_NUMBER = re.compile(r"^\s*(?P<number>\d{1,4})[\s    .]+")
+
+# ---------------------------------------------------------------------------
+# Statutory references (L1a authority)
+# ---------------------------------------------------------------------------
+
+#: A named piece of legislation: "Building Control Act 1989", "Penal Code",
+#: "Companies Act (Cap 50)", "Personal Data Protection Act 2012".
+#:
+#: Title-Case words before the head noun, capped at 6 to stop a runaway match from
+#: swallowing the front of a sentence ("Under Singapore Law The Building Control Act").
+_LEGISLATION_HEAD = r"(?:Act|Code|Ordinance|Constitution|Rules|Regulations|Convention)"
+
+#: Words that introduce a statute rather than forming part of its title.
+_DETERMINER = r"(?:[Tt]he|[Tt]his|[Tt]hat|[Ss]uch|[Ss]aid|[Aa]n?)"
+
+#: "s 20", "s. 20(1)(a)", "section 20", "ss 20-22", "sections 20 and 21".
+SECTION_REFERENCE = re.compile(
+    r"\b(?P<kw>ss?|sections?|regs?|regulations?|arts?|articles?|paras?)\.?\s*"
+    r"(?P<number>\d{1,4}[A-Z]?(?:\(\d+\))*(?:\([a-z]\))*)",
+    # Case-insensitive: "Section 300" opens a sentence as often as "s 20" sits inside one.
+    re.IGNORECASE,
+)
+
+#: "(Cap 29)", "Cap. 50", "Cap 97, 2020 Rev Ed".
+CHAPTER_REFERENCE = re.compile(r"\bCap\.?\s*(?P<chapter>\d{1,4}[A-Z]?)\b")
+
+#: The named statute itself.
+#: The leading determiner is excluded from the title. Without this, "the Act" matches
+#: as a *named* statute -- "The" is Title-Case at the head of a sentence -- and a vague
+#: back-reference would be counted as authority it plainly is not.
+NAMED_LEGISLATION = re.compile(
+    r"\b(?:" + _DETERMINER + r"\s+)?"
+    # The lookahead stops the Title-Case run from absorbing its own determiner: at the
+    # head of a sentence "The" is capitalised, so without it "The Act" parses as a
+    # two-word statute title and a vague back-reference counts as authority.
+    r"(?P<act>(?:(?!" + _DETERMINER + r"\s)[A-Z][A-Za-z’'\-]+\s+){1,6}" + _LEGISLATION_HEAD + r")"
+    # 1800s included: the Penal Code 1871 and the Evidence Act 1893 are live statutes.
+    r"(?:\s+(?P<year>(?:1[89]|20)\d{2}))?\b"
+)
+
+#: "the Act", "the statute", "the legislation", "the Regulations".
+#:
+#: NOT authority on its own -- it points at something that must have been named
+#: earlier. Treated as a proposition needing support rather than as support, which is
+#: how "under the Act, a developer must ..." with no Act ever named gets caught.
+#: The determiner is case-insensitive because "The Act" opens sentences, but the head
+#: noun is NOT: a capitalised "Act" is a statute, whereas a lowercase "act" is the
+#: ordinary noun ("the act of signing"). Only heads that cannot be anything else --
+#: statute, legislation -- are admitted in lower case.
+VAGUE_LEGISLATION = re.compile(
+    r"\b[Tt]he\s+(?:Act|Code|Ordinance|Regulations)\b"
+    r"|\b[Tt]he\s+(?:statute|statutory\s+provisions?|legislation)\b"
+)
+
+# ---------------------------------------------------------------------------
+# L1a: which sentences assert law, and therefore need authority
+# ---------------------------------------------------------------------------
+#
+# NARROW BY DESIGN, for exactly the reason the case-name parser is: a proposition
+# classifier that fires on ordinary framing prose does not merely over-report, it
+# manufactures uncited-claim findings against correct legal writing. Every cue below
+# has to be something a lawyer would themselves expect a footnote after.
+
+#: Who does the holding. Required (unless the verb takes a "that" complement) so that
+#: "he held the door open" is not read as a judicial holding.
+JUDICIAL_ACTOR = re.compile(
+    r"\b(?:the\s+)?(?:court|courts|tribunal|judge|bench|majority|minority|panel|"
+    r"Court\s+of\s+Appeal|High\s+Court|Apex\s+Court|District\s+Court|CA|HC|"
+    r"[A-Z][a-z]+\s+(?:JA?|CJ|JC|J))\b"
+)
+
+#: What a court does to law. "set out" and "laid down" are included because they are
+#: how a test gets stated; "observed" and "noted" because an uncited observation
+#: attributed to a court is exactly the shape of a fabricated proposition.
+HOLDING_VERB = re.compile(
+    r"\b(?:held|ruled|decided|found|concluded|observed|noted|stated|affirmed|reversed|"
+    r"overruled|overturned|dismissed|allowed|rejected|accepted|clarified|confirmed|"
+    r"reaffirmed|established|laid\s+down|set\s+out|departed\s+from|distinguished)\b"
+)
+
+#: A holding verb taking a proposition: "held that ...", "found that ...".
+HOLDING_THAT = re.compile(HOLDING_VERB.pattern + r"\s+(?:that|it)\b")
+
+#: A statement of what the law requires. These are propositions about the legal rule
+#: itself, which is precisely the class that must rest on authority.
+LEGAL_TEST_CUE = re.compile(
+    r"\bthe\s+(?:test|requirements?|elements?|threshold|standard|principles?|rules?|"
+    r"position|law|approach|doctrine|starting\s+point)\s+"
+    r"(?:for|of|in|under|is|are|was|remains|requires)\b"
+    r"|\bmust\s+(?:establish|prove|show|demonstrate|satisfy|be\s+shown|be\s+established)\b"
+    r"|\bis\s+(?:liable|entitled|required|barred|time-barred|actionable|enforceable|"
+    r"void|voidable|unenforceable|negligent)\b"
+    r"|\bthere\s+is\s+(?:a|no)\s+(?:duty|right|obligation|cause\s+of\s+action|presumption)\b"
+    r"|\bowes?\s+a\s+(?:duty|fiduciary\s+duty)\b",
+    re.IGNORECASE,
+)
+
+#: An appeal to settled law. The classic shape of an assertion made from parametric
+#: memory: authoritative in tone, attached to nothing.
+ESTABLISHED_CUE = re.compile(
+    r"\bit\s+is\s+(?:well[-\s]?)?(?:established|settled|accepted|recognised|recognized|trite)\b"
+    r"|\b(?:the|a)\s+(?:leading|seminal|landmark|governing|locus\s+classicus)\s+"
+    r"(?:case|authority|decision|judgment)\b"
+    r"|\b(?:Singapore|our|the)\s+courts?\s+have\b"
+    r"|\bunder\s+(?:Singapore|English|Malaysian|Commonwealth)\s+law\b"
+    r"|\bthe\s+law\s+(?:is|remains|has\s+been)\s+(?:clear|settled|well[-\s]?established)\b",
+    re.IGNORECASE,
+)
+
+# --- exclusions. An excluded sentence is never a proposition, whatever cue it hit. ---
+
+#: Framing and meta-commentary. Not assertions about the law.
+META_CUE = re.compile(
+    r"^\s*(?:here(?:'s|\s+is|\s+are)|let\s+me|i(?:'ll|\s+will|\s+can)|in\s+(?:short|summary|brief)"
+    r"|to\s+summari[sz]e|briefly|below|the\s+following|this\s+(?:answer|response|note)"
+    r"|note:|caveat|disclaimer|in\s+practice,\s+you)",
+    re.IGNORECASE,
+)
+
+#: Advice-to-the-user and disclaimers. Nothing to cite.
+DISCLAIMER_CUE = re.compile(
+    r"\b(?:not\s+legal\s+advice|consult\s+(?:a|an|your)\s+(?:lawyer|solicitor|counsel|advocate)"
+    r"|seek\s+(?:professional|legal|independent)\s+advice|i\s+am\s+not\s+a\s+lawyer"
+    r"|i'm\s+not\s+a\s+lawyer)\b",
+    re.IGNORECASE,
+)
+
+#: Application to the user's own facts. A prediction about their situation is not a
+#: statement of law, and demanding a citation for one is how a verifier gets ignored.
+APPLICATION_CUE = re.compile(
+    r"\b(?:on\s+your\s+facts|in\s+your\s+case|for\s+your\s+situation|in\s+your\s+situation"
+    r"|based\s+on\s+what\s+you(?:'ve|\s+have)\s+(?:described|said|told)"
+    r"|your\s+(?:contract|situation|circumstances|facts|case))\b",
+    re.IGNORECASE,
+)
+
+#: Clearly hypothetical framing. "The court would have held ..." is a prediction.
+#:
+#: 'may' and 'could' are deliberately ABSENT: in legal prose they are usually deontic
+#: ("the court may award damages") and excluding them would drop real assertions of law.
+SPECULATIVE_CUE = re.compile(
+    r"\b(?:would|might|arguably|probably|likely|presumably|it\s+depends|unclear|uncertain"
+    r"|hypothetically|in\s+theory)\b",
+    re.IGNORECASE,
+)
+
+#: A conditional opener introduces a hypothesis, not an assertion.
+CONDITIONAL_OPENER = re.compile(r"^\s*(?:if|were|suppose|assuming|had\s+the)\b", re.IGNORECASE)
+
+#: A markdown heading line. Structure, not assertion.
+MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}\s")
+
+#: Leading markdown list / numbering markers, stripped before classification so a
+#: bulleted assertion is treated exactly like a sentence in a paragraph.
+LIST_MARKER = re.compile(r"^\s{0,8}(?:[-*+]\s+|\d{1,2}[.)]\s+)")

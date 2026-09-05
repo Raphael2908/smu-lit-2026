@@ -27,7 +27,8 @@ globalThis.SALV = globalThis.SALV || {};
 (function panelModule() {
   const LAYER_LABELS = {
     L0: 'Extraction',
-    L1: 'Citation existence',
+    // L1a cited at all -> L1b citation exists -> L1c quote is really in it.
+    L1: 'Citation integrity',
     L2: 'Source trust',
     L3: 'Source grounding',
     L4: 'Responsiveness',

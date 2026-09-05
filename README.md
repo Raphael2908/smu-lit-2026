@@ -5,6 +5,10 @@ claude.ai by a Chrome extension, five layers score it for citation integrity, so
 source grounding, responsiveness and factual faithfulness — returning a green check, or a red
 check with the reason.
 
+The first thing it asks is the one that is easy to forget: **does the answer cite anything at
+all?** An output can be entirely free of fabricated citations by citing nothing whatsoever, and
+every later check only ever examines authority the answer actually offered.
+
 Built for SMU LIT 2026, Problem Statement 2 (Singapore Academy of Law).
 
 ## Why it is defensible
@@ -19,7 +23,9 @@ auditor?", and it is enforced in `pipeline/aggregate.py` and proven by
 
 | Layer | Question | Type |
 |---|---|---|
-| L1 | Does this citation exist, and is the quote really in it? | Deterministic lookup |
+| L1a | Is the proposition supported by any authority at all? | Deterministic count |
+| L1b | Does this citation exist, and is it the right document? | Deterministic lookup |
+| L1c | Is the quote really in it? | Deterministic lookup |
 | L2 | Is the source trustworthy? (black / gray / white lists) | Deterministic lookup |
 | L3 | Does the output actually *use* the cited source? | Retrieval / ranking |
 | L4 | Does the output answer the question? | Retrieval / ranking |
