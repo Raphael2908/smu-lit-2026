@@ -25,6 +25,7 @@ from typing import Any
 
 import httpx
 
+from verifier.contracts.documents import SourceDocument
 from verifier.errors import FatalError, ProviderKeyMissing, RetryableError
 from verifier.providers.base import JudgeResult, JudgeRubric
 
@@ -427,3 +428,115 @@ def _cost_of(data: dict[str, Any]) -> float:
         return float(usage.get("cost", 0.0) or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+# --- Summariser -------------------------------------------------------------------
+
+#: Kept short on purpose. This summary is prefixed onto EVERY chunk of the judgment
+#: before embedding, so each token here is paid once per chunk -- and voyage-law-2's
+#: 16K context is already tight against a ~21K-token judgment.
+_SUMMARY_SYSTEM = """You summarise Singapore judgments for a retrieval index.
+
+Return at most 220 words of plain prose covering: the court and year, the parties, the
+issue, the holding, and the ratio. No preamble, no markdown, no bullet points.
+
+State only what the judgment says. If something is not in the text, leave it out --
+this summary is attached to every chunk of the document and an invention here
+propagates into every retrieval decision made about it."""
+
+_CLAIM_SYSTEM = """You split legal writing into atomic factual claims.
+
+Return a JSON array of strings and nothing else. Each element is one self-contained
+assertion, quoted verbatim from the input where possible. Do not merge two assertions,
+do not invent any, and do not add commentary."""
+
+
+class OpenRouterSummariser:
+    """``Summariser`` over OpenRouter. Defaults to Haiku: this runs once per document
+    and once per output, so it is on the latency path but not the accuracy path."""
+
+    provider = "openrouter"
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str = OPENROUTER_URL,
+        timeout: float = 60.0,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        from verifier.settings import settings
+
+        key = api_key if api_key is not None else settings.OPENROUTER_API_KEY
+        if not key or not key.strip():
+            raise ProviderKeyMissing("OpenRouter", "OPENROUTER_API_KEY")
+        self._api_key = key
+        self.model = model or settings.SUMMARISER_MODEL
+        self._base_url = base_url
+        self._timeout = timeout
+        self._client = client
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "X-Title": "sal-verifier",
+        }
+
+    async def _complete(self, system: str, user: str, max_tokens: int) -> str:
+        body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": max_tokens,
+        }
+        owns_client = self._client is None
+        client = self._client or httpx.AsyncClient(timeout=self._timeout)
+        try:
+            response = await client.post(self._base_url, headers=self._headers(), json=body)
+            if response.status_code == 429 or response.status_code >= 500:
+                raise RetryableError(f"OpenRouter {response.status_code}: {response.text[:200]}")
+            if response.status_code >= 400:
+                raise FatalError(f"OpenRouter {response.status_code}: {response.text[:200]}")
+            return _first_message_text(response.json())
+        finally:
+            if owns_client:
+                await client.aclose()
+
+    async def summarise_document(self, doc: SourceDocument) -> str:
+        from verifier.settings import settings
+
+        # Send the head of the judgment: the court, parties, issue and holding are
+        # established early, and sending 110k characters to summarise would cost more
+        # than the rest of the run put together.
+        head = doc.text[:24_000]
+        label = doc.neutral_citation or doc.case_name or doc.source_url
+        return (
+            await self._complete(
+                _SUMMARY_SYSTEM,
+                f"Judgment: {label}\n\n{head}",
+                max_tokens=max(256, settings.SUMMARY_MAX_TOKENS + 64),
+            )
+        ).strip()
+
+    async def split_claims(self, text: str) -> list[str]:
+        """Atomic claims, with a caller-side fallback if the model does not comply.
+
+        Returning [] rather than raising is deliberate: ``semantic/chunking.py`` falls
+        back to deterministic sentence windows, and a summariser hiccup must not fail a
+        verification.
+        """
+        raw = await self._complete(_CLAIM_SYSTEM, text, max_tokens=2048)
+        parsed, _path = parse_judge_payload(raw)
+        if isinstance(parsed, list):
+            return [str(c).strip() for c in parsed if str(c).strip()]
+        try:
+            candidate = json.loads(raw[raw.index("[") : raw.rindex("]") + 1])
+            if isinstance(candidate, list):
+                return [str(c).strip() for c in candidate if str(c).strip()]
+        except Exception:  # noqa: BLE001 - the deterministic fallback covers this
+            pass
+        return []

@@ -242,7 +242,11 @@ async def test_the_absolute_floor_fails_a_claim_even_with_no_background():
     finding = result.findings[0]
     assert finding.code is FindingCode.CLAIM_NOT_GROUNDED_IN_SOURCE
     assert finding.evidence.margin is None, "no background means no margin was computed"
-    assert finding.evidence.threshold == pytest.approx(0.35)
+    # The floor is model-keyed (0.35 for voyage-law-2, 0.12 for the mock embedder),
+    # so assert it matches the ACTIVE configuration rather than a literal.
+    from verifier.settings import settings
+
+    assert finding.evidence.threshold == pytest.approx(settings.L3_ABSOLUTE_FLOOR)
 
 
 async def test_a_middling_margin_warns_rather_than_fails():
