@@ -294,9 +294,9 @@ orphaned-content-script hang in bug 3).
   the sidebar's repeated group and calls half of it an assistant turn, so the panel
   renders "could not find the question this response answers" where it should say
   idle. Cosmetic, but it is the first thing a demo audience sees.
-- **Long evidence passages are not scrollable.** A retrieved passage renders at full
-  height inside the finding, pushing the rest of the report below the fold. A
-  `max-height` with `overflow-y: auto` would keep the layer table in view.
+- ~~**Long evidence passages are not scrollable.**~~ Fixed in the serif/light restyle:
+  `.salv-evidence` is capped at `calc(var(--salv-scale) * 190px)` with `overflow-y:
+  auto`, so a long retrieved passage no longer pushes the layer table below the fold.
 
 ## Calibration debt
 

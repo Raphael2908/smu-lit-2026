@@ -19,12 +19,23 @@
 const API_BASE = 'http://127.0.0.1:8000';
 const MENU_ID = 'salv-verify-response';
 
+/*
+ * The badge cannot read a CSS custom property, so these five are the one place the
+ * panel's palette is duplicated by hand. Kept in step with the warm light theme in
+ * panel.css; they are mid-tone rather than the panel's inks because they sit on
+ * Chrome's own toolbar, which may be light or dark and is neither of our surfaces.
+ *
+ * Every one clears 3:1 against the white glyph Chrome paints on it. The amber was
+ * #e0a93c, which is 2.1:1 -- whether that badge was readable depended on whether the
+ * browser decided to flip the text to black, so the one state that means "working on
+ * it" was a coin flip. Darkening it removes the dependency rather than betting on it.
+ */
 const BADGE = {
-  idle: { text: '', color: '#8a91a2' },
-  verifying: { text: '···', color: '#e0a93c' },
-  pass: { text: '✓', color: '#1f7a4d' },
-  warn: { text: '!', color: '#e0a93c' },
-  fail: { text: '✕', color: '#c03636' },
+  idle: { text: '', color: '#8a8175' },
+  verifying: { text: '···', color: '#a9761a' },
+  pass: { text: '✓', color: '#2a7a52' },
+  warn: { text: '!', color: '#a9761a' },
+  fail: { text: '✕', color: '#b23a2a' },
 };
 
 function applyBadge(tabId, state) {
