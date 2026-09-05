@@ -146,6 +146,58 @@ fixed table below.
 
 Files: `src/verifier/repos/lists.py` (missing), `src/verifier/repos/pg.py`.
 
+---
+
+## QoL improvements
+
+### The panel is unreadable in dark mode
+
+**Severity: medium — the verdict is correct and nobody can read it.**
+
+Found while driving the extension on live claude.ai. `panel.css` defines the whole
+palette as a light theme — 32 hardcoded `color:` rules — and its
+`@media (prefers-color-scheme: dark)` block overrides only **nine** selectors, almost
+all of them backgrounds. Every text colour therefore keeps its light-mode value on a
+dark panel. Measured in the browser against the panel's own `#191b21`:
+
+| Element | Size | Contrast | WCAG AA (4.5:1) |
+|---|---|---|---|
+| `.salv-finding-msg` — *the finding itself* | 12px | **1.05** | ✗ |
+| `.salv-section-title` ("LAYERS") | 11px | 2.19 | ✗ |
+| `.salv-code` (`CLAIM_NOT_GROUNDED_IN_SOURCE`) | 10px | 2.69 | ✗ |
+| `.salv-summary` (timing, cache) | 11px | 3.57 | ✗ |
+| `.salv-section-note` | 11px | 4.17 | ✗ |
+| `.salv-layer-meta` / `.salv-duration` / `.salv-score` | 10px | 4.48 | ✗ |
+| `.salv-layer-name` | 12px | 14.31 | ✓ |
+| `.salv-shortcircuit` | 12px | 8.67 | ✓ |
+
+Eight of ten sampled styles fail AA, and the worst is the one that matters most:
+`.salv-finding-msg { color: #23262e }` on `#191b21` is **1.05:1** — the sentence
+explaining *why* an answer was failed is effectively invisible. In the live run the
+panel correctly reported "Nothing in [2007] SGCA 37 closely matches this claim (best
+passage similarity 0.326, floor 0.35)" and a reader simply could not see it.
+
+That is worse than an ugly panel. This tool exists to tell a lawyer why an answer was
+rejected; a verdict nobody can read is a verdict that will be ignored, and an accuracy
+tool that gets ignored has failed at the only thing it does.
+
+**The fix:** replace the hardcoded hexes with CSS custom properties on `#salv-panel`,
+and redefine only those variables inside the dark block — so a colour can never again
+be defined in one theme and forgotten in the other. Re-check every token against 4.5:1,
+and raise the 10px metadata sizes while there. Not a repaint; a token pass.
+
+Files: `extension/src/panel.css`.
+
+### Smaller things spotted in the same pass
+
+- **The panel shows an error on an empty chat.** On `/new` the structural tier finds
+  the sidebar's repeated group and calls half of it an assistant turn, so the panel
+  renders "could not find the question this response answers" where it should say
+  idle. Cosmetic, but it is the first thing a demo audience sees.
+- **Long evidence passages are not scrollable.** A retrieved passage renders at full
+  height inside the finding, pushing the rest of the report below the fold. A
+  `max-height` with `overflow-y: auto` would keep the layer table in view.
+
 ## Calibration debt
 
 - **Widen the threshold samples.** L4 is calibrated on `n=11`, L3 on `n=5`. Enough to
