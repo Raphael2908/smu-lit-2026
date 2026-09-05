@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from verifier.providers.base import Embedder, Fetcher, Judge, Summariser
+from verifier.providers.base import CitationExtractor, Embedder, Fetcher, Judge, Summariser
 from verifier.settings import settings
 
 
@@ -78,6 +78,26 @@ def get_judge() -> Judge:
     return OpenRouterJudge()
 
 
+@lru_cache
+def get_citation_extractor() -> CitationExtractor:
+    """L1a's citation finder.
+
+    The mock is not a stub: it runs the real regex extractor, so mock mode still finds
+    citations with no key and no network. See MockCitationExtractor.
+    """
+    if not settings.capability_is_real("extractor"):
+        from verifier.providers.mock.llm import MockCitationExtractor
+
+        return MockCitationExtractor()
+    if settings.EXTRACTOR_PROVIDER == "anthropic":
+        from verifier.providers.anthropic_llm import AnthropicCitationExtractor
+
+        return AnthropicCitationExtractor()
+    from verifier.providers.openrouter_llm import OpenRouterCitationExtractor
+
+    return OpenRouterCitationExtractor()
+
+
 def reset_provider_cache() -> None:
     """Tests flip PROVIDER_MODE between cases; the lru_caches must follow."""
     for fn in (
@@ -86,5 +106,6 @@ def reset_provider_cache() -> None:
         get_embedder,
         get_summariser,
         get_judge,
+        get_citation_extractor,
     ):
         fn.cache_clear()

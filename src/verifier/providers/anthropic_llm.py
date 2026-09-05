@@ -14,7 +14,12 @@ Either way the parse ladder from ``openrouter_llm`` is the safety net: structure
 output is an optimisation, the ladder is the contract.
 
 Note what is NOT sent: ``temperature``. It was removed on Sonnet 5 / Opus 5 and passing
-it returns a 400.
+it returns a 400. The ONE exception is the citation extractor, which runs on Haiku 4.5 --
+a pre-4.6 model that still accepts sampling parameters -- and pins it to 0. ``_create``
+therefore takes it as an opt-in argument rather than never sending it at all.
+
+Haiku 4.5 also takes neither adaptive ``thinking`` nor ``output_config.effort``; the
+extractor sends neither.
 """
 
 from __future__ import annotations
@@ -25,14 +30,16 @@ from typing import Any
 
 from verifier.contracts.documents import SourceDocument
 from verifier.errors import FatalError, ProviderKeyMissing, RetryableError
-from verifier.providers.base import JudgeResult
+from verifier.providers.base import CitationCandidate, CitationExtraction, JudgeResult
 from verifier.providers.openrouter_llm import (
+    PARSE_PATH_UNPARSEABLE,
     coerce_judge_result,
     judge_json_schema,
+    parse_json_payload,
     unparseable_result,
 )
 
-__all__ = ["AnthropicJudge", "AnthropicSummariser"]
+__all__ = ["AnthropicCitationExtractor", "AnthropicJudge", "AnthropicSummariser"]
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'(\[])")
 
@@ -89,6 +96,7 @@ async def _create(
     user: str,
     max_tokens: int,
     schema: dict[str, Any] | None = None,
+    temperature: float | None = None,
 ) -> Any:
     """One request, with a graceful degrade if ``output_config`` is unsupported.
 
@@ -102,6 +110,13 @@ async def _create(
         "system": system,
         "messages": [{"role": "user", "content": user}],
     }
+    # OPT-IN, and only the extractor opts in. See the module docstring: temperature was
+    # removed on Sonnet 5 / Opus 5, so the judge and the summariser must never send it.
+    # Haiku 4.5 predates that change and still accepts it, and pinning it to 0 is the
+    # cheapest thing available against the drift that made L3 non-reproducible
+    # (docs/03-findings.md F17): the same answer must extract the same citations twice.
+    if temperature is not None:
+        kwargs["temperature"] = temperature
     if schema is not None:
         try:
             return await client.messages.create(
@@ -309,4 +324,143 @@ class AnthropicJudge:
             provider=self.provider,
             latency_ms=elapsed,
             retries=1,
+        )
+
+
+#: Citation objects only. NOT a bare array: ``_try_strict`` returns None for a top-level
+#: list, so an array response would fall through the ladder to the balanced-brace
+#: scanner for no reason.
+def citation_json_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["citations"],
+        "properties": {
+            "citations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["text"],
+                    "properties": {
+                        "text": {"type": "string"},
+                        "url": {"type": ["string", "null"]},
+                    },
+                },
+            }
+        },
+    }
+
+
+def candidates_from(raw: str) -> tuple[CitationCandidate, ...] | None:
+    """Parse a response into candidates, or None when nothing usable came back.
+
+    Tolerant on shape, strict on content. A model that returns the array bare, or wraps
+    the object in a fence, is doing something harmless and the ladder handles it. An
+    entry with no text is dropped rather than becoming an empty citation that matches
+    the start of every answer.
+    """
+    obj, _ = parse_json_payload(raw)
+    if obj is None:
+        return None
+    items = obj.get("citations") if isinstance(obj, dict) else obj
+    if not isinstance(items, list):
+        return None
+    out: list[CitationCandidate] = []
+    for item in items:
+        text: Any
+        url: Any
+        if isinstance(item, str):
+            text, url = item, None
+        elif isinstance(item, dict):
+            text, url = item.get("text"), item.get("url")
+        else:
+            continue
+        if not isinstance(text, str) or not text.strip():
+            continue
+        out.append(
+            CitationCandidate(raw_text=text, url=url if isinstance(url, str) and url else None)
+        )
+    return tuple(out)
+
+
+class AnthropicCitationExtractor:
+    """L1a's citation finder, on Haiku.
+
+    Haiku because this is recognition over a page of prose, not reasoning: the model
+    says which spans of the answer are citations, and ``extraction/citations.py`` decides
+    what each one actually is. Nothing here interprets law, so the cheapest capable
+    model is the right one.
+
+    It never raises. Every failure path returns a ``CitationExtraction`` carrying
+    ``degraded``, because the alternative -- an exception from L0 -- reaches L1a as an
+    empty extraction, which is indistinguishable from an answer that cited nothing and
+    would fail a run for being unverifiable.
+    """
+
+    provider = "anthropic"
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        client: Any | None = None,
+        max_tokens: int = 4096,
+    ) -> None:
+        from verifier.settings import settings
+
+        self._api_key = _require_key(api_key) if client is None else (api_key or "")
+        # EXTRACTOR_MODEL is already the bare first-party id, unlike SUMMARISER_MODEL and
+        # JUDGE_MODEL which are OpenRouter-namespaced. Split anyway so a namespaced value
+        # in someone's .env does not fail at request time.
+        self.model = model or settings.EXTRACTOR_MODEL.split("/")[-1] or "claude-haiku-4-5"
+        self._client = client
+        self._max_tokens = max_tokens
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            self._client = _client(self._api_key)
+        return self._client
+
+    async def extract_citations(self, ai_output: str) -> CitationExtraction:
+        started = time.perf_counter()
+        try:
+            from verifier.extraction.prompt import load_citation_prompt
+
+            message = await _create(
+                self._get_client(),
+                model=self.model,
+                system=load_citation_prompt(),
+                user=ai_output,
+                max_tokens=self._max_tokens,
+                schema=citation_json_schema(),
+                temperature=0.0,
+            )
+        except Exception as exc:  # noqa: BLE001 - a provider outage is not a verdict
+            return CitationExtraction(
+                model=self.model,
+                provider=self.provider,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                degraded=f"anthropic extraction failed: {exc}",
+            )
+
+        elapsed = int((time.perf_counter() - started) * 1000)
+        raw = _text_of(message)
+        candidates = candidates_from(raw)
+        if candidates is None:
+            # Unparseable is NOT an empty list. Reporting it as one would let a garbled
+            # response fail an answer for citing nothing.
+            return CitationExtraction(
+                model=self.model,
+                provider=self.provider,
+                latency_ms=elapsed,
+                parse_path=PARSE_PATH_UNPARSEABLE,
+                degraded="anthropic extraction returned unparseable output",
+            )
+        return CitationExtraction(
+            citations=candidates,
+            model=self.model,
+            provider=self.provider,
+            latency_ms=elapsed,
         )

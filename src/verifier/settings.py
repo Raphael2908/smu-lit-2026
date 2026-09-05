@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     SUMMARISER_PROVIDER: Literal["openrouter", "anthropic"] = "openrouter"
     JUDGE_PROVIDER: Literal["openrouter", "anthropic"] = "openrouter"
     JUDGE_MODEL: str = "anthropic/claude-sonnet-5"
+    #: Bare first-party id, NOT the OpenRouter-namespaced form. The extractor talks to
+    #: the Anthropic API directly, and "anthropic/claude-haiku-4.5" split on "/" gives
+    #: "claude-haiku-4.5", which that API rejects -- the id is "claude-haiku-4-5".
+    EXTRACTOR_MODEL: str = "claude-haiku-4-5"
+    #: Which door to Haiku. Defaults to openrouter like the judge and the summariser,
+    #: because a deployment holding only an OpenRouter key would otherwise have L0
+    #: permanently degraded -- every run reporting that nothing could be checked.
+    EXTRACTOR_PROVIDER: Literal["openrouter", "anthropic"] = "openrouter"
 
     # --- Per-capability provider modes -------------------------------------------
     # "auto" follows PROVIDER_MODE. Set individually to run, say, a real judge and
@@ -60,6 +68,9 @@ class Settings(BaseSettings):
     EMBEDDINGS_MODE: Literal["auto", "mock", "real"] = "auto"
     SUMMARISER_MODE: Literal["auto", "mock", "real"] = "auto"
     JUDGE_MODE: Literal["auto", "mock", "real"] = "auto"
+    #: L1a's citation finder. "auto" follows PROVIDER_MODE, which is what keeps the
+    #: offline suite and every mock demo on the deterministic path at ~5 ms.
+    EXTRACTOR_MODE: Literal["auto", "mock", "real"] = "auto"
     JUDGE_PROMPT_VERSION: str = "v1"
     SUMMARY_PROMPT_VERSION: str = "v1"
 
@@ -184,6 +195,12 @@ class Settings(BaseSettings):
     BROWSER_TIMEOUT_S: float = 45.0
     BROWSER_HEADLESS: bool = True
 
+    # --- L1a extractor. Operational, NOT thresholds: no verdict may be tuned here. ---
+    #: L0 sits on the fast path, and the Anthropic SDK's own default is ten minutes.
+    #: A slow extractor must degrade to "we did not find out", not hold the run open.
+    EXTRACTOR_TIMEOUT_S: float = 15.0
+    EXTRACTOR_PROMPT_VERSION: str = "v1"
+
     # --- Reliability ---
     TASK_MAX_RETRIES: int = 2
     RESOLUTION_TTL_HOURS: int = 168
@@ -265,7 +282,9 @@ class Settings(BaseSettings):
             return not self.is_mock
         return self.REPO_BACKEND == "postgres"
 
-    def capability_is_real(self, capability: Literal["embeddings", "summariser", "judge"]) -> bool:
+    def capability_is_real(
+        self, capability: Literal["embeddings", "summariser", "judge", "extractor"]
+    ) -> bool:
         """Whether one capability should use its real provider.
 
         PROVIDER_MODE is the default for all three, but a single global switch forces
@@ -277,6 +296,7 @@ class Settings(BaseSettings):
             "embeddings": self.EMBEDDINGS_MODE,
             "summariser": self.SUMMARISER_MODE,
             "judge": self.JUDGE_MODE,
+            "extractor": self.EXTRACTOR_MODE,
         }[capability]
         if mode == "auto":
             return not self.is_mock

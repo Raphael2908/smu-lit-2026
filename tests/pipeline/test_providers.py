@@ -224,3 +224,134 @@ async def test_the_mock_judge_can_simulate_a_repair_round_trip():
 def test_sentence_split_keeps_terminators():
     assert sentence_split("A. B! C?") == ["A.", "B!", "C?"]
     assert sentence_split("") == []
+
+
+# --- the citation extractor ---------------------------------------------------------
+
+
+def _extractor(*replies: str, **kwargs):
+    from verifier.providers.anthropic_llm import AnthropicCitationExtractor
+
+    client = FakeAnthropicClient(*replies, **kwargs)
+    return AnthropicCitationExtractor(client=client), client
+
+
+async def test_the_extractor_pins_temperature_while_the_judge_still_sends_none():
+    """The one deliberate exception in this module.
+
+    Haiku 4.5 predates the 4.6 removal of sampling parameters, and pinning temperature
+    to 0 is the cheapest defence against the drift that made L3 non-reproducible (F17):
+    the same answer must yield the same citations twice. Sending it to the judge or the
+    summariser -- both on 5-series models -- would return a 400.
+    """
+    extractor, client = _extractor('{"citations": [{"text": "[2007] SGCA 37"}]}')
+    await extractor.extract_citations("The court held so in [2007] SGCA 37.")
+
+    assert client.calls[0]["temperature"] == 0.0
+
+    judge_client = FakeAnthropicClient()
+    await AnthropicJudge(client=judge_client).judge(system_prompt="p", payload={})
+    assert "temperature" not in judge_client.calls[0]
+
+
+async def test_the_extractor_sends_neither_thinking_nor_effort():
+    """Haiku 4.5 takes neither: it is a budget_tokens-era model, and effort errors."""
+    extractor, client = _extractor('{"citations": []}')
+    await extractor.extract_citations("An answer.")
+
+    call = client.calls[0]
+    assert "thinking" not in call
+    assert "effort" not in call.get("output_config", {})
+
+
+async def test_the_extractor_falls_back_to_a_plain_request_without_output_config():
+    extractor, client = _extractor(
+        '{"citations": [{"text": "[2007] SGCA 37"}]}', fail_output_config=True
+    )
+    result = await extractor.extract_citations("The court held so in [2007] SGCA 37.")
+
+    assert "output_config" not in client.calls[0]
+    assert [c.raw_text for c in result.citations] == ["[2007] SGCA 37"]
+    assert result.degraded is None
+
+
+async def test_a_fenced_response_still_parses_through_the_shared_ladder():
+    extractor, _ = _extractor('Here you go:\n```json\n{"citations": [{"text": "x"}]}\n```')
+    result = await extractor.extract_citations("An answer.")
+    assert [c.raw_text for c in result.citations] == ["x"]
+
+
+async def test_an_unparseable_response_degrades_rather_than_reporting_no_citations():
+    """Unparseable is not an empty list. Reporting it as one would let a garbled
+    response fail an answer for citing nothing."""
+    extractor, _ = _extractor("I could not do that, sorry.")
+    result = await extractor.extract_citations("An answer.")
+
+    assert result.degraded is not None
+    assert result.citations == ()
+
+
+async def test_a_provider_error_degrades_rather_than_raising():
+    """An exception out of L0 reaches L1a as an empty extraction, which is
+    indistinguishable from an answer that cited nothing."""
+
+    class Boom:
+        messages = None
+
+        async def create(self, **kwargs):
+            raise RuntimeError("503")
+
+    boom = Boom()
+    boom.messages = boom
+    from verifier.providers.anthropic_llm import AnthropicCitationExtractor
+
+    result = await AnthropicCitationExtractor(client=boom).extract_citations("An answer.")
+    assert result.degraded is not None
+    assert result.citations == ()
+
+
+async def test_the_openrouter_extractor_namespaces_the_bare_model_id():
+    """EXTRACTOR_MODEL is the bare first-party id, which OpenRouter does not know.
+
+    Getting this wrong fails at request time rather than at construction, which is the
+    worst place to find it -- the same latent bug SUMMARISER_MODEL has in reverse.
+    """
+    from verifier.providers.openrouter_llm import OpenRouterCitationExtractor
+
+    extractor = OpenRouterCitationExtractor(api_key="k")
+    assert extractor.model == "anthropic/claude-haiku-4-5"
+    assert OpenRouterCitationExtractor(api_key="k", model="x/y").model == "x/y"
+
+
+async def test_the_openrouter_extractor_pins_temperature_and_degrades_on_error():
+    import httpx
+
+    from verifier.providers.openrouter_llm import OpenRouterCitationExtractor
+
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"citations": [{"text": "[2007] SGCA 37"}]}'}}]
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    extractor = OpenRouterCitationExtractor(api_key="k", client=client)
+    result = await extractor.extract_citations("The court held so in [2007] SGCA 37.")
+
+    assert seen["temperature"] == 0
+    assert [c.raw_text for c in result.citations] == ["[2007] SGCA 37"]
+
+    def boom(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="upstream down")
+
+    down = OpenRouterCitationExtractor(
+        api_key="k", client=httpx.AsyncClient(transport=httpx.MockTransport(boom))
+    )
+    degraded = await down.extract_citations("An answer.")
+    assert degraded.degraded is not None
+    assert degraded.citations == ()

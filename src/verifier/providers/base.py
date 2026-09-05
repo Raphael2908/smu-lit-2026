@@ -78,6 +78,42 @@ class JudgeResult:
     provider: str = ""
 
 
+@dataclass(frozen=True)
+class CitationCandidate:
+    """One citation the extractor believes the output offered.
+
+    ``raw_text`` must be COPIED FROM THE OUTPUT, character for character. Everything
+    downstream depends on it: the text is located in the answer by substring search, and
+    the span that search returns is the citation's span. A model that normalises a curly
+    quote, expands an abbreviation or silently fixes a typo produces a string that cannot
+    be found, and the candidate is dropped rather than trusted.
+
+    ``url`` is the link the OUTPUT gave, or None. It is not somewhere for the model to
+    supply a URL it believes to be correct: an invented link would be fetched.
+    """
+
+    raw_text: str
+    url: str | None = None
+
+
+@dataclass(frozen=True)
+class CitationExtraction:
+    """What one extraction call produced.
+
+    ``degraded`` carries WHY the extractor contributed nothing -- a timeout, a missing
+    key, unparseable output. It is not decoration. L1a's FAIL means "this output cited
+    nothing", and without this field an extractor that never ran is indistinguishable
+    from an answer that cited nothing at all.
+    """
+
+    citations: tuple[CitationCandidate, ...] = ()
+    model: str = ""
+    provider: str = ""
+    latency_ms: int = 0
+    parse_path: str = "strict"
+    degraded: str | None = None
+
+
 @runtime_checkable
 class Fetcher(Protocol):
     """HTTP or browser. Layers never know which was used."""
@@ -118,3 +154,23 @@ class Judge(Protocol):
     provider: str
 
     async def judge(self, *, system_prompt: str, payload: dict) -> JudgeResult: ...
+
+
+@runtime_checkable
+class CitationExtractor(Protocol):
+    """Finds the citations an answer offers. It does not judge whether they are good.
+
+    Existence is L1b's question and quote fidelity is L1c's; both already answer them
+    deterministically against the real corpus. This interface exists only to widen what
+    reaches them, because a regex recognises the citation forms someone enumerated and
+    an answer may use one nobody did (docs/03-findings.md F13).
+
+    An implementation MUST NOT raise to signal failure. Return a ``CitationExtraction``
+    with ``degraded`` set instead: an extractor that is down must never be reported to a
+    lawyer as an answer that cited nothing.
+    """
+
+    model: str
+    provider: str
+
+    async def extract_citations(self, ai_output: str) -> CitationExtraction: ...
