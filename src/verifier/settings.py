@@ -92,6 +92,20 @@ class Settings(BaseSettings):
     L1_SOFT_404_MAX_BYTES: int = 10_000  # real judgment ~150kB, soft-404 ~3.5kB (F3)
     L1_PARTY_MATCH_MIN: float = 85.0
 
+    #: A claim shorter than this is expanded to the sentence it was cut from.
+    #:
+    #: The splitter is a model call and the prompt asking for self-contained claims is a
+    #: request, not a guarantee. It cut "Policy considerations are applied only at the
+    #: second stage, once a prima facie duty of care has been established" in half, and
+    #: L3 scored the first 58 characters at 0.313 against a 0.35 floor while the whole
+    #: sentence scores 0.649 (docs/03-findings.md F18). The fragment does not say the
+    #: second stage OF WHAT, so it was never a proposition the answer made.
+    #:
+    #: Same principle as L1_MIN_QUOTE_CHARS from the other direction: below some length
+    #: a unit is too thin to carry a reliable signal. There a short quotation matches
+    #: anything; here a short claim matches nothing in particular.
+    L3_CLAIM_MIN_CHARS: int = 80
+
     L3_MARGIN_FAIL_AT_OR_BELOW: float = 0.02
     L3_MARGIN_PASS_ABOVE: float = 0.08
     L3_ABSOLUTE_FLOOR: float = 0.35

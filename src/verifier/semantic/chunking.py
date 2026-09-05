@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from verifier.contracts.citations import Span
 from verifier.contracts.documents import Paragraph, SourceDocument
 from verifier.contracts.enums import ChunkKind
+from verifier.extraction import patterns
 from verifier.providers.base import Summariser
 from verifier.settings import settings
 
@@ -368,7 +369,13 @@ def _locate_sequential(haystack: str, needles: list[str]) -> list[Span | None]:
     return spans
 
 
-def locate_claim(haystack: str, claim: str, *, min_score: float = 70.0) -> Span | None:
+def locate_claim(
+    haystack: str,
+    claim: str,
+    *,
+    min_score: float = 70.0,
+    min_sentence_score: float = 65.0,
+) -> Span | None:
     """Map a model-produced claim back to offsets in the AI output.
 
     ``split_claims`` returns atomic claims that are usually, but not always, verbatim
@@ -387,9 +394,99 @@ def locate_claim(haystack: str, claim: str, *, min_score: float = 70.0) -> Span 
     from rapidfuzz import fuzz
 
     alignment = fuzz.partial_ratio_alignment(claim, haystack)
-    if alignment is None or alignment.score < min_score:
-        return None
-    return Span(start=alignment.dest_start, end=alignment.dest_end)
+    if alignment is not None and alignment.score >= min_score:
+        return Span(start=alignment.dest_start, end=alignment.dest_end)
+
+    # Sentence fallback, on token overlap rather than alignment.
+    #
+    # ``partial_ratio`` penalises a claim for words the answer does not contain, and a
+    # self-contained claim is FULL of them: the splitter is asked to resolve pronouns
+    # and restate the subject, so "The test is premised on proximity" comes back as
+    # "The two-stage test for the imposition of a duty of care in negligence in
+    # Singapore is premised on proximity". Measured on one answer, that dropped three
+    # of six claims below the threshold -- and a claim with no span cannot be attributed
+    # to a citation, so it is silently never scored. Asking for better claims must not
+    # cost us the ability to place them.
+    #
+    # ``token_set_ratio`` compares the shared tokens and ignores the surplus, which is
+    # exactly the relation here. On the same answer the right sentence won by 31 to 51
+    # points where the claim was a restatement, and by 8 to 17 where two claims came
+    # from one sentence -- correct in both cases.
+    #
+    # Returning None stays the safe answer: an unlocated claim is skipped and counted in
+    # ``retrieval.claims_unattributed``, whereas a wrong span attributes it to the wrong
+    # citation and scores it against a document it never referred to.
+    best_span: Span | None = None
+    best_score = min_sentence_score
+    for start, end in _sentence_spans(haystack):
+        score = fuzz.token_set_ratio(claim, haystack[start:end])
+        if score >= best_score:
+            best_score, best_span = score, Span(start=start, end=end)
+    return best_span
+
+
+def _sentence_spans(text: str) -> list[tuple[int, int]]:
+    """Sentence boundaries, from the same ``SENTENCE_BREAK`` the extractor uses, so a
+    claim and a citation are judged against one notion of a sentence throughout."""
+    starts = [0]
+    for match in patterns.SENTENCE_BREAK.finditer(text):
+        starts.append(match.end())
+    starts.append(len(text))
+    spans = []
+    for index in range(len(starts) - 1):
+        start, end = starts[index], len(text[: starts[index + 1]].rstrip())
+        if end > start:
+            spans.append((start, end))
+    return spans
+
+
+def sentence_containing(text: str, span: Span) -> Span | None:
+    """The sentence of ``text`` that wholly contains ``span``, if there is one."""
+    for start, end in _sentence_spans(text):
+        if start <= span.start and span.end <= end:
+            return Span(start=start, end=end)
+    return None
+
+
+def expand_fragments(text: str, claims: list[RawChunk], *, min_chars: int) -> list[RawChunk]:
+    """Restore a claim the splitter cut below the point where it can be checked.
+
+    The prompt asks for self-contained claims; a prompt is a request. When the model
+    returns a fragment anyway, the unit the AUTHOR actually asserted is the sentence,
+    and scoring our own artefact instead is what produced a false FAIL at 0.313 against
+    a sentence that scores 0.649 (docs/03-findings.md F18).
+
+    Only claims we can LOCATE are expanded. A claim the model paraphrased away from the
+    text has no sentence to expand to, and inventing one would be worse than leaving it
+    short. Duplicates are collapsed: two fragments of one sentence are one claim.
+    """
+    out: list[RawChunk] = []
+    seen: set[str] = set()
+    for claim in claims:
+        text_out, span_out = claim.text, claim.span
+        if len(claim.text) < min_chars and claim.span is not None:
+            sentence = sentence_containing(text, claim.span)
+            if sentence is not None and sentence.end > sentence.start:
+                candidate = text[sentence.start : sentence.end].strip()
+                # Never shrink a claim, and never expand into something enormous: a
+                # runaway sentence is not a better retrieval unit than the fragment.
+                if len(claim.text) < len(candidate) <= min_chars * 8:
+                    text_out, span_out = candidate, sentence
+        key = text_out.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            RawChunk(
+                ordinal=len(out),
+                kind=claim.kind,
+                text=text_out,
+                heading_path=claim.heading_path,
+                span=span_out,
+                strategy=claim.strategy,
+            )
+        )
+    return out
 
 
 async def chunk_output_claims(
@@ -432,4 +529,5 @@ async def chunk_output_claims(
                     strategy="claims",
                 )
             )
+    chunks = expand_fragments(text, chunks, min_chars=settings.L3_CLAIM_MIN_CHARS)
     return chunks or window_claims(text, target_tokens=target_tokens)
