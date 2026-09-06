@@ -86,13 +86,13 @@ def test_sub_layer_results_survive_the_json_column_they_ride_in():
     from verifier.contracts.layers import SubLayerResult
 
     original = SubLayerResult(
-        sub_layer=SubLayer.L1B_EXISTENCE,
+        sub_layer=SubLayer.L1A_EXISTENCE,
         status=LayerStatus.FAIL,
         finding_count=2,
         detail={"clusters": 3, "not_found": 1},
     )
     packed = original.model_dump(mode="json")
-    assert packed["sub_layer"] == "L1b", "the wire value is the string the panel keys on"
+    assert packed["sub_layer"] == "L1a", "the wire value is the string the panel keys on"
     assert SubLayerResult(**packed) == original
 
 
@@ -102,13 +102,13 @@ def test_a_finding_carries_its_sub_layer_through_the_evidence_column():
     from verifier.contracts.findings import Finding
 
     finding = Finding(
-        id="run:L1c:domain:medium.com:SOURCE_GRAYLISTED",
+        id="run:L1b:domain:medium.com:SOURCE_GRAYLISTED",
         layer=Layer.L1_CITATION_INTEGRITY,
-        sub_layer=SubLayer.L1C_SOURCE_TRUST,
+        sub_layer=SubLayer.L1B_SOURCE_TRUST,
         code=FindingCode.SOURCE_GRAYLISTED,
         severity=Severity.WARN,
         message="graylisted",
     )
     packed = str(finding.sub_layer)
-    assert packed == "L1c"
+    assert packed == "L1b"
     assert SubLayer(packed) is finding.sub_layer

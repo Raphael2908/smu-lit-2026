@@ -87,7 +87,7 @@ class ExtractedQuote(BaseModel):
 
     * L3 attributes a claim to a citation when the claim overlaps a quotation hung on
       that citation (``layers/l2_alignment.py``, ``_quote_spans_by_cluster``).
-    * L1a masks quoted text before extracting propositions, so a quotation is never
+    * L0 masks quoted text before extracting propositions, so a quotation is never
       scored as the answer's own assertion (``extraction/propositions.py``, ``_mask``).
 
     Delete this type and both break silently: claims lose their citation, and every
@@ -110,10 +110,10 @@ class ExtractedQuote(BaseModel):
 class StatuteReference(BaseModel):
     """A statutory reference written in the output.
 
-    Kept OUT of ``CitationCluster`` deliberately. A cluster is something L1b tries to
+    Kept OUT of ``CitationCluster`` deliberately. A cluster is something L1a tries to
     resolve against the judgment corpus, and a statute is not in that corpus -- making
     statutes clusters would emit a CITATION_UNVERIFIED warning for every correctly
-    cited section. But a statute IS authority for the purposes of L1a, which asks only
+    cited section. But a statute IS authority for the purposes of L0's gate, which asks
     whether a proposition rests on anything at all.
 
     ``specific`` separates 'section 20 of the Building Control Act (Cap 29)' from a
@@ -133,7 +133,7 @@ class StatuteReference(BaseModel):
 
 
 class ExtractedProposition(BaseModel):
-    """A sentence that asserts law, and therefore needs authority behind it (L1a).
+    """A sentence that asserts law, and therefore needs authority behind it (L0).
 
     Extraction is NARROW on purpose: a sentence qualifies only on an explicit legal
     assertion cue (a holding verb with a judicial subject, a statement of a test, an

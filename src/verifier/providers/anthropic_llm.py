@@ -385,7 +385,7 @@ def candidates_from(raw: str) -> tuple[CitationCandidate, ...] | None:
 
 
 class AnthropicCitationExtractor:
-    """L1a's citation finder, on Haiku.
+    """L0's citation finder, on Haiku.
 
     Haiku because this is recognition over a page of prose, not reasoning: the model
     says which spans of the answer are citations, and ``extraction/citations.py`` decides
@@ -393,7 +393,7 @@ class AnthropicCitationExtractor:
     model is the right one.
 
     It never raises. Every failure path returns a ``CitationExtraction`` carrying
-    ``degraded``, because the alternative -- an exception from L0 -- reaches L1a as an
+    ``degraded``, because the alternative -- an exception from L0 -- reaches the gate as an
     empty extraction, which is indistinguishable from an answer that cited nothing and
     would fail a run for being unverifiable.
     """

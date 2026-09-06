@@ -83,6 +83,17 @@ def _unpack_envelope(raw: Any) -> dict[str, Any]:
     return {"client": raw if isinstance(raw, dict) else {}, "errors": [], "extract_ms": 0}
 
 
+def _sub_layer_or_none(packed: object) -> SubLayer | None:
+    """A stored sub-layer name, or None if this build no longer knows it."""
+    if not packed:
+        return None
+    try:
+        return SubLayer(str(packed))
+    except ValueError:
+        log.warning("unknown_sub_layer", value=str(packed))
+        return None
+
+
 class PgRunRepo:
     """Satisfies ``repos.base.RunRepo`` (plus ``register_key``, matching the in-memory
     repo, so the API's idempotency path is identical against either backend)."""
@@ -335,7 +346,12 @@ class PgRunRepo:
             evidence = dict(fr.evidence or {})
             finding_id = str(evidence.pop("_finding_id", "") or fr.id)
             packed_sub = evidence.pop("_sub_layer", None)
-            sub_layer = SubLayer(packed_sub) if packed_sub else None
+            # Tolerant on purpose. Sub-layer names have been renumbered twice now, and a
+            # row written under the old vocabulary carries a string this enum no longer
+            # has ("L1c"). 0003 deletes those rows, but a migration only covers the
+            # database it ran against: dropping the LABEL costs a reader one indented
+            # caption, while raising here loses the whole run behind a 500.
+            sub_layer = _sub_layer_or_none(packed_sub)
             span = None
             if fr.span_start is not None and fr.span_end is not None:
                 span = Span(start=fr.span_start, end=fr.span_end)

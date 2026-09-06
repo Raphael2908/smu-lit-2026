@@ -1,22 +1,28 @@
-"""L2 -- source trust.
+"""L1's sub-check 1b -- is the source one we trust?
 
-L2 asks a DIFFERENT question from L1. L1 asks "does this citation exist?"; L2 asks
-"is this source one we trust?". They are independent, and both must pass.
+1b asks a DIFFERENT question from 1a. 1a asks "does this citation exist?"; 1b asks
+"is the domain it resolved to one we trust?". They are independent, and both must pass.
 
 WHITELIST SCOPING -- the invariant this file exists to protect:
 
-    A whitelist suppresses L2's OWN findings. It can never clear an L1 finding.
+    A whitelist suppresses 1b's OWN findings. It can never clear a 1a finding.
 
-L2 does not read, rewrite or acknowledge L1's findings; it only emits its own. If
-"whitelisted overrules all" were implemented literally it would be a laundering hole:
-put elitigation.sg on the whitelist and every fabricated eLitigation citation --
+1b does not read, rewrite or acknowledge 1a's findings; it only emits its own. That is
+structural, not a convention: ``SourceTrustLayer`` is handed a ``LayerInput`` and
+nothing else, so it is not capable of seeing a fabrication finding, let alone clearing
+one. If "whitelisted overrules all" were implemented literally it would be a laundering
+hole: put elitigation.sg on the whitelist and every fabricated eLitigation citation --
 resolved from a real domain, pointing at a document that does not exist -- would pass.
 Trust in a publisher is not evidence about a document. See
 ``tests/layers/test_l1_composite.py::test_a_whitelist_cannot_clear_a_fabricated_citation``.
 
-L2 runs AFTER L1 because a bare citation like ``[2007] SGCA 37`` has no domain at all
-until L1's resolver turns it into a URL. Domains written out in the output are
-checkable immediately; resolved domains are not.
+1b is SEQUENCED AFTER 1a inside L1, because a bare citation like ``[2007] SGCA 37`` has
+no domain at all until the resolver turns it into a URL. That data dependency is the
+reason source trust is a sub-check here rather than a layer of its own: as a layer it
+had to wait for the whole of L1 to finish, giving the pipeline a sequential tail for a
+check that only ever needed one field. Domains written out in the output are checkable
+immediately -- that is what ``CitationIntegrityLayer.precheck_explicit_domains`` uses to
+fail a blacklisted source before anything is fetched.
 
 An unknown domain is INFO, and the result carries ``coverage: partial`` so that
 silence from a curated list of ~30 entries is never rendered as clearance.
@@ -75,7 +81,7 @@ def normalize_domain(value: str) -> str:
 
 
 class SourceTrustLayer(BaseLayer):
-    """L2. Checks DOMAINS, not citations.
+    """L1's 1b. Checks DOMAINS, not citations.
 
     ``lists`` is optional so ``registry.build_layer`` can construct the layer with no
     arguments; it then falls back to the curated seed lists, which means the layer is
@@ -125,7 +131,7 @@ class SourceTrustLayer(BaseLayer):
                 detail={
                     "coverage": "partial",
                     "domains_checked": [],
-                    "whitelist_scope": "l2_only",
+                    "whitelist_scope": "1b_only",
                 },
             )
 
@@ -168,7 +174,7 @@ class SourceTrustLayer(BaseLayer):
             list_type, reason = match
             counts[list_type.value] += 1
             if list_type is ListType.WHITE:
-                # The whole effect of a whitelist: no L2 finding. It does not reach into
+                # The whole effect of a whitelist: no 1b finding. It does not reach into
                 # any other layer, so it cannot launder a fabricated citation.
                 continue
 
@@ -194,8 +200,8 @@ class SourceTrustLayer(BaseLayer):
             "resolved_domains": sorted(resolved),
             "counts": counts,
             # Legible in the payload, not just in a comment: whitelisting suppresses
-            # L2's own findings and nothing else.
-            "whitelist_scope": "l2_only",
+            # 1b's own findings and nothing else.
+            "whitelist_scope": "1b_only",
         }
         return LayerResult(
             layer=self.layer,
@@ -215,9 +221,9 @@ class SourceTrustLayer(BaseLayer):
         ordinals: list[int],
     ) -> Finding:
         return Finding(
-            id=f"{run_id}:L1c:domain:{domain}:{code.value}",
+            id=f"{run_id}:L1b:domain:{domain}:{code.value}",
             layer=self.layer,
-            sub_layer=SubLayer.L1C_SOURCE_TRUST,
+            sub_layer=SubLayer.L1B_SOURCE_TRUST,
             code=code,
             severity=severity,
             message=message,

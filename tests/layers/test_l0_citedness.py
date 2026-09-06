@@ -1,24 +1,27 @@
-"""L1a -- is the proposition supported by any authority at all?
+"""L0's gate -- is the proposition supported by any authority at all?
 
-The stage that runs before "does the citation exist". L1b and L1c only ever examine
-authority the output actually offered, so an answer that states the law from memory and
-cites nothing would otherwise pass the citation-integrity layer with no mark against it.
+The question that runs before "does the citation exist". L1's two sub-checks only ever
+examine authority the output actually offered, so an answer that states the law from
+memory and cites nothing would otherwise reach a verdict with no mark against it.
+
+It lives in L0 rather than in L1 because it counts what an LLM extractor returned, and a
+layer badged deterministic must not contain a model call.
 
 The severity split is the point of most of these tests. The FAIL is a COUNT over the
 whole output -- law asserted, no authority anywhere -- with no attribution judgement in
-it, which is what lets it sit at the deterministic tier and skip the judge. Per-
-proposition findings, where attribution IS a judgement over prose that has no fixed
-citation structure, only ever WARN.
+it, which is what lets it stop the run before a single fetch. Per-proposition findings,
+where attribution IS a judgement over prose that has no fixed citation structure, only
+ever WARN.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from verifier.contracts.enums import FindingCode, LayerStatus, Severity, SubLayer
-from verifier.contracts.layers import LayerInput
+from verifier.contracts.enums import FindingCode, Layer, LayerStatus, Severity
+from verifier.contracts.layers import ExtractionResult, LayerInput
 from verifier.extraction import extract
-from verifier.layers.l1ab_citations import CitationExistenceLayer
+from verifier.layers.l0_preprocessing import PreprocessingLayer
 from verifier.settings import Settings
 
 SPANDECK = "Spandeck Engineering (S) Pte Ltd v Defence Science & Technology Agency [2007] SGCA 37"
@@ -29,46 +32,49 @@ UNCITED = (
 )
 
 
-def layer_input(ai_output: str, *, is_followup: bool = False) -> LayerInput:
+def layer_input(
+    ai_output: str, *, is_followup: bool = False, degraded: str | None = None
+) -> LayerInput:
+    extraction = extract(ai_output)
+    if degraded is not None:
+        extraction = extraction.model_copy(update={"extractor_degraded": degraded})
     return LayerInput(
-        run_id="run-l1a",
+        run_id="run-l0",
         question="What is the test for a duty of care in Singapore?",
         ai_output=ai_output,
         is_followup=is_followup,
-        extraction=extract(ai_output),
+        extraction=extraction,
     )
 
 
-async def run(ai_output: str, *, is_followup: bool = False, **overrides):
-    """Run L1 with no resolutions and no documents: L1a needs neither.
+async def run(
+    ai_output: str, *, is_followup: bool = False, degraded: str | None = None, **overrides
+):
+    """Run L0 with no resolutions and no documents: the gate needs neither.
 
-    That is itself worth pinning -- L1a is pure text, so it produces its verdict with
-    no fetch, no network and no model, in the same budget as the pre-fetch blacklist check.
+    That is itself worth pinning -- the gate is pure with respect to the extraction it
+    is handed, so it reaches its verdict with no fetch and no network of its own.
     """
-    layer = CitationExistenceLayer()
+    layer = PreprocessingLayer()
+    data = layer_input(ai_output, is_followup=is_followup, degraded=degraded)
     if overrides:
         settings = Settings(**overrides)
         monkey = pytest.MonkeyPatch()
-        monkey.setattr("verifier.layers.l1ab_citations.get_settings", lambda: settings)
+        monkey.setattr("verifier.layers.l0_preprocessing.get_settings", lambda: settings)
         try:
-            return await layer.run(layer_input(ai_output, is_followup=is_followup))
+            return await layer.run(data)
         finally:
             monkey.undo()
-    return await layer.run(layer_input(ai_output, is_followup=is_followup))
+    return await layer.run(data)
 
 
 def codes(result) -> list[FindingCode]:
     return [f.code for f in result.findings]
 
 
-def l1a(result):
-    """Just the L1a findings.
-
-    These tests supply no resolutions, so any citation in the fixture legitimately
-    draws an L1b CITATION_UNVERIFIED warning ("we did not check it"). That is correct
-    behaviour and orthogonal to what is under test here.
-    """
-    return [f for f in result.findings if f.sub_layer is SubLayer.L1A_CITEDNESS]
+def l0(result):
+    """Every finding L0 raised. The layer has no sub-checks, so this is all of them."""
+    return list(result.findings)
 
 
 # --- the FAIL: law asserted, nothing cited anywhere --------------------------------
@@ -95,7 +101,7 @@ async def test_the_fail_carries_every_uncited_assertion_as_evidence():
     assert extra["authorities"] == 0
     assert extra["uncited"] == 2
     assert len(extra["propositions"]) == 2
-    assert result.findings[0].sub_layer is SubLayer.L1A_CITEDNESS
+    assert result.findings[0].sub_layer is None
 
 
 async def test_a_followup_turn_warns_instead_of_failing():
@@ -149,14 +155,14 @@ async def test_an_uncited_assertion_beside_a_cited_one_only_warns():
 
 
 async def test_the_per_proposition_finding_can_be_dialled_down_to_info():
-    """``L1A_UNCITED_SEVERITY=info`` makes them display-only, for a corpus where the
+    """``L0_UNCITED_SEVERITY=info`` makes them display-only, for a corpus where the
     classifier proves noisy. The FAIL is deliberately not configurable this way."""
     result = await run(
         f"The Court of Appeal held that a single test governs: {SPANDECK}.\n\n"
         "It is well established that a duty arises whenever loss is foreseeable.",
-        L1A_UNCITED_SEVERITY="info",
+        L0_UNCITED_SEVERITY="info",
     )
-    assert [f.severity for f in l1a(result)] == [Severity.INFO]
+    assert [f.severity for f in l0(result)] == [Severity.INFO]
 
 
 async def test_a_citation_carried_across_a_paragraph_clears_its_assertions():
@@ -166,7 +172,7 @@ async def test_a_citation_carried_across_a_paragraph_clears_its_assertions():
         "The test for proximity is one of physical, circumstantial and causal closeness. "
         "It is well established that policy considerations come last."
     )
-    assert l1a(result) == []
+    assert l0(result) == []
 
 
 # --- not applicable ----------------------------------------------------------------
@@ -183,18 +189,18 @@ async def test_an_output_that_asserts_no_law_is_not_applicable():
     assert result.status is LayerStatus.NOT_APPLICABLE
 
 
-async def test_l1a_can_be_disabled_without_touching_the_rest_of_l1():
-    result = await run(UNCITED, L1A_ENABLED=False)
-    # Nothing cited, nothing quoted, and the one stage that had something to say is
-    # switched off -- so the layer genuinely has no question to answer.
+async def test_the_gate_can_be_disabled():
+    result = await run(UNCITED, L0_CITEDNESS_ENABLED=False)
+    # Nothing cited, nothing asserted that we are willing to look at -- the gate has no
+    # question to answer, and NOT_APPLICABLE is not a pass.
     assert result.status is LayerStatus.NOT_APPLICABLE
     assert codes(result) == []
 
 
-# --- the layer keeps its other stages ----------------------------------------------
+# --- what the panel renders ---------------------------------------------------------
 
 
-async def test_l1a_does_not_disturb_the_counts_the_panel_renders():
+async def test_the_gate_reports_the_counts_the_panel_renders():
     result = await run(
         f"The Court of Appeal held that a single test governs: {SPANDECK}.\n\n"
         "It is well established that a duty arises whenever loss is foreseeable."
@@ -203,19 +209,26 @@ async def test_l1a_does_not_disturb_the_counts_the_panel_renders():
     assert result.detail["propositions_cited"] == 1
     assert result.detail["propositions_uncited"] == 1
     assert result.detail["authorities"] == 1
-    assert [s.sub_layer for s in result.sub_results] == [
-        SubLayer.L1A_CITEDNESS,
-        SubLayer.L1B_EXISTENCE,
-    ]
+    # The citation LIST, not just a count: the point of a model here is that a reader
+    # can see what it decided the answer cited.
+    assert [c["text"] for c in result.detail["citations"]] == ["[2007] SGCA 37"]
 
 
-# --- the extractor is now a model, and a model can be down --------------------------
+async def test_the_gate_has_no_sub_checks():
+    """L0 asks one question. Only L1 reports sub-results."""
+    result = await run(UNCITED)
+    assert result.sub_results == ()
+    assert all(f.sub_layer is None for f in result.findings)
+    assert all(f.layer is Layer.L0_PREPROCESSING for f in result.findings)
+
+
+# --- the extractor is a model, and a model can be down ------------------------------
 
 
 def degraded_input(ai_output: str, reason: str = "citation extractor timed out"):
     """The same output, extracted by something that did not run."""
     return LayerInput(
-        run_id="run-l1a",
+        run_id="run-l0",
         question="What is the test for a duty of care in Singapore?",
         ai_output=ai_output,
         extraction=extract(ai_output).model_copy(
@@ -224,30 +237,56 @@ def degraded_input(ai_output: str, reason: str = "citation extractor timed out")
     )
 
 
-async def test_a_degraded_extractor_never_fails_the_run():
-    """THE safety property of putting a model in L0.
+async def test_a_degraded_extractor_fails_the_run():
+    """A DELIBERATE REVERSAL, and the most consequential line in this file.
 
-    Since L1a stopped counting regex matches, "zero authority" no longer means "the
-    answer cited nothing" -- it can equally mean the extractor timed out or had no key.
-    Failing on that would report an outage as a fabrication, which is the same mistake
-    F12 caught with the eLitigation maintenance page, arriving by a new route.
+    L0 used to decline to fail when the extractor had not run: "zero authority" could
+    mean the answer cited nothing OR that Haiku timed out, and reporting an outage as a
+    fabrication is the F12 mistake arriving by a new route.
+
+    The gate now fails either way. The reasoning is that a preprocessing step which did
+    not run leaves NOTHING downstream with anything to check, so a run that continued
+    would report a clean result over an answer nobody read -- which is the more dangerous
+    of the two errors. The cost is real and is recorded in todo.md bug 5: an OpenRouter
+    hiccup now reds a correct answer, and under fail-fast that red is unrecoverable.
+
+    What survives the reversal is the DISTINCTION. See the next test.
     """
-    result = await CitationExistenceLayer().run(degraded_input(UNCITED))
+    result = await PreprocessingLayer().run(degraded_input(UNCITED))
+    assert result.status is LayerStatus.FAIL
+    assert any(f.severity is Severity.FAIL for f in result.findings)
+
+
+async def test_an_outage_is_never_reported_as_an_uncited_answer():
+    """The half of the old guarantee that is NOT negotiable.
+
+    Both states stop the run, so the verdict cannot tell them apart -- which makes the
+    finding CODE the only thing that can. "You cited nothing" is an accusation about a
+    lawyer's work; "we could not read this" is a confession about ours. Filing the second
+    under the first would print a fabrication verdict on a vendor's bad afternoon.
+    """
+    result = await PreprocessingLayer().run(degraded_input(UNCITED))
+    assert codes(result) == [FindingCode.PREPROCESSING_FAILED]
     assert FindingCode.OUTPUT_UNCITED not in codes(result)
-    assert not any(f.severity is Severity.FAIL for f in result.findings)
+    assert "citation extractor timed out" in result.findings[0].message
+    assert result.detail["extractor_degraded"] == "citation extractor timed out"
 
 
-async def test_a_degraded_extractor_still_reports_the_assertions_as_unsupported():
-    """Silence would present an unchecked answer as a clean one."""
-    result = await CitationExistenceLayer().run(degraded_input(UNCITED))
-    assert FindingCode.PROPOSITION_UNCITED in codes(result)
-    assert all(f.severity is Severity.WARN for f in l1a(result))
+async def test_an_outage_fails_even_an_answer_that_cites_properly():
+    """Not a paradox: nothing read the answer, so its citations were never seen.
+
+    A run that passed here would be asserting something about a text it never parsed.
+    """
+    cited = f"The Court of Appeal held that one test governs: {SPANDECK}."
+    result = await PreprocessingLayer().run(degraded_input(cited))
+    assert result.status is LayerStatus.FAIL
+    assert codes(result) == [FindingCode.PREPROCESSING_FAILED]
 
 
-async def test_the_same_output_still_fails_when_the_extractor_did_run():
-    """The guard above must turn on the degraded flag, not on the count being zero."""
+async def test_the_same_output_fails_differently_when_the_extractor_did_run():
+    """The two paths must not converge on one code."""
     result = await run(UNCITED)
-    assert FindingCode.OUTPUT_UNCITED in codes(result)
+    assert codes(result) == [FindingCode.OUTPUT_UNCITED]
 
 
 async def test_authority_the_parser_could_not_type_still_clears_the_fail():
@@ -258,10 +297,24 @@ async def test_authority_the_parser_could_not_type_still_clears_the_fail():
     was built to rescue.
     """
     data = LayerInput(
-        run_id="run-l1a",
+        run_id="run-l0",
         question="What is the test for a duty of care in Singapore?",
         ai_output=UNCITED,
         extraction=extract(UNCITED).model_copy(update={"untyped": ("(2005) 3 SCC 123",)}),
     )
-    result = await CitationExistenceLayer().run(data)
+    result = await PreprocessingLayer().run(data)
     assert FindingCode.OUTPUT_UNCITED not in codes(result)
+
+
+async def test_an_empty_extraction_with_no_flag_is_still_a_coherent_run():
+    """``ExtractionResult()`` on its own is not an outage.
+
+    The orchestrator folds a genuine extraction error into ``extractor_degraded`` before
+    the gate ever sees it, so a bare empty extraction here means exactly what it says:
+    an answer with nothing in it to check.
+    """
+    result = await PreprocessingLayer().run(
+        LayerInput(run_id="run-l0", question="q", ai_output="ok", extraction=ExtractionResult())
+    )
+    assert result.status is LayerStatus.NOT_APPLICABLE
+    assert result.findings == ()

@@ -20,7 +20,7 @@ separate its two most important inputs was deciding FAIL, and under fail-fast a 
 is unrecoverable.
 
 What that leaves: an answer can attribute a fabricated quotation to a real, resolvable,
-whitelisted judgment and nothing in the system will say so. L1b confirms the case exists;
+whitelisted judgment and nothing in the system will say so. L1's 1a confirms the case exists;
 L2 scores whether the answer's claims are grounded in it, which a well-chosen fake
 quotation can pass.
 
@@ -182,17 +182,38 @@ Files: `src/verifier/semantic/chunking.py`, `src/verifier/providers/*_llm.py`,
 
 ### 5. The Haiku citation extractor has not been measured, and is not cached
 
-**Severity: high — L1a now has no deterministic floor under it.**
+**Severity: CRITICAL — raised from high on 2026-09-07. It was one guard that made this
+survivable, and that guard has been deliberately removed.**
 
-L1a used to count regex matches. It now counts what Haiku returns, and there is no
+L0's gate used to count regex matches. It now counts what Haiku returns, and there is no
 union with the regex: if the model returns a well-formed but *short* list on an answer
-that cites one thing, L1a reports "cites nothing" and fails the run. That is the same
+that cites one thing, the gate reports "cites nothing" and fails the run. That is the same
 false red the change was built to remove, arriving by a new route, and nothing in the
 test suite can catch it — every test supplies its own candidates.
 
-Two guards exist and neither closes this. A candidate must appear **verbatim** in the
-answer, which stops invention but not omission. A degraded extractor never fails, which
-stops an outage being read as an uncited answer but says nothing about a bad list.
+**What changed on 2026-09-07, and why this entry got worse.** Two things, both by
+decision:
+
+1. This check is now a **gate**. A failure does not merely skip the judge — it stops L1,
+   L2 and L3 from running at all. A bad citation list therefore costs the entire run, not
+   one layer's verdict.
+2. **A degraded extractor now FAILS.** It used to decline to fail, on the rule that "we
+   did not look" is never "it cited nothing" (the F12 rule). That guard is gone: an
+   OpenRouter timeout, a bad key or an unparseable response now produces a red on a
+   correct answer, and under fail-fast that red is unrecoverable.
+
+What survives, and must: the two failures carry **different finding codes**
+(`OUTPUT_UNCITED` vs `PREPROCESSING_FAILED`) with different messages, so the panel never
+tells a lawyer they cited nothing when the truth is that we could not read their answer.
+That distinction is pinned by `tests/pipeline/test_l0_gate.py` and
+`tests/layers/test_l0_citedness.py`.
+
+One guard is left, and it does not close this. A candidate must appear **verbatim** in
+the answer, which stops invention but not omission.
+
+Caching (item 2 below) is now the highest-value fix in this file: it turns a per-run
+coin-flip against a vendor into a one-off, and a warm cache means a demo re-run cannot be
+killed by an outage that a cold one survived.
 
 **What to do, in order:**
 
@@ -233,7 +254,7 @@ cluster 2: [('case_name', 'NTUC Foodfare ... v SIA Engineering Co Ltd'),
 
 Caparo is now a "parallel citation" of NTUC. `_resolve_all` keys on
 `cluster.preferred.citation_key`, which is the neutral one, so Caparo is never looked up
-and never checked. It still counts as authority for L1a, so it produces no visible
+and never checked. It still counts as authority for L0's gate, so it produces no visible
 error — the citation simply goes unverified while the panel shows the run as covered.
 
 Pre-existing, not introduced by the LLM extractor, but the extractor makes it easier to
@@ -273,7 +294,7 @@ hard failure, and why it is invisible in the test suite (nothing there crosses t
 `asyncio.run` calls with a live client).
 
 **What it costs.** `client.py:179-187` catches any transport failure and returns
-`ResolutionStatus.ERROR` with `detail="fetch_failed:RuntimeError"`, which L1b reports as
+`ResolutionStatus.ERROR` with `detail="fetch_failed:RuntimeError"`, which L1's 1a reports as
 `CITATION_UNVERIFIED` — "could not be checked". That is the safe direction, so it never
 manufactures a fabrication. But the citation is simply not verified, and the panel says
 "the lookup failed", which is exactly what a genuine source outage says. Observed live:
@@ -751,6 +772,12 @@ What remains is the second half, and it is a backend change: `deterministic_verd
 however little was actually checked, and the panel relabels only the *pill* for citation
 coverage, never the verdict. A run that checked nothing can still emit the worst verdict
 in the system -- it just can no longer be reached from the sidebar.
+
+**Partly addressed on 2026-09-07, and partly made sharper.** The L0 gate is now the one
+place a "nothing was checked" run terminates, and it names itself: the panel renders an L0
+row and the finding says whether the answer cited nothing or could not be read. So the
+worst verdict is at least attributable now. What is NOT fixed is the verdict itself --
+FAIL is still what a 40-character non-answer would earn if it ever reached a run.
 
 ---
 

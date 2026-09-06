@@ -638,7 +638,7 @@ verified.
 <<<<<<< HEAD
 =======
 
-ASSERTIONS WITH NO CITATION IN SCOPE (L1a)
+ASSERTIONS WITH NO CITATION IN SCOPE (L0)
 These sentences state law, and the deterministic pass found no authority attached to
 them. It stops there on purpose: it matches citations to sentences by position, and
 position is a weak proxy for support. Judge them under `citation_integrity` — is each

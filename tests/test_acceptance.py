@@ -52,15 +52,21 @@ async def _run(ai_output: str):
 
 @pytest.mark.asyncio
 async def test_a_run_reports_exactly_four_scoring_layers():
-    """The bug this renumber fixed, asserted end to end.
+    """The shape of the stack, asserted end to end.
 
-    Source trust used to be a layer of its own, so a clean run reported five scoring
-    layers for a system that asks four questions. It is now sub-check 1c, visible in
-    Layer 1's ``sub_results`` rather than as a row of its own.
+    Four scoring layers and a gate in front. L0 is deliberately excluded from the count:
+    it carries no score and cannot be compared with the layers that do -- it either lets
+    the run proceed or ends it.
+
+    Two renumberings are pinned here at once. Source trust used to be a layer of its own
+    (five rows for four questions) and is now L1's 1b. Citedness used to be L1's 1a and
+    is now L0's gate, because it counts what an LLM extractor returned and L1 claims to
+    be deterministic. L1 therefore reports exactly two sub-checks.
     """
     state = await _run(REAL_CITATION)
 
-    scoring = {layer for layer in state.layers if layer is not Layer.L0_EXTRACT}
+    assert Layer.L0_PREPROCESSING in state.layers, "the gate must report, it just does not score"
+    scoring = {layer for layer in state.layers if layer is not Layer.L0_PREPROCESSING}
     assert scoring == {
         Layer.L1_CITATION_INTEGRITY,
         Layer.L2_ALIGNMENT,
@@ -68,10 +74,12 @@ async def test_a_run_reports_exactly_four_scoring_layers():
         Layer.L4_JUDGE,
     }
     assert [r.sub_layer for r in state.layers[Layer.L1_CITATION_INTEGRITY].sub_results] == [
-        SubLayer.L1A_CITEDNESS,
-        SubLayer.L1B_EXISTENCE,
-        SubLayer.L1C_SOURCE_TRUST,
+        SubLayer.L1A_EXISTENCE,
+        SubLayer.L1B_SOURCE_TRUST,
     ]
+    # L0 scores nothing and has no sub-checks; it asks one question.
+    assert state.layers[Layer.L0_PREPROCESSING].score is None
+    assert state.layers[Layer.L0_PREPROCESSING].sub_results == ()
 
 
 @pytest.mark.asyncio
@@ -143,12 +151,12 @@ async def test_the_verdicts_diverge_at_L1_not_elsewhere():
     assert bad.layers[Layer.L1_CITATION_INTEGRITY].status is LayerStatus.FAIL
     for state in (good, bad):
         assert state.layers[Layer.L3_RESPONSIVENESS].status is not LayerStatus.FAIL
-        # And WITHIN L1 it is 1b, not 1c: both answers cite the same trusted publisher,
+        # And WITHIN L1 it is 1a, not 1b: both answers cite the same trusted publisher,
         # so source trust cannot be what separates them. This is the assertion that
         # kept its meaning when source trust became a sub-check instead of a layer.
         trust = next(
             r
             for r in state.layers[Layer.L1_CITATION_INTEGRITY].sub_results
-            if r.sub_layer is SubLayer.L1C_SOURCE_TRUST
+            if r.sub_layer is SubLayer.L1B_SOURCE_TRUST
         )
         assert trust.status is not LayerStatus.FAIL

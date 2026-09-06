@@ -91,7 +91,12 @@ class ResponsivenessLayer(BaseLayer):
             )
 
         embedder = CachedEmbedder(self._embedder, self._embedding_repo)
-        raw_chunks = await chunk_output_claims(data.ai_output, summariser=self._summariser)
+        # L0 split the answer into claims once, so L2 and L3 score the SAME list. The
+        # local fallback stays because a layer driven directly -- in a test, or by a
+        # caller that built its own LayerInput -- still has to work with nothing supplied.
+        raw_chunks = list(data.claims) or await chunk_output_claims(
+            data.ai_output, summariser=self._summariser
+        )
         chunks = contextualise.build_chunks(raw_chunks)
 
         # The question is the QUERY, the answer's chunks are the DOCUMENTS. Note that the

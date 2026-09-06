@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     EMBEDDINGS_MODE: Literal["auto", "mock", "real"] = "auto"
     SUMMARISER_MODE: Literal["auto", "mock", "real"] = "auto"
     JUDGE_MODE: Literal["auto", "mock", "real"] = "auto"
-    #: L1a's citation finder. "auto" follows PROVIDER_MODE, which is what keeps the
+    #: L0's citation finder. "auto" follows PROVIDER_MODE, which is what keeps the
     #: offline suite and every mock demo on the deterministic path at ~5 ms.
     EXTRACTOR_MODE: Literal["auto", "mock", "real"] = "auto"
     JUDGE_PROMPT_VERSION: str = "v2"
@@ -83,26 +83,29 @@ class Settings(BaseSettings):
     # Governing rule: PREFER A FALSE GREEN TO A FALSE RED. Fail-fast makes a false
     # FAIL unrecoverable, and wrongly accusing correct legal work is what destroys
     # trust in an accuracy tool.
-    # L1a -- is the proposition supported by anything at all?
+    # L0's gate -- is the proposition supported by anything at all?
     #
     # The FAIL is a COUNT, not a judgement: zero authority of any kind anywhere in an
     # output that asserts law. There is no attribution in it and therefore nothing to
-    # be wrong about, which is what lets it sit at the deterministic tier and skip the
-    # judge. Per-proposition findings, where attribution IS a judgement, only WARN --
-    # set L1A_UNCITED_SEVERITY=info to make them display-only.
-    L1A_ENABLED: bool = True
-    L1A_UNCITED_SEVERITY: Literal["warn", "info"] = "warn"
+    # be wrong about, which is what lets it stop the run before a single fetch.
+    # Per-proposition findings, where attribution IS a judgement, only WARN -- set
+    # L0_UNCITED_SEVERITY=info to make them display-only.
+    #
+    # These were L1A_* until citedness moved out of L1. They gate a check, not a
+    # threshold, and no verdict may be tuned here beyond turning the gate off.
+    L0_CITEDNESS_ENABLED: bool = True
+    L0_UNCITED_SEVERITY: Literal["warn", "info"] = "warn"
     #: How many uncited assertions an output must make before a total absence of
     #: authority is a FAIL. One is enough: a single confident statement of law resting
-    #: on nothing is the failure this layer exists to catch.
-    L1A_MIN_ASSERTIONS_FOR_FAIL: int = 1
+    #: on nothing is the failure this gate exists to catch.
+    L0_MIN_ASSERTIONS_FOR_FAIL: int = 1
 
     L1_SOFT_404_MAX_BYTES: int = 10_000  # real judgment ~150kB, soft-404 ~3.5kB (F3)
     L1_PARTY_MATCH_MIN: float = 85.0
 
     #: Shortest span L0 will emit as a quotation. A dozen quoted words is usually a
     #: turn of phrase, not an appeal to what a judgment said, and the units downstream
-    #: consume -- claim attribution in L2, the proposition mask in L1a -- are both
+    #: consume -- claim attribution in L2, the proposition mask in L0 -- are both
     #: better off without them.
     MIN_QUOTE_CHARS: int = 40
 
@@ -315,9 +318,12 @@ class Settings(BaseSettings):
     BROWSER_TIMEOUT_S: float = 45.0
     BROWSER_HEADLESS: bool = True
 
-    # --- L1a extractor. Operational, NOT thresholds: no verdict may be tuned here. ---
+    # --- L0's extractor. Operational, NOT thresholds: no verdict may be tuned here. ---
     #: L0 sits on the fast path, and the Anthropic SDK's own default is ten minutes.
-    #: A slow extractor must degrade to "we did not find out", not hold the run open.
+    #: A slow extractor must not hold the run open. Note what changed with the L0 gate:
+    #: a timeout here now FAILS the run rather than degrading it to "we did not find
+    #: out", so this bound is the difference between a slow answer and a red one. See
+    #: todo.md bug 5.
     EXTRACTOR_TIMEOUT_S: float = 15.0
     EXTRACTOR_PROMPT_VERSION: str = "v1"
 

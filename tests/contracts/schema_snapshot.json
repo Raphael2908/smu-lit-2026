@@ -501,7 +501,7 @@
         "type": "string"
       },
       "PropositionKind": {
-        "description": "Why a sentence was judged to require authority (L1a).\n\nNarrow by design: only sentences carrying an explicit legal-assertion cue qualify.\nA classifier that fires on ordinary framing prose would manufacture uncited-claim\nfindings against correct legal writing, which is the same class of error as a false\nfabrication claim.",
+        "description": "Why a sentence was judged to require authority (L0's citedness gate).\n\nNarrow by design: only sentences carrying an explicit legal-assertion cue qualify.\nA classifier that fires on ordinary framing prose would manufacture uncited-claim\nfindings against correct legal writing, which is the same class of error as a false\nfabrication claim.",
         "enum": [
           "holding",
           "legal_test",
@@ -533,7 +533,7 @@
         "type": "object"
       }
     },
-    "description": "A sentence that asserts law, and therefore needs authority behind it (L1a).\n\nExtraction is NARROW on purpose: a sentence qualifies only on an explicit legal\nassertion cue (a holding verb with a judicial subject, a statement of a test, an\nappeal to settled law, a statutory obligation). Framing, hedges, questions,\napplications to the user's own facts and quoted material are all excluded, because\na proposition classifier that fires on ordinary prose manufactures uncited-claim\nfindings against correct legal writing.\n\nCoverage is the mirror image: DELIBERATELY GENEROUS. Citation placement in prose\nhas no fixed structure -- authority may precede the proposition, follow it, or sit\nonce at the head of a paragraph that discusses it for five sentences -- so anything\nin the same paragraph counts. Errors therefore fall towards calling an uncited\nclaim cited, never the reverse.",
+    "description": "A sentence that asserts law, and therefore needs authority behind it (L0).\n\nExtraction is NARROW on purpose: a sentence qualifies only on an explicit legal\nassertion cue (a holding verb with a judicial subject, a statement of a test, an\nappeal to settled law, a statutory obligation). Framing, hedges, questions,\napplications to the user's own facts and quoted material are all excluded, because\na proposition classifier that fires on ordinary prose manufactures uncited-claim\nfindings against correct legal writing.\n\nCoverage is the mirror image: DELIBERATELY GENEROUS. Citation placement in prose\nhas no fixed structure -- authority may precede the proposition, follow it, or sit\nonce at the head of a paragraph that discusses it for five sentences -- so anything\nin the same paragraph counts. Errors therefore fall towards calling an uncited\nclaim cited, never the reverse.",
     "properties": {
       "attributed_cluster_ordinal": {
         "anyOf": [
@@ -632,7 +632,7 @@
         "type": "object"
       }
     },
-    "description": "Text presented as a DIRECT QUOTATION.\n\nNOTHING VERIFIES A QUOTATION ANY MORE, AND THIS TYPE IS STILL LOAD-BEARING. The\ncheck that compared quoted text against the fetched judgment was removed. It turned\non a fuzzy 75/90 band, and an honest paraphrase and an invented sentence score 3.6\npoints apart under it -- noise, in both directions across two measurements\n(docs/03-findings.md Part 3, docs/v1-plan.md F8). A check that cannot separate its\ntwo most important inputs must not be able to FAIL a run. What survives are two\nconsumers that need the spans and never needed the score:\n\n* L3 attributes a claim to a citation when the claim overlaps a quotation hung on\n  that citation (``layers/l2_alignment.py``, ``_quote_spans_by_cluster``).\n* L1a masks quoted text before extracting propositions, so a quotation is never\n  scored as the answer's own assertion (``extraction/propositions.py``, ``_mask``).\n\nDelete this type and both break silently: claims lose their citation, and every\nquoted sentence starts counting as an uncited assertion of law.",
+    "description": "Text presented as a DIRECT QUOTATION.\n\nNOTHING VERIFIES A QUOTATION ANY MORE, AND THIS TYPE IS STILL LOAD-BEARING. The\ncheck that compared quoted text against the fetched judgment was removed. It turned\non a fuzzy 75/90 band, and an honest paraphrase and an invented sentence score 3.6\npoints apart under it -- noise, in both directions across two measurements\n(docs/03-findings.md Part 3, docs/v1-plan.md F8). A check that cannot separate its\ntwo most important inputs must not be able to FAIL a run. What survives are two\nconsumers that need the spans and never needed the score:\n\n* L3 attributes a claim to a citation when the claim overlaps a quotation hung on\n  that citation (``layers/l2_alignment.py``, ``_quote_spans_by_cluster``).\n* L0 masks quoted text before extracting propositions, so a quotation is never\n  scored as the answer's own assertion (``extraction/propositions.py``, ``_mask``).\n\nDelete this type and both break silently: claims lose their citation, and every\nquoted sentence starts counting as an uncited assertion of law.",
     "properties": {
       "attributed_cluster_ordinal": {
         "anyOf": [
@@ -834,7 +834,7 @@
         "type": "object"
       },
       "ExtractedProposition": {
-        "description": "A sentence that asserts law, and therefore needs authority behind it (L1a).\n\nExtraction is NARROW on purpose: a sentence qualifies only on an explicit legal\nassertion cue (a holding verb with a judicial subject, a statement of a test, an\nappeal to settled law, a statutory obligation). Framing, hedges, questions,\napplications to the user's own facts and quoted material are all excluded, because\na proposition classifier that fires on ordinary prose manufactures uncited-claim\nfindings against correct legal writing.\n\nCoverage is the mirror image: DELIBERATELY GENEROUS. Citation placement in prose\nhas no fixed structure -- authority may precede the proposition, follow it, or sit\nonce at the head of a paragraph that discusses it for five sentences -- so anything\nin the same paragraph counts. Errors therefore fall towards calling an uncited\nclaim cited, never the reverse.",
+        "description": "A sentence that asserts law, and therefore needs authority behind it (L0).\n\nExtraction is NARROW on purpose: a sentence qualifies only on an explicit legal\nassertion cue (a holding verb with a judicial subject, a statement of a test, an\nappeal to settled law, a statutory obligation). Framing, hedges, questions,\napplications to the user's own facts and quoted material are all excluded, because\na proposition classifier that fires on ordinary prose manufactures uncited-claim\nfindings against correct legal writing.\n\nCoverage is the mirror image: DELIBERATELY GENEROUS. Citation placement in prose\nhas no fixed structure -- authority may precede the proposition, follow it, or sit\nonce at the head of a paragraph that discusses it for five sentences -- so anything\nin the same paragraph counts. Errors therefore fall towards calling an uncited\nclaim cited, never the reverse.",
         "properties": {
           "attributed_cluster_ordinal": {
             "anyOf": [
@@ -898,7 +898,7 @@
         "type": "object"
       },
       "ExtractedQuote": {
-        "description": "Text presented as a DIRECT QUOTATION.\n\nNOTHING VERIFIES A QUOTATION ANY MORE, AND THIS TYPE IS STILL LOAD-BEARING. The\ncheck that compared quoted text against the fetched judgment was removed. It turned\non a fuzzy 75/90 band, and an honest paraphrase and an invented sentence score 3.6\npoints apart under it -- noise, in both directions across two measurements\n(docs/03-findings.md Part 3, docs/v1-plan.md F8). A check that cannot separate its\ntwo most important inputs must not be able to FAIL a run. What survives are two\nconsumers that need the spans and never needed the score:\n\n* L3 attributes a claim to a citation when the claim overlaps a quotation hung on\n  that citation (``layers/l2_alignment.py``, ``_quote_spans_by_cluster``).\n* L1a masks quoted text before extracting propositions, so a quotation is never\n  scored as the answer's own assertion (``extraction/propositions.py``, ``_mask``).\n\nDelete this type and both break silently: claims lose their citation, and every\nquoted sentence starts counting as an uncited assertion of law.",
+        "description": "Text presented as a DIRECT QUOTATION.\n\nNOTHING VERIFIES A QUOTATION ANY MORE, AND THIS TYPE IS STILL LOAD-BEARING. The\ncheck that compared quoted text against the fetched judgment was removed. It turned\non a fuzzy 75/90 band, and an honest paraphrase and an invented sentence score 3.6\npoints apart under it -- noise, in both directions across two measurements\n(docs/03-findings.md Part 3, docs/v1-plan.md F8). A check that cannot separate its\ntwo most important inputs must not be able to FAIL a run. What survives are two\nconsumers that need the spans and never needed the score:\n\n* L3 attributes a claim to a citation when the claim overlaps a quotation hung on\n  that citation (``layers/l2_alignment.py``, ``_quote_spans_by_cluster``).\n* L0 masks quoted text before extracting propositions, so a quotation is never\n  scored as the answer's own assertion (``extraction/propositions.py``, ``_mask``).\n\nDelete this type and both break silently: claims lose their citation, and every\nquoted sentence starts counting as an uncited assertion of law.",
         "properties": {
           "attributed_cluster_ordinal": {
             "anyOf": [
@@ -954,7 +954,7 @@
         "type": "object"
       },
       "PropositionKind": {
-        "description": "Why a sentence was judged to require authority (L1a).\n\nNarrow by design: only sentences carrying an explicit legal-assertion cue qualify.\nA classifier that fires on ordinary framing prose would manufacture uncited-claim\nfindings against correct legal writing, which is the same class of error as a false\nfabrication claim.",
+        "description": "Why a sentence was judged to require authority (L0's citedness gate).\n\nNarrow by design: only sentences carrying an explicit legal-assertion cue qualify.\nA classifier that fires on ordinary framing prose would manufacture uncited-claim\nfindings against correct legal writing, which is the same class of error as a false\nfabrication claim.",
         "enum": [
           "holding",
           "legal_test",
@@ -986,7 +986,7 @@
         "type": "object"
       },
       "StatuteReference": {
-        "description": "A statutory reference written in the output.\n\nKept OUT of ``CitationCluster`` deliberately. A cluster is something L1b tries to\nresolve against the judgment corpus, and a statute is not in that corpus -- making\nstatutes clusters would emit a CITATION_UNVERIFIED warning for every correctly\ncited section. But a statute IS authority for the purposes of L1a, which asks only\nwhether a proposition rests on anything at all.\n\n``specific`` separates 'section 20 of the Building Control Act (Cap 29)' from a\nbare 'the Act'. Only a specific reference counts as authority on its own; a vague\none is itself a proposition needing support from something named earlier.",
+        "description": "A statutory reference written in the output.\n\nKept OUT of ``CitationCluster`` deliberately. A cluster is something L1a tries to\nresolve against the judgment corpus, and a statute is not in that corpus -- making\nstatutes clusters would emit a CITATION_UNVERIFIED warning for every correctly\ncited section. But a statute IS authority for the purposes of L0's gate, which asks\nwhether a proposition rests on anything at all.\n\n``specific`` separates 'section 20 of the Building Control Act (Cap 29)' from a\nbare 'the Act'. Only a specific reference counts as authority on its own; a vague\none is itself a proposition needing support from something named earlier.",
         "properties": {
           "act": {
             "anyOf": [
@@ -1229,6 +1229,7 @@
       "FindingCode": {
         "description": "Every way the system can complain. Stable identifiers -- the UI maps these to copy.",
         "enum": [
+          "PREPROCESSING_FAILED",
           "OUTPUT_UNCITED",
           "PROPOSITION_UNCITED",
           "CITATION_NOT_FOUND",
@@ -1268,7 +1269,7 @@
         "type": "string"
       },
       "Layer": {
-        "description": "The four scoring layers, plus the extraction pre-pass.\n\nThere used to be five, because source trust was given a layer of its own. It is not\na peer of \"does the argument follow from the source?\" -- it is one of the things\nLayer 1 asks about a citation, and it now sits inside Layer 1 as sub-check 1c (see\n``SubLayer``). Everything after it moved down one.",
+        "description": "The preprocessing gate, then the four scoring layers.\n\nL0 is where the model reads the answer. Everything after it is deterministic or\nmeasured, and that split is the point: L1 advertises \"no model -- closed index and\ntier lists\", which was untrue while its first sub-check counted what Claude Haiku\nreturned. Citedness moved to L0 so the claim is true, and 1b/1c moved up to 1a/1b\nbehind it.",
         "enum": [
           "L0",
           "L1",
@@ -1280,7 +1281,7 @@
         "type": "string"
       },
       "Severity": {
-        "description": "How a finding affects the verdict.\n\nFAIL from any of L1-L3 skips the judge entirely (fail-fast gate).\nWARN passes but annotates. INFO is reporting only.",
+        "description": "How a finding affects the verdict.\n\nFAIL from L0 or any of L1-L3 skips the judge entirely (fail-fast gate); a FAIL\nin L0 ends the run before L1 starts at all.\nWARN passes but annotates. INFO is reporting only.",
         "enum": [
           "fail",
           "warn",
@@ -1311,11 +1312,10 @@
         "type": "object"
       },
       "SubLayer": {
-        "description": "The named checks inside Layer 1, in the order they depend on each other.\n\nLayer 1 asks one question -- \"is the citation integrity of this answer sound?\" --\nand answers it in three parts. They are a real contract, not prose: each finding\ncarries the sub-check that raised it, and ``LayerResult.sub_results`` reports each\none's status, so a reader can see WHICH part failed without the layer having to\nsplit into three rows the API would then have to call layers.\n\nValues match the strings these checks were already tagged with informally, so\nnothing downstream has to relearn the vocabulary.",
+        "description": "The named checks inside Layer 1, in the order they depend on each other.\n\nLayer 1 asks one question -- \"is the citation integrity of this answer sound?\" --\nand answers it in two parts. They are a real contract, not prose: each finding\ncarries the sub-check that raised it, and ``LayerResult.sub_results`` reports each\none's status, so a reader can see WHICH part failed without the layer having to\nsplit into two rows the API would then have to call layers.\n\nThere used to be a third, 1a, asking whether the output cited anything at all. It\ncounted what an LLM extractor returned, which is not something a layer badged\ndeterministic may contain, so it is now L0's gate and the two that remain moved up.",
         "enum": [
           "L1a",
-          "L1b",
-          "L1c"
+          "L1b"
         ],
         "title": "SubLayer",
         "type": "string"
@@ -1550,7 +1550,7 @@
         "type": "object"
       },
       "ExtractedProposition": {
-        "description": "A sentence that asserts law, and therefore needs authority behind it (L1a).\n\nExtraction is NARROW on purpose: a sentence qualifies only on an explicit legal\nassertion cue (a holding verb with a judicial subject, a statement of a test, an\nappeal to settled law, a statutory obligation). Framing, hedges, questions,\napplications to the user's own facts and quoted material are all excluded, because\na proposition classifier that fires on ordinary prose manufactures uncited-claim\nfindings against correct legal writing.\n\nCoverage is the mirror image: DELIBERATELY GENEROUS. Citation placement in prose\nhas no fixed structure -- authority may precede the proposition, follow it, or sit\nonce at the head of a paragraph that discusses it for five sentences -- so anything\nin the same paragraph counts. Errors therefore fall towards calling an uncited\nclaim cited, never the reverse.",
+        "description": "A sentence that asserts law, and therefore needs authority behind it (L0).\n\nExtraction is NARROW on purpose: a sentence qualifies only on an explicit legal\nassertion cue (a holding verb with a judicial subject, a statement of a test, an\nappeal to settled law, a statutory obligation). Framing, hedges, questions,\napplications to the user's own facts and quoted material are all excluded, because\na proposition classifier that fires on ordinary prose manufactures uncited-claim\nfindings against correct legal writing.\n\nCoverage is the mirror image: DELIBERATELY GENEROUS. Citation placement in prose\nhas no fixed structure -- authority may precede the proposition, follow it, or sit\nonce at the head of a paragraph that discusses it for five sentences -- so anything\nin the same paragraph counts. Errors therefore fall towards calling an uncited\nclaim cited, never the reverse.",
         "properties": {
           "attributed_cluster_ordinal": {
             "anyOf": [
@@ -1614,7 +1614,7 @@
         "type": "object"
       },
       "ExtractedQuote": {
-        "description": "Text presented as a DIRECT QUOTATION.\n\nNOTHING VERIFIES A QUOTATION ANY MORE, AND THIS TYPE IS STILL LOAD-BEARING. The\ncheck that compared quoted text against the fetched judgment was removed. It turned\non a fuzzy 75/90 band, and an honest paraphrase and an invented sentence score 3.6\npoints apart under it -- noise, in both directions across two measurements\n(docs/03-findings.md Part 3, docs/v1-plan.md F8). A check that cannot separate its\ntwo most important inputs must not be able to FAIL a run. What survives are two\nconsumers that need the spans and never needed the score:\n\n* L3 attributes a claim to a citation when the claim overlaps a quotation hung on\n  that citation (``layers/l2_alignment.py``, ``_quote_spans_by_cluster``).\n* L1a masks quoted text before extracting propositions, so a quotation is never\n  scored as the answer's own assertion (``extraction/propositions.py``, ``_mask``).\n\nDelete this type and both break silently: claims lose their citation, and every\nquoted sentence starts counting as an uncited assertion of law.",
+        "description": "Text presented as a DIRECT QUOTATION.\n\nNOTHING VERIFIES A QUOTATION ANY MORE, AND THIS TYPE IS STILL LOAD-BEARING. The\ncheck that compared quoted text against the fetched judgment was removed. It turned\non a fuzzy 75/90 band, and an honest paraphrase and an invented sentence score 3.6\npoints apart under it -- noise, in both directions across two measurements\n(docs/03-findings.md Part 3, docs/v1-plan.md F8). A check that cannot separate its\ntwo most important inputs must not be able to FAIL a run. What survives are two\nconsumers that need the spans and never needed the score:\n\n* L3 attributes a claim to a citation when the claim overlaps a quotation hung on\n  that citation (``layers/l2_alignment.py``, ``_quote_spans_by_cluster``).\n* L0 masks quoted text before extracting propositions, so a quotation is never\n  scored as the answer's own assertion (``extraction/propositions.py``, ``_mask``).\n\nDelete this type and both break silently: claims lose their citation, and every\nquoted sentence starts counting as an uncited assertion of law.",
         "properties": {
           "attributed_cluster_ordinal": {
             "anyOf": [
@@ -1788,7 +1788,7 @@
         "type": "object"
       },
       "PropositionKind": {
-        "description": "Why a sentence was judged to require authority (L1a).\n\nNarrow by design: only sentences carrying an explicit legal-assertion cue qualify.\nA classifier that fires on ordinary framing prose would manufacture uncited-claim\nfindings against correct legal writing, which is the same class of error as a false\nfabrication claim.",
+        "description": "Why a sentence was judged to require authority (L0's citedness gate).\n\nNarrow by design: only sentences carrying an explicit legal-assertion cue qualify.\nA classifier that fires on ordinary framing prose would manufacture uncited-claim\nfindings against correct legal writing, which is the same class of error as a false\nfabrication claim.",
         "enum": [
           "holding",
           "legal_test",
@@ -1797,6 +1797,77 @@
         ],
         "title": "PropositionKind",
         "type": "string"
+      },
+      "RawChunk": {
+        "description": "A chunk before contextualisation.\n\nDeliberately *not* :class:`~verifier.contracts.documents.Chunk`: that contract\nrequires ``embed_input`` and its hash, which only exist once the document summary\nand heading path have been prefixed. Keeping the two apart means the cache key is\nalways derived from the exact string that was sent to the model, never from the\nbare text. ``heading_path`` lives here and not on ``Chunk`` for the same reason --\nit is an input to the embed string, not a property of the embedded unit.",
+        "properties": {
+          "heading_path": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Heading Path",
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/$defs/ChunkKind"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "paragraph_from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paragraph From"
+          },
+          "paragraph_to": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paragraph To"
+          },
+          "span": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Span"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "strategy": {
+            "default": "paragraph",
+            "title": "Strategy",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ordinal",
+          "kind",
+          "text"
+        ],
+        "title": "RawChunk",
+        "type": "object"
       },
       "Resolution": {
         "description": "The outcome of trying to turn a citation into a real document.",
@@ -2115,7 +2186,7 @@
         "type": "object"
       },
       "StatuteReference": {
-        "description": "A statutory reference written in the output.\n\nKept OUT of ``CitationCluster`` deliberately. A cluster is something L1b tries to\nresolve against the judgment corpus, and a statute is not in that corpus -- making\nstatutes clusters would emit a CITATION_UNVERIFIED warning for every correctly\ncited section. But a statute IS authority for the purposes of L1a, which asks only\nwhether a proposition rests on anything at all.\n\n``specific`` separates 'section 20 of the Building Control Act (Cap 29)' from a\nbare 'the Act'. Only a specific reference counts as authority on its own; a vague\none is itself a proposition needing support from something named earlier.",
+        "description": "A statutory reference written in the output.\n\nKept OUT of ``CitationCluster`` deliberately. A cluster is something L1a tries to\nresolve against the judgment corpus, and a statute is not in that corpus -- making\nstatutes clusters would emit a CITATION_UNVERIFIED warning for every correctly\ncited section. But a statute IS authority for the purposes of L0's gate, which asks\nwhether a proposition rests on anything at all.\n\n``specific`` separates 'section 20 of the Building Control Act (Cap 29)' from a\nbare 'the Act'. Only a specific reference counts as authority on its own; a vague\none is itself a proposition needing support from something named earlier.",
         "properties": {
           "act": {
             "anyOf": [
@@ -2184,6 +2255,14 @@
       "ai_output": {
         "title": "Ai Output",
         "type": "string"
+      },
+      "claims": {
+        "default": [],
+        "items": {
+          "$ref": "#/$defs/RawChunk"
+        },
+        "title": "Claims",
+        "type": "array"
       },
       "context": {
         "default": [],
@@ -2420,6 +2499,7 @@
       "FindingCode": {
         "description": "Every way the system can complain. Stable identifiers -- the UI maps these to copy.",
         "enum": [
+          "PREPROCESSING_FAILED",
           "OUTPUT_UNCITED",
           "PROPOSITION_UNCITED",
           "CITATION_NOT_FOUND",
@@ -2459,7 +2539,7 @@
         "type": "string"
       },
       "Layer": {
-        "description": "The four scoring layers, plus the extraction pre-pass.\n\nThere used to be five, because source trust was given a layer of its own. It is not\na peer of \"does the argument follow from the source?\" -- it is one of the things\nLayer 1 asks about a citation, and it now sits inside Layer 1 as sub-check 1c (see\n``SubLayer``). Everything after it moved down one.",
+        "description": "The preprocessing gate, then the four scoring layers.\n\nL0 is where the model reads the answer. Everything after it is deterministic or\nmeasured, and that split is the point: L1 advertises \"no model -- closed index and\ntier lists\", which was untrue while its first sub-check counted what Claude Haiku\nreturned. Citedness moved to L0 so the claim is true, and 1b/1c moved up to 1a/1b\nbehind it.",
         "enum": [
           "L0",
           "L1",
@@ -2483,7 +2563,7 @@
         "type": "string"
       },
       "Severity": {
-        "description": "How a finding affects the verdict.\n\nFAIL from any of L1-L3 skips the judge entirely (fail-fast gate).\nWARN passes but annotates. INFO is reporting only.",
+        "description": "How a finding affects the verdict.\n\nFAIL from L0 or any of L1-L3 skips the judge entirely (fail-fast gate); a FAIL\nin L0 ends the run before L1 starts at all.\nWARN passes but annotates. INFO is reporting only.",
         "enum": [
           "fail",
           "warn",
@@ -2514,11 +2594,10 @@
         "type": "object"
       },
       "SubLayer": {
-        "description": "The named checks inside Layer 1, in the order they depend on each other.\n\nLayer 1 asks one question -- \"is the citation integrity of this answer sound?\" --\nand answers it in three parts. They are a real contract, not prose: each finding\ncarries the sub-check that raised it, and ``LayerResult.sub_results`` reports each\none's status, so a reader can see WHICH part failed without the layer having to\nsplit into three rows the API would then have to call layers.\n\nValues match the strings these checks were already tagged with informally, so\nnothing downstream has to relearn the vocabulary.",
+        "description": "The named checks inside Layer 1, in the order they depend on each other.\n\nLayer 1 asks one question -- \"is the citation integrity of this answer sound?\" --\nand answers it in two parts. They are a real contract, not prose: each finding\ncarries the sub-check that raised it, and ``LayerResult.sub_results`` reports each\none's status, so a reader can see WHICH part failed without the layer having to\nsplit into two rows the API would then have to call layers.\n\nThere used to be a third, 1a, asking whether the output cited anything at all. It\ncounted what an LLM extractor returned, which is not something a layer badged\ndeterministic may contain, so it is now L0's gate and the two that remain moved up.",
         "enum": [
           "L1a",
-          "L1b",
-          "L1c"
+          "L1b"
         ],
         "title": "SubLayer",
         "type": "string"
@@ -3125,6 +3204,7 @@
       "FindingCode": {
         "description": "Every way the system can complain. Stable identifiers -- the UI maps these to copy.",
         "enum": [
+          "PREPROCESSING_FAILED",
           "OUTPUT_UNCITED",
           "PROPOSITION_UNCITED",
           "CITATION_NOT_FOUND",
@@ -3164,7 +3244,7 @@
         "type": "string"
       },
       "Layer": {
-        "description": "The four scoring layers, plus the extraction pre-pass.\n\nThere used to be five, because source trust was given a layer of its own. It is not\na peer of \"does the argument follow from the source?\" -- it is one of the things\nLayer 1 asks about a citation, and it now sits inside Layer 1 as sub-check 1c (see\n``SubLayer``). Everything after it moved down one.",
+        "description": "The preprocessing gate, then the four scoring layers.\n\nL0 is where the model reads the answer. Everything after it is deterministic or\nmeasured, and that split is the point: L1 advertises \"no model -- closed index and\ntier lists\", which was untrue while its first sub-check counted what Claude Haiku\nreturned. Citedness moved to L0 so the claim is true, and 1b/1c moved up to 1a/1b\nbehind it.",
         "enum": [
           "L0",
           "L1",
@@ -3409,7 +3489,7 @@
         "type": "string"
       },
       "Severity": {
-        "description": "How a finding affects the verdict.\n\nFAIL from any of L1-L3 skips the judge entirely (fail-fast gate).\nWARN passes but annotates. INFO is reporting only.",
+        "description": "How a finding affects the verdict.\n\nFAIL from L0 or any of L1-L3 skips the judge entirely (fail-fast gate); a FAIL\nin L0 ends the run before L1 starts at all.\nWARN passes but annotates. INFO is reporting only.",
         "enum": [
           "fail",
           "warn",
@@ -3440,11 +3520,10 @@
         "type": "object"
       },
       "SubLayer": {
-        "description": "The named checks inside Layer 1, in the order they depend on each other.\n\nLayer 1 asks one question -- \"is the citation integrity of this answer sound?\" --\nand answers it in three parts. They are a real contract, not prose: each finding\ncarries the sub-check that raised it, and ``LayerResult.sub_results`` reports each\none's status, so a reader can see WHICH part failed without the layer having to\nsplit into three rows the API would then have to call layers.\n\nValues match the strings these checks were already tagged with informally, so\nnothing downstream has to relearn the vocabulary.",
+        "description": "The named checks inside Layer 1, in the order they depend on each other.\n\nLayer 1 asks one question -- \"is the citation integrity of this answer sound?\" --\nand answers it in two parts. They are a real contract, not prose: each finding\ncarries the sub-check that raised it, and ``LayerResult.sub_results`` reports each\none's status, so a reader can see WHICH part failed without the layer having to\nsplit into two rows the API would then have to call layers.\n\nThere used to be a third, 1a, asking whether the output cited anything at all. It\ncounted what an LLM extractor returned, which is not something a layer badged\ndeterministic may contain, so it is now L0's gate and the two that remain moved up.",
         "enum": [
           "L1a",
-          "L1b",
-          "L1c"
+          "L1b"
         ],
         "title": "SubLayer",
         "type": "string"
@@ -3897,7 +3976,7 @@
         "type": "object"
       }
     },
-    "description": "A statutory reference written in the output.\n\nKept OUT of ``CitationCluster`` deliberately. A cluster is something L1b tries to\nresolve against the judgment corpus, and a statute is not in that corpus -- making\nstatutes clusters would emit a CITATION_UNVERIFIED warning for every correctly\ncited section. But a statute IS authority for the purposes of L1a, which asks only\nwhether a proposition rests on anything at all.\n\n``specific`` separates 'section 20 of the Building Control Act (Cap 29)' from a\nbare 'the Act'. Only a specific reference counts as authority on its own; a vague\none is itself a proposition needing support from something named earlier.",
+    "description": "A statutory reference written in the output.\n\nKept OUT of ``CitationCluster`` deliberately. A cluster is something L1a tries to\nresolve against the judgment corpus, and a statute is not in that corpus -- making\nstatutes clusters would emit a CITATION_UNVERIFIED warning for every correctly\ncited section. But a statute IS authority for the purposes of L0's gate, which asks\nwhether a proposition rests on anything at all.\n\n``specific`` separates 'section 20 of the Building Control Act (Cap 29)' from a\nbare 'the Act'. Only a specific reference counts as authority on its own; a vague\none is itself a proposition needing support from something named earlier.",
     "properties": {
       "act": {
         "anyOf": [

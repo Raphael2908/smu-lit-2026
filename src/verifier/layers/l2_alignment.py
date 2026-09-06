@@ -152,7 +152,12 @@ class SourceGroundingLayer(BaseLayer):
                 detail={"reason": "no_citations"},
             )
 
-        raw_claims = await chunk_output_claims(data.ai_output, summariser=self._summariser)
+        # L0 split the answer into claims once, so L2 and L3 score the SAME list. The
+        # local fallback stays because a layer driven directly -- in a test, or by a
+        # caller that built its own LayerInput -- still has to work with nothing supplied.
+        raw_claims = list(data.claims) or await chunk_output_claims(
+            data.ai_output, summariser=self._summariser
+        )
         if not raw_claims:
             return LayerResult(
                 layer=self.layer,

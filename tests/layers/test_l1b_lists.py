@@ -1,8 +1,8 @@
-"""L2 -- source trust, and the invariant that keeps it honest.
+"""L1's sub-check 1b -- source trust.
 
-Sub-check 1c in isolation. The merged behaviour -- and the security property that a
-whitelist can never clear a 1b fabrication finding -- lives in ``test_l1_composite.py``,
-because that is where the two checks now meet.
+Sub-check 1b in isolation. The merged behaviour -- and the security property that a
+whitelist can never clear a 1a fabrication finding -- lives in ``test_l1_composite.py``,
+because that property is about the merge and cannot be observed from here.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from verifier.contracts.enums import (
     Severity,
 )
 from verifier.contracts.layers import ExtractionResult, LayerInput
-from verifier.layers.l1ab_citations import CitationExistenceLayer
-from verifier.layers.l1c_lists import SourceTrustLayer, normalize_domain
+from verifier.layers.l1a_existence import CitationExistenceLayer
+from verifier.layers.l1b_lists import SourceTrustLayer, normalize_domain
 from verifier.repos.memory import InMemoryListRepo
 from verifier.repos.seed_lists import SEED_ENTRIES, build_seeded_list_repo, seed_lists
 
@@ -159,10 +159,10 @@ async def test_coverage_is_complete_only_when_every_domain_matched():
 # --- THE invariant -----------------------------------------------------------------
 
 
-async def test_1c_clears_a_trusted_domain_without_touching_1b():
-    """1c suppresses its OWN findings on a whitelist hit, and nothing else.
+async def test_1b_clears_a_trusted_domain_without_touching_1a():
+    """1b suppresses its OWN findings on a whitelist hit, and nothing else.
 
-    1b asks "does this citation exist?"; 1c asks "is this source trustworthy?". They are
+    1a asks "does this citation exist?"; 1b asks "is this source trustworthy?". They are
     different questions and BOTH must pass. This is the unit-level half of the property;
     ``test_l1_composite.py`` asserts it survives the merge, which is where it could
     actually break.
@@ -183,16 +183,16 @@ async def test_1c_clears_a_trusted_domain_without_touching_1b():
     assert l1.status is LayerStatus.FAIL
     assert FindingCode.CITATION_NOT_FOUND in codes(l1)
 
-    # The run therefore still fails. 1c emits only its own findings and never rewrites,
+    # The run therefore still fails. 1b emits only its own findings and never rewrites,
     # downgrades or drops another sub-check's.
     combined = l1.findings + l2.findings
     assert any(f.severity is Severity.FAIL for f in combined)
     assert all(f.layer is l2.layer for f in l2.findings)
-    assert l2.detail["whitelist_scope"] == "l2_only"
+    assert l2.detail["whitelist_scope"] == "1b_only"
 
 
 async def test_a_blacklisted_source_fails_even_when_the_citation_is_real():
-    """The mirror image: 1b passing does not clear 1c either."""
+    """The mirror image: 1a passing does not clear 1b either."""
     real = citation()
     resolutions = {real.citation_key: resolved(real, BLACK)}
     data = layer_input(clusters=(cluster_of(real),), resolutions=resolutions)

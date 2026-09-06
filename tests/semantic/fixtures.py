@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from verifier.contracts.chunks import RawChunk
 from verifier.contracts.citations import (
     CitationCluster,
     ExtractedCitation,
@@ -234,6 +235,7 @@ def layer_input(
     documents: dict[str, SourceDocument] | None = None,
     is_followup: bool = False,
     run_id: str = "run-test",
+    claims: tuple[RawChunk, ...] = (),
 ) -> LayerInput:
     return LayerInput(
         run_id=run_id,
@@ -243,6 +245,9 @@ def layer_input(
         extraction=ExtractionResult(clusters=clusters),
         resolutions=resolutions or {},
         documents=documents or {},
+        # Empty by default on purpose: a layer driven directly still has to split for
+        # itself, which is what keeps every other test in this suite meaningful.
+        claims=claims,
     )
 
 

@@ -152,8 +152,8 @@ class JudgeContext:
     citations: tuple[str, ...] = ()
     retrieved_passages: tuple[RetrievedPassage, ...] = ()
     deterministic_findings: tuple[Finding, ...] = ()
-    #: Assertions L1a found no authority for. Handed to the judge separately from the
-    #: findings list because attribution in prose is exactly the judgement L1a refuses
+    #: Assertions L0 found no authority for. Handed to the judge separately from the
+    #: findings list because attribution in prose is exactly the judgement L0 refuses
     #: to make deterministically: whether a citation two sentences away really does
     #: support this claim is a reasoning question, and the judge is where reasoning is
     #: allowed to reach a verdict. It can only ever convict on them.
@@ -575,9 +575,9 @@ def _opt_float(value: object) -> float | None:
 
 
 def _render_uncited(propositions: tuple[str, ...]) -> str:
-    """The assertions L1a could find no authority for, as a numbered list.
+    """The assertions L0 could find no authority for, as a numbered list.
 
-    L1a deliberately stops at "no citation is in scope for this sentence". Whether the
+    L0 deliberately stops at "no citation is in scope for this sentence". Whether the
     authority cited elsewhere in the answer actually supports it is a reasoning
     question, and this is the layer permitted to answer one.
     """
@@ -587,7 +587,7 @@ def _render_uncited(propositions: tuple[str, ...]) -> str:
 
 
 def propositions_from_findings(findings: Sequence[Finding]) -> tuple[str, ...]:
-    """Pull L1a's uncited assertions back out of the findings it produced.
+    """Pull L0's uncited assertions back out of the findings it produced.
 
     Reading them from the findings rather than threading the extraction result through
     the judge phase keeps ``run_judge_phase`` able to work from a restored ``RunState``

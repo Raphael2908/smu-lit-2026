@@ -1,8 +1,10 @@
 """Layer registry.
 
-Execution order is NOT this dict's order -- see pipeline/orchestrator.py. Every
-deterministic layer now starts at t=0: with source trust folded into L1 as sub-check
-1c, nothing is left that has to wait for another layer's verdict. L4 runs only if every
+Execution order is NOT this dict's order -- see pipeline/orchestrator.py.
+
+L0 gates: it runs first, alone, and a FAIL there ends the run before L1 starts. Every
+SCORING layer then starts at t=0 -- with source trust folded into L1 as sub-check 1b,
+nothing is left that has to wait for another layer's verdict. L4 runs only if every
 deterministic layer passed.
 """
 
@@ -14,6 +16,10 @@ from verifier.contracts.layers import LayerProtocol
 
 def build_layer(layer: Layer) -> LayerProtocol:
     match layer:
+        case Layer.L0_PREPROCESSING:
+            from verifier.layers.l0_preprocessing import PreprocessingLayer
+
+            return PreprocessingLayer()
         case Layer.L1_CITATION_INTEGRITY:
             from verifier.layers.l1_citation_integrity import CitationIntegrityLayer
 
@@ -34,7 +40,11 @@ def build_layer(layer: Layer) -> LayerProtocol:
             raise ValueError(f"No implementation registered for {layer}")
 
 
-#: Layers that can fail the run and thereby skip the judge.
+#: Scoring layers that can fail the run and thereby skip the judge.
+#:
+#: L0 is deliberately absent. It can fail a run too, but it is not a peer of these: it
+#: runs BEFORE them and its failure means they never execute at all. Including it here
+#: would put a gate in a tuple whose whole meaning is "these three run together".
 DETERMINISTIC_LAYERS: tuple[Layer, ...] = (
     Layer.L1_CITATION_INTEGRITY,
     Layer.L2_ALIGNMENT,

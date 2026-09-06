@@ -1,7 +1,11 @@
 """The layer DAG.
 
-    L0 extract
-      -> L1's 1c, pre-fetch: the domains the output wrote out ITSELF, against the
+    L0 preprocessing -- the gate. Haiku reads the output and lists its citations;
+              alongside that, the output is split into claims. A FAIL here ENDS THE
+              RUN: L1, L2 and L3 never start, because there is nothing for them to
+              check. Two ways to fail -- the answer asserts law and cites nothing, or
+              we could not read the answer at all.
+      -> L1's 1b, pre-fetch: the domains the output wrote out ITSELF, against the
               trust lists. A blacklist hit FAILS here and the run stops: no HTTP
               request to a court website, no worker hop, no judge tokens. This is the
               cheapest failure the system can produce, and on that path it is Layer 1's
@@ -11,12 +15,23 @@
       -> gate -> L4 judge, or judge_skipped
       -> publish final
 
-EVERY DETERMINISTIC LAYER NOW STARTS AT t=0. Source trust used to be a layer of its own
-that had to run AFTER L1, because a bare citation like [2007] SGCA 37 has no domain
-until the resolver turns it into a URL. It is now L1's sub-check 1c, sequenced inside
-L1 where that data dependency actually lives, so the pipeline has no sequential tail.
+WHY THE MODEL CALL IS IN FRONT AND NOT INSIDE L1. Citedness -- "does this answer offer
+any authority at all?" -- used to be L1's sub-check 1a, which put an LLM extractor
+inside the layer that advertises itself as deterministic. It is now L0's gate, next to
+the model call that feeds it, and L1 makes its claim truthfully. See
+layers/l0_preprocessing.py.
 
-THE PRE-FETCH PASS IS THROWN AWAY UNLESS IT FAILS. It and 1c-proper overlap on the
+EVERY SCORING LAYER STARTS AT t=0. Source trust used to be a layer of its own that had
+to run AFTER L1, because a bare citation like [2007] SGCA 37 has no domain until the
+resolver turns it into a URL. It is now L1's sub-check 1b, sequenced inside L1 where
+that data dependency actually lives, so the pipeline has no sequential tail.
+
+THE CLAIM SPLIT RUNS ALONGSIDE THE GATE, NOT INSIDE THE LAYERS THAT USE IT. L2 and L3
+both score per-claim and used to call the splitter each, which bought two model calls
+per run and let the two layers reason over two different claim lists. One split in L0,
+carried on LayerInput.claims, makes them agree by construction and costs one call.
+
+THE PRE-FETCH PASS IS THROWN AWAY UNLESS IT FAILS. It and 1b-proper overlap on the
 domains the output named outright, so keeping both would report a graylisted domain
 twice -- which is exactly what the two hand-rolled implementations that preceded this
 used to do.
@@ -52,6 +67,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from ulid import ULID
 
 from verifier.contracts.api import EventName
+from verifier.contracts.chunks import RawChunk
 from verifier.contracts.citations import Resolution
 from verifier.contracts.documents import SourceDocument
 from verifier.contracts.enums import (
@@ -161,7 +177,7 @@ class Orchestrator:
     async def run_deterministic(
         self, request: VerifyRequest, *, run_id: str | None = None
     ) -> RunState:
-        """L0 -> L1's 1c pre-fetch -> gather(L1, L2, L3) -> the deterministic verdict."""
+        """L0 gate -> L1's 1b pre-fetch -> gather(L1, L2, L3) -> the deterministic verdict."""
         rid = run_id or new_run_id()
         token = run_id_var.set(rid)
         started = time.perf_counter()
@@ -178,53 +194,20 @@ class Orchestrator:
         try:
             await self._publish(state, publisher, EventName.ACCEPTED, {"status": state.status})
 
-            # --- L0 ---------------------------------------------------------------
+            # --- L0: preprocessing, and the gate ----------------------------------
             extract_started = time.perf_counter()
             extraction, extract_error = await self._extract(request.ai_output)
-            state.timings.extract_ms = int((time.perf_counter() - extract_started) * 1000)
             if extract_error:
                 state.errors.append(extract_error)
+                # Folded into the SAME signal the extractor uses for its own outages.
+                # "The extraction module would not import" and "Haiku timed out" are one
+                # fact to L0: the answer was not read. Keeping them as two would let a
+                # crashed import slip past the gate that a timeout is stopped by.
+                extraction = extraction.model_copy(
+                    update={"extractor_degraded": extraction.extractor_degraded or extract_error}
+                )
             if extraction.extractor_degraded:
-                # Visible on the run, but NOT an L0 error status: the extractor being
-                # down is not a verification failure, and L1a reads the flag itself.
                 state.errors.append(extraction.extractor_degraded)
-            state.layers[Layer.L0_EXTRACT] = LayerResult(
-                layer=Layer.L0_EXTRACT,
-                status=LayerStatus.ERROR if extract_error else LayerStatus.PASS,
-                duration_ms=state.timings.extract_ms,
-                detail={
-                    "clusters": len(extraction.clusters),
-                    "quotes": len(extraction.quotes),
-                    "explicit_domains": list(extraction.explicit_domains),
-                    # The list itself, not just a count: the whole point of putting a
-                    # model in L0 is that a reader can see what it decided the answer
-                    # cited, and the unchecked leftovers alongside it.
-                    "citations": [
-                        {
-                            "ordinal": cluster.ordinal,
-                            "text": cluster.preferred.raw_text,
-                            "type": cluster.preferred.citation_type.value,
-                            "url": cluster.preferred.url,
-                        }
-                        for cluster in extraction.clusters
-                    ],
-                    "untyped": list(extraction.untyped),
-                    "statutes": len(extraction.statutes),
-                    "propositions": len(extraction.propositions),
-                    **(
-                        {"extractor_degraded": extraction.extractor_degraded}
-                        if extraction.extractor_degraded
-                        else {}
-                    ),
-                    **({"error": extract_error} if extract_error else {}),
-                },
-            )
-            await self._publish(
-                state,
-                publisher,
-                EventName.EXTRACTED,
-                state.layers[Layer.L0_EXTRACT].detail,
-            )
 
             base_input = LayerInput(
                 run_id=rid,
@@ -235,9 +218,39 @@ class Orchestrator:
                 extraction=extraction,
             )
 
+            # The claim split RUNS ALONGSIDE the gate, not after it. It needs only the
+            # raw output, so waiting for the gate's verdict would serialise a model call
+            # behind a count for no reason. On the failure path it is simply discarded.
+            l0_result, claims = await asyncio.gather(
+                self._safe_run(self._layer(Layer.L0_PREPROCESSING), base_input),
+                self._split_claims(request.ai_output),
+            )
+            state.timings.extract_ms = int((time.perf_counter() - extract_started) * 1000)
+            l0_result = l0_result.model_copy(
+                update={
+                    "duration_ms": state.timings.extract_ms,
+                    "detail": {**l0_result.detail, **_claim_detail(claims)},
+                }
+            )
+            state.layers[Layer.L0_PREPROCESSING] = l0_result
+            state.findings.extend(l0_result.findings)
+            await self._publish(state, publisher, EventName.EXTRACTED, l0_result.detail)
+
+            if l0_result.has_fail:
+                # THE GATE. L1, L2 and L3 do not run -- not "run and are ignored". Each
+                # of them consumes L0's output, so with no citations and no claim list
+                # there is nothing for them to check; running them anyway would spend a
+                # fetch and ~50 embedding calls to report three NOT_APPLICABLEs.
+                await self._publish_layer(state, publisher, l0_result)
+                return await self._settle_deterministic(
+                    state, publisher, started, short_circuit_early=True
+                )
+
+            base_input = base_input.model_copy(update={"claims": claims})
+
             l1 = await self._l1_layer()
 
-            # --- 1c pre-fetch: the cheapest possible failure -----------------------
+            # --- 1b pre-fetch: the cheapest possible failure -----------------------
             # ``base_input`` carries no resolutions yet, so this sees only the domains
             # the output wrote out itself. Kept ONLY if it fails; otherwise discarded,
             # because L1 re-checks the same domains a few milliseconds later over the
@@ -415,11 +428,12 @@ class Orchestrator:
         An empty extraction is a perfectly coherent run: no citations to check, no
         quotes to verify. It must never be an error state.
 
-        ``extract_with_llm`` is preferred over the deterministic ``extract`` because L1a
+        ``extract_with_llm`` is preferred over the deterministic ``extract`` because L0's gate
         is only as good as what it was given to count. It handles its own failures and
         reports them through ``ExtractionResult.extractor_degraded``; the catch below is
-        the last resort, and note what it returns -- an EMPTY extraction, which L1a would
-        otherwise be entitled to read as "this answer cited nothing".
+        the last resort, and note what it returns -- an EMPTY extraction, which the gate
+        would otherwise be entitled to read as "this answer cited nothing". The caller
+        folds the error into ``extractor_degraded`` so it cannot.
         """
         extractor = self._extractor
         if extractor is None:
@@ -447,6 +461,28 @@ class Orchestrator:
         if not isinstance(result, ExtractionResult):
             return ExtractionResult(), "L0 extraction returned an unexpected type"
         return result, None
+
+    async def _split_claims(self, ai_output: str) -> tuple[RawChunk, ...]:
+        """L0's other job: cut the answer into claim-sized units, once.
+
+        L2 and L3 both score per-claim and each used to call the splitter itself. That
+        bought two model calls per run for one piece of work, and -- worse -- let the
+        two layers reason over two DIFFERENT claim lists, so "claim 3 is not grounded"
+        and "claim 3 does not answer the question" could be about different sentences.
+
+        Never raises and never fails a run. ``chunk_output_claims`` already falls back
+        to deterministic sentence windows on any provider error, and an empty tuple is a
+        legitimate result: both layers keep their own fallback, so the worst case here
+        is that the old duplicated behaviour comes back for one run.
+        """
+        try:
+            from verifier.semantic.chunking import chunk_output_claims
+            from verifier.semantic.defaults import default_summariser
+
+            return tuple(await chunk_output_claims(ai_output, summariser=default_summariser()))
+        except Exception as exc:  # noqa: BLE001 - the layers can still split for themselves
+            log.warning("claim_split_failed", error=str(exc))
+            return ()
 
     def _build_resolver(self, extraction: ExtractionResult) -> SingleFlightResolver[Resolution]:
         """One resolver per run, shared by everything that needs a document.
@@ -577,7 +613,7 @@ class Orchestrator:
             ),
             retrieved_passages=passages_from_layer_results(grounding),
             deterministic_findings=tuple(det_findings),
-            # L1a stopped at "no citation is in scope for this sentence" and only
+            # L0 stopped at "no citation is in scope for this sentence" and only
             # warned. Whether the authority cited elsewhere in the answer actually
             # supports it is a reasoning question, so it goes to the layer allowed to
             # answer one -- which can convict on it, and never acquit.
@@ -615,13 +651,14 @@ class Orchestrator:
         try:
             return await layer.run(data)
         except Exception as exc:  # noqa: BLE001 - deliberately broad; see docstring
+            identity: Layer = getattr(layer, "layer", Layer.L0_PREPROCESSING)
             return LayerResult(
-                layer=getattr(layer, "layer", Layer.L0_EXTRACT),
+                layer=identity,
                 status=LayerStatus.ERROR,
                 findings=(
                     Finding(
-                        id=f"{data.run_id}:{getattr(layer, 'layer', Layer.L0_EXTRACT).value}:error",
-                        layer=getattr(layer, "layer", Layer.L0_EXTRACT),
+                        id=f"{data.run_id}:{identity.value}:error",
+                        layer=identity,
                         code=FindingCode.LAYER_ERROR,
                         severity=Severity.WARN,
                         message=f"Layer could not complete: {exc}",
@@ -753,6 +790,19 @@ async def run_verification(
 
 
 # --- helpers ----------------------------------------------------------------------
+
+
+def _claim_detail(claims: Sequence[RawChunk]) -> dict[str, Any]:
+    """Claim-split provenance for L0's row.
+
+    ``strategy`` matters to a reader: "claims" means the summariser split the answer,
+    "windows" means it did not and we fell back to sentence windows. The two are not
+    equally good, and a panel that hides which one ran hides why a score moved.
+    """
+    return {
+        "claims": len(claims),
+        "claim_strategy": sorted({c.strategy for c in claims}) or ["none"],
+    }
 
 
 def _cache_stats(results: Sequence[LayerResult]) -> CacheStats:

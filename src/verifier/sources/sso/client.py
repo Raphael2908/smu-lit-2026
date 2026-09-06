@@ -24,7 +24,7 @@ WHAT THIS ADAPTER DELIBERATELY CANNOT DO, and why each is a refusal rather than 
 * **``build_url`` returns None for every citation, always.** SSO slugs are not derivable
   from an Act's title, and a wrong guess is not a harmless miss -- ``/Act/PenalCode1871``
   answers HTTP 200 with a soft-404 body. So a bare statutory reference in prose
-  ("s 415 of the Penal Code 1871") stays a ``StatuteReference``: it counts toward L1a's
+  ("s 415 of the Penal Code 1871") stays a ``StatuteReference``: it counts toward L0's
   authority count and goes unverified. Resolving one would need a search adapter this
   does not have, or a ``CitationType.STATUTE`` that would change a frozen contract to buy
   a capability that is not here.
@@ -44,7 +44,7 @@ WHAT THIS ADAPTER DELIBERATELY CANNOT DO, and why each is a refusal rather than 
   So a document built from this HTML would contain sections 1-4 and nothing else. Quote-
   checking section 57 against it would score near zero and emit QUOTE_NOT_FOUND, which is
   a FAIL -- **a real statute, correctly quoted, reported as fabricated.** Withholding the
-  document is what prevents that, and it is why L1c's "no document" branch is silence
+  document is what prevents that, and it is why L1a's "no document" branch is silence
   rather than a finding.
 
   Reading the body needs either a browser that runs the page's JS (SSO answers headless

@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from verifier.contracts.chunks import RawChunk
 from verifier.contracts.citations import (
     CitationCluster,
     ExtractedProposition,
@@ -25,15 +26,15 @@ class ExtractionResult(BaseModel):
 
     clusters: tuple[CitationCluster, ...] = ()
     quotes: tuple[ExtractedQuote, ...] = ()
-    #: Sentences that assert law and therefore need authority. L1a checks whether each
-    #: one has any, which is the question that precedes "does the citation exist": an
+    #: Sentences that assert law and therefore need authority. L0's gate checks whether
+    #: each one has any, which is the question that precedes "does the citation exist": an
     #: output can be perfectly free of fabricated citations by citing nothing at all.
     propositions: tuple[ExtractedProposition, ...] = ()
-    #: Statutory references. Authority for L1a, but never resolved against the judgment
-    #: corpus -- see StatuteReference for why they are not clusters.
+    #: Statutory references. Authority for L0's count, but never resolved against the
+    #: judgment corpus -- see StatuteReference for why they are not clusters.
     statutes: tuple[StatuteReference, ...] = ()
     #: Domains written out explicitly in the output (bare URLs, "according to x.com").
-    #: These carry a domain already, so 1c can check them before anything is fetched.
+    #: These carry a domain already, so 1b can check them before anything is fetched.
     explicit_domains: tuple[str, ...] = ()
     #: Citations the extractor found and the deterministic parser cannot type.
     #:
@@ -41,22 +42,22 @@ class ExtractionResult(BaseModel):
     #: textbook. These are authority -- the answer offered them -- but they are not work
     #: items: resolving one means searching a Singapore judgment corpus for a phrase that
     #: is not in it, and zero hits is exactly what this system reads as fabrication (F6).
-    #: So they COUNT for L1a and are never clustered, resolved or fetched. Kept as raw
-    #: strings because there is, by definition, nothing parsed to keep.
+    #: So they COUNT for L0's authority tally and are never clustered, resolved or
+    #: fetched. Kept as raw strings because there is, by definition, nothing parsed to keep.
     untyped: tuple[str, ...] = ()
     #: Why the citation extractor contributed nothing, when it did not run.
     #:
-    #: Load-bearing, not diagnostic. L1a's FAIL asserts "this output cited nothing",
-    #: which is only a statement about the output if the extractor actually looked. A
-    #: timeout, a missing key or unparseable output leave the two indistinguishable, so
-    #: L1a must not FAIL while this is set -- "cannot verify" is never "fabricated".
+    #: Load-bearing, not diagnostic. It is the difference between the two ways L0 can
+    #: fail: "this output cited nothing" and "we could not read this output". Both end
+    #: the run, and the panel must be able to say which -- reporting an extractor outage
+    #: as an uncited answer would put a fabrication verdict on a vendor's bad afternoon.
     extractor_degraded: str | None = None
 
     @property
     def authority_count(self) -> int:
         """Every distinct piece of authority the output offers, of any kind.
 
-        L1a's FAIL turns on this being zero, which is why it is a plain count and not a
+        L0's FAIL turns on this being zero, which is why it is a plain count and not a
         judgement: no attribution, no thresholds, nothing to be wrong about beyond
         whether the text contains a citation at all.
         """
@@ -79,6 +80,17 @@ class LayerInput(BaseModel):
     is_followup: bool = False
 
     extraction: ExtractionResult = Field(default_factory=ExtractionResult)
+    #: The AI output split into claim-sized units, ONCE, by L0.
+    #:
+    #: L2 and L3 both score per-claim and used to call the splitter separately, which
+    #: bought two model calls per run and let the two layers reason over two different
+    #: claim lists -- so "this claim is not grounded" and "this claim does not answer the
+    #: question" could be about different sentences. Splitting in L0 and carrying the
+    #: result makes them agree by construction.
+    #:
+    #: Empty is a legitimate input, not an error: both layers keep their own fallback so
+    #: a layer driven directly in a test still works with nothing supplied here.
+    claims: tuple[RawChunk, ...] = ()
     #: Populated by the shared single-flight resolver, keyed by citation_key. L1 and
     #: L3 both read these, so one fetch serves both and L3 never waits on L1's verdict.
     resolutions: dict[str, Resolution] = Field(default_factory=dict)
@@ -115,7 +127,7 @@ class LayerResult(BaseModel):
     status: LayerStatus
     findings: tuple[Finding, ...] = ()
     #: Per-sub-check status, when a layer has named sub-checks. Empty for layers that
-    #: ask a single question.
+    #: ask a single question -- which is every layer except L1.
     sub_results: tuple[SubLayerResult, ...] = ()
     score: float | None = None
     duration_ms: int = 0

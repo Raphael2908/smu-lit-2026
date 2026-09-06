@@ -182,7 +182,7 @@ def document_for(url: str | None) -> SourceDocument | None:
     Tries the adapter that owns the host first, then asks the rest. The fallback is not
     redundant: a cross-host redirect means the adapter that fetched a document is not
     necessarily the one that owns the URL we were handed, and silently dropping the
-    document would take L1c's quote check and L2's grounding down with it.
+    document would take L1's document identity check and L2's grounding down with it.
     """
     if not url:
         return None

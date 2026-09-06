@@ -75,7 +75,7 @@ NEUTRAL_CITATION_EXACT = re.compile(
 #: Drawn from the SLR Style Guide's tables of official, semi-official, preferred and
 #: unofficial law reports (2021 ed, para 2-1.1.4). Breadth is a correctness concern
 #: rather than a nicety: a series we do not recognise is authority the answer gets no
-#: credit for, and L1a fails an output that appears to cite nothing.
+#: credit for, and L0's gate fails an output that appears to cite nothing.
 REPORT_SERIES: tuple[str, ...] = (
     # Singapore
     "SLR(R)",
@@ -123,7 +123,7 @@ _SERIES_ALT = "|".join(re.escape(s).replace(r"\ ", r"\s+") for s in REPORT_SERIE
 #: is published by volume number and the year merely records when it was decided
 #: (``(1992) 175 CLR 1``). Accepting only brackets would silently drop every citation to
 #: a volume-organised series -- and a citation we fail to see is a citation the answer
-#: does not get credit for, which at L1a means reporting properly cited work as citing
+#: does not get credit for, which at L0 means reporting properly cited work as citing
 #: nothing at all.
 #:
 #: A year in one or the other is mandatory. Without it "Ch 1" or "AC 562" would match
@@ -404,7 +404,7 @@ SENTENCE_BREAK = re.compile(
 JUDGMENT_PARA_NUMBER = re.compile(r"^\s*(?P<number>\d{1,4})[\s    .]+")
 
 # ---------------------------------------------------------------------------
-# Statutory references (L1a authority) -- SLR Style Guide 2021, para 2-2.1
+# Statutory references (L0 authority) -- SLR Style Guide 2021, para 2-2.1
 # ---------------------------------------------------------------------------
 #
 # The forms the guide prescribes for Singapore legislation:
@@ -416,7 +416,7 @@ JUDGMENT_PARA_NUMBER = re.compile(r"^\s*(?P<number>\d{1,4})[\s    .]+")
 #                             (1985 Rev Ed, 1999 Reprint) Art 12
 #
 # Recognising all of them matters more than it looks: an unrecognised statute is not a
-# missing nicety, it is authority the answer does not get credit for -- and L1a fails an
+# missing nicety, it is authority the answer does not get credit for -- and L0 fails an
 # output that appears to cite nothing at all.
 
 _LEGISLATION_HEAD = r"(?:Act|Code|Ordinance|Constitution|Rules|Regulations|Order|Convention|Bill)"
@@ -449,7 +449,7 @@ SECTION_REFERENCE = re.compile(
 #: single-letter abbreviations are only unambiguous in combination.
 #: The rule half is REQUIRED. "O 14" alone is two characters from ordinary prose,
 #: whereas "O 14 r 1" is unambiguous, and a spurious statute is a spurious authority --
-#: which at L1a means clearing an assertion that nothing actually supports.
+#: which at L0 means clearing an assertion that nothing actually supports.
 ORDER_RULE_REFERENCE = re.compile(
     r"\bO\s*(?P<order>\d{1,3})\s*,?\s*rr?\s*(?P<rule>\d{1,3}(?:\(\d+\))*)\b"
 )
@@ -486,7 +486,7 @@ VAGUE_LEGISLATION = re.compile(
 )
 
 # ---------------------------------------------------------------------------
-# L1a: which sentences assert law, and therefore need authority
+# L0: which sentences assert law, and therefore need authority
 # ---------------------------------------------------------------------------
 #
 # NARROW BY DESIGN, for exactly the reason the case-name parser is: a proposition
@@ -600,7 +600,7 @@ LIST_MARKER = re.compile(r"^\s{0,8}(?:[-*+]\s+|\d{1,2}[.)]\s+)")
 # Every later mention is a properly cited reference. A verifier that only counts full
 # citations would read paragraphs 8 and 20 as unsupported assertions -- which is to say
 # it would penalise the citation style the sponsor's own house guide mandates. That is
-# the single largest source of false positives available to L1a, so these forms are
+# the single largest source of false positives available to L0, so these forms are
 # recognised as authority in their own right.
 
 #: The short title defined after a first citation: ``("ANJ")``, ``(“the Act”)``.

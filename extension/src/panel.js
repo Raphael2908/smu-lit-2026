@@ -26,7 +26,7 @@ globalThis.SIGMA = globalThis.SIGMA || {};
 
 (function panelModule() {
   const LAYER_LABELS = {
-    L0: 'Extraction',
+    L0: 'Preprocessing',
     L1: 'Citation integrity',
     L2: 'Semantic alignment',
     L3: 'Responsiveness',
@@ -36,13 +36,23 @@ globalThis.SIGMA = globalThis.SIGMA || {};
   // Layer 1 asks one question in three parts, and the backend reports each part's
   // status on `sub_results`. They are rows in the same grid, indented -- NOT layers.
   const SUB_LAYER_LABELS = {
-    L1a: 'Cited at all?',
-    L1b: 'Citation exists?',
-    L1c: 'Source trusted?',
+    L1a: 'Citation exists?',
+    L1b: 'Source trusted?',
   };
 
   const DETERMINISTIC_LAYERS = ['L1', 'L2', 'L3'];
   const JUDGE_LAYER = 'L4';
+
+  /*
+   * L0 is rendered, and it is rendered SEPARATELY from the four.
+   *
+   * It is not a scoring layer -- it has no number and is not comparable with the ones
+   * that do -- but it is a gate, and a FAIL there ends the run before L1 starts. Left
+   * invisible (which is what it was), such a run showed a red verdict with four blank
+   * rows and nothing anywhere naming what stopped it. A row that can be the only row is
+   * not optional furniture.
+   */
+  const PREPROCESSING_LAYER = 'L0';
 
   /*
    * `focus` belongs in this map even though nothing buckets findings into it.
@@ -280,6 +290,48 @@ globalThis.SIGMA = globalThis.SIGMA || {};
     row.appendChild(pill);
 
     row.appendChild(el('span', 'sigma-layer-meta'));
+    return row;
+  }
+
+  /*
+   * The L0 row. Same four children as every other row, deliberately different weight.
+   *
+   * It shows a citation COUNT where a layer shows a score, because that is the number
+   * L0 actually has and the one its verdict turns on -- "cites nothing" is a count
+   * reaching zero. Putting an invented 0-1 in the score slot would make the gate look
+   * like a fifth measurement sitting beside L2's calibrated cosine.
+   */
+  function gateRow(result, run) {
+    const row = el('div', 'sigma-layer sigma-gate');
+    row.appendChild(el('span', 'sigma-layer-code', PREPROCESSING_LAYER));
+    row.appendChild(
+      el('span', 'sigma-layer-name', LAYER_LABELS[PREPROCESSING_LAYER] || PREPROCESSING_LAYER)
+    );
+
+    const pending = !result && !(run && run.isFinal);
+    if (pending) {
+      row.appendChild(el('span'));
+    } else {
+      const status = result ? result.status : 'skipped';
+      const pill = el('span', 'sigma-pill', statusLabel(status));
+      pill.setAttribute('data-kind', statusKind(status));
+      row.appendChild(pill);
+    }
+
+    const meta = el('span', 'sigma-layer-meta');
+    if (result) {
+      const detail = result.detail || {};
+      const found = Array.isArray(detail.citations) ? detail.citations.length : null;
+      if (found !== null) {
+        const count = el('span', 'sigma-gate-count', `${found} cited`);
+        count.title = found
+          ? detail.citations.map((c) => c.text).join('\n')
+          : 'The model found no citation in this answer.';
+        meta.appendChild(count);
+      }
+      meta.appendChild(el('span', 'sigma-duration', `${result.duration_ms || 0} ms`));
+    }
+    row.appendChild(meta);
     return row;
   }
 
@@ -648,16 +700,30 @@ globalThis.SIGMA = globalThis.SIGMA || {};
       isFinal: !!state.is_final,
       elapsedMs: ctx && typeof ctx.startedAt === 'number' ? Date.now() - ctx.startedAt : null,
     };
-    for (const code of DETERMINISTIC_LAYERS) {
-      const result = (state.layers || {})[code];
-      layers.appendChild(layerRow(code, result, run));
-      // Layer 1's three sub-checks, indented under it. Absent on every other layer,
-      // and absent on L1 itself until it reports.
-      for (const sub of (result && result.sub_results) || []) {
-        layers.appendChild(subLayerRow(sub));
+    // The gate first, marked as what it is. `sigma-gate` is what keeps a reader from
+    // counting five scoring layers: it carries no score, and the run either passes it
+    // or ends on it.
+    const l0 = (state.layers || {})[PREPROCESSING_LAYER];
+    layers.appendChild(gateRow(l0, run));
+    layers.appendChild(el('div', 'sigma-gate-rule'));
+
+    // A FAIL at the gate means L1-L3 NEVER RAN. Rendering them as pending rows would
+    // show four spinners on a finished run; rendering them as `skipped` would be
+    // accurate but would bury the one row that carries the reason. So on that path the
+    // gate is the whole list -- the same rule the pre-fetch blacklist path follows.
+    const gateFailed = !!l0 && l0.status === 'fail';
+    if (!gateFailed) {
+      for (const code of DETERMINISTIC_LAYERS) {
+        const result = (state.layers || {})[code];
+        layers.appendChild(layerRow(code, result, run));
+        // Layer 1's two sub-checks, indented under it. Absent on every other layer,
+        // and absent on L1 itself until it reports.
+        for (const sub of (result && result.sub_results) || []) {
+          layers.appendChild(subLayerRow(sub));
+        }
       }
+      layers.appendChild(layerRow(JUDGE_LAYER, (state.layers || {})[JUDGE_LAYER], run));
     }
-    layers.appendChild(layerRow(JUDGE_LAYER, (state.layers || {})[JUDGE_LAYER], run));
     bodyEl.appendChild(layers);
 
     // --- deterministic findings ---------------------------------------------------

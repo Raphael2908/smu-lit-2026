@@ -28,16 +28,23 @@ from verifier.contracts.enums import (
     VerdictStage,
 )
 from verifier.contracts.runs import RunOptions
+from verifier.extraction import extract
 from verifier.layers.l1_citation_integrity import CitationIntegrityLayer
 from verifier.pipeline import gate
 from verifier.pipeline.events import InMemoryEventSink
 from verifier.pipeline.orchestrator import Orchestrator
 
+#: An answer that states the law and cites nothing. L0's FAIL, reached by counting.
+UNCITED_ANSWER = (
+    "The test for a duty of care in Singapore is a two-stage inquiry. "
+    "It is well established that factual foreseeability is the threshold requirement."
+)
+
 
 def _real_l1(entries: dict[str, tuple[ListType, str]]) -> dict[Layer, Any]:
     """Stubs for L2/L3, and a REAL Layer 1 wired to a stub trust list.
 
-    Source trust is sub-check 1c inside Layer 1, so a test about blacklists has to run
+    Source trust is sub-check 1b inside Layer 1, so a test about blacklists has to run
     the real composite; stubbing L1 would make it assert nothing at all.
     """
     return {
@@ -125,12 +132,11 @@ async def test_a_blacklisted_explicit_domain_fails_before_any_fetch():
     assert state.short_circuited is True
     assert state.short_circuit_reason == gate.REASON_HARD_FAIL
 
-    # The report says which sub-check decided it, and that the other two never ran.
+    # The report says which sub-check decided it, and that the other never ran.
     l1 = state.layers[Layer.L1_CITATION_INTEGRITY]
     by_sub = {r.sub_layer: r.status for r in l1.sub_results}
-    assert by_sub[SubLayer.L1C_SOURCE_TRUST] is LayerStatus.FAIL
-    assert by_sub[SubLayer.L1A_CITEDNESS] is LayerStatus.SKIPPED
-    assert by_sub[SubLayer.L1B_EXISTENCE] is LayerStatus.SKIPPED
+    assert by_sub[SubLayer.L1B_SOURCE_TRUST] is LayerStatus.FAIL
+    assert by_sub[SubLayer.L1A_EXISTENCE] is LayerStatus.SKIPPED
 
 
 async def test_a_graylisted_domain_warns_and_the_run_continues():
@@ -153,8 +159,8 @@ async def test_a_graylisted_domain_warns_and_the_run_continues():
 async def test_every_deterministic_layer_runs_concurrently_over_one_resolution_pass():
     """L3 depends on nothing and starts at t=0; L1 and L2 share one resolution.
 
-    With source trust folded into L1 as 1c, there is no sequential tail left: all three
-    deterministic layers start together.
+    With source trust folded into L1 as 1b, there is no sequential tail left: all three
+    scoring layers start together once L0's gate has let them.
     """
     order: list[str] = []
     fetches: list[str] = []
@@ -230,10 +236,10 @@ async def test_a_graylisted_explicit_domain_is_reported_exactly_once():
     assert state.verdict is Verdict.WARN
 
 
-async def test_sub_check_1c_sees_the_domain_1b_resolved():
-    """A bare citation has no domain until 1b resolves it.
+async def test_sub_check_1b_sees_the_domain_1a_resolved():
+    """A bare citation has no domain until 1a resolves it.
 
-    That data dependency is why 1c is sequenced last INSIDE Layer 1, rather than being
+    That data dependency is why 1b is sequenced last INSIDE Layer 1, rather than being
     a layer of its own that had to wait for L1 to finish.
     """
 
@@ -256,11 +262,11 @@ async def test_sub_check_1c_sees_the_domain_1b_resolved():
         resolve_citation=resolve,
     )
 
-    state = await orchestrator.run(make_request(), run_id="run-1c")
+    state = await orchestrator.run(make_request(), run_id="run-1b")
 
     l1 = state.layers[Layer.L1_CITATION_INTEGRITY]
-    trust = next(r for r in l1.sub_results if r.sub_layer is SubLayer.L1C_SOURCE_TRUST)
-    # The domain reached 1c only because 1b resolved the citation first.
+    trust = next(r for r in l1.sub_results if r.sub_layer is SubLayer.L1B_SOURCE_TRUST)
+    # The domain reached 1b only because 1a resolved the citation first.
     assert trust.detail["resolved_domains"] == ["www.elitigation.sg"]
     assert trust.detail["explicit_domains"] == [], "the answer named no domain itself"
 
@@ -311,18 +317,104 @@ async def test_a_missing_layer_is_skipped_not_failed(monkeypatch):
     assert state.layers[Layer.L2_ALIGNMENT].findings == ()
 
 
-async def test_a_broken_extractor_degrades_to_an_empty_extraction():
+async def test_a_broken_extractor_fails_the_run_and_stops_it():
+    """A DELIBERATE REVERSAL of what this test used to assert.
+
+    It used to read ``assert state.verdict is Verdict.PASS, "no work items is not a
+    failure"`` -- an extraction crash degraded to an empty extraction and the run
+    carried on to report a clean result.
+
+    That is no longer defensible now L0 is a gate. Every scoring layer consumes L0's
+    output; with no citations and no claim list they have nothing to check, so a run
+    that continued would publish a green badge over an answer nothing read. The gate
+    fails, and L1-L3 never start.
+
+    The cost is recorded in todo.md bug 5: a vendor outage now reds a correct answer.
+    What the run does NOT do is call it a fabrication -- see the finding code.
+    """
+    layers = _all_pass_layers()
+    judge = RecordingJudgeLayer()
+
     def boom(_text: str):
         raise ValueError("regex exploded")
 
-    orchestrator = Orchestrator(
-        layers=_all_pass_layers(), judge=RecordingJudgeLayer(), extractor=boom
-    )
+    orchestrator = Orchestrator(layers=layers, judge=judge, extractor=boom)
     state = await orchestrator.run(make_request(), run_id="run-noextract")
 
-    assert state.layers[Layer.L0_EXTRACT].status is LayerStatus.ERROR
+    assert state.layers[Layer.L0_PREPROCESSING].status is LayerStatus.FAIL
     assert state.errors
-    assert state.verdict is Verdict.PASS, "no work items is not a failure"
+    assert state.verdict is Verdict.FAIL
+
+    # The code says "we could not read this", NOT "you cited nothing".
+    assert [f.code for f in state.findings] == [FindingCode.PREPROCESSING_FAILED]
+
+    # And the gate held: nothing downstream ran, and no judge tokens were spent.
+    assert Layer.L1_CITATION_INTEGRITY not in state.layers
+    assert layers[Layer.L2_ALIGNMENT].calls == 0
+    assert layers[Layer.L3_RESPONSIVENESS].calls == 0
+    assert judge.calls == 0
+
+
+async def test_the_l0_gate_stops_an_uncited_answer_before_any_layer_runs():
+    """The other way through the gate, and the one the diagram leads with.
+
+    An answer that asserts law and offers no authority fails at L0. L1, L2 and L3 do not
+    run -- not "run and are ignored" -- so a red costs one Haiku call and no fetch.
+    """
+    layers = _all_pass_layers()
+    judge = RecordingJudgeLayer()
+    fetches: list[str] = []
+
+    async def resolve(key: str):
+        fetches.append(key)
+        raise AssertionError("an uncited answer must fail before anything is fetched")
+
+    orchestrator = Orchestrator(
+        layers=layers,
+        judge=judge,
+        resolve_citation=resolve,
+        extractor=extractor_for(extract(UNCITED_ANSWER)),
+    )
+    state = await orchestrator.run(make_request(ai_output=UNCITED_ANSWER), run_id="run-uncited")
+
+    assert state.verdict is Verdict.FAIL
+    assert state.layers[Layer.L0_PREPROCESSING].status is LayerStatus.FAIL
+    assert [f.code for f in state.findings] == [FindingCode.OUTPUT_UNCITED]
+
+    assert fetches == []
+    assert Layer.L1_CITATION_INTEGRITY not in state.layers
+    assert layers[Layer.L2_ALIGNMENT].calls == 0
+    assert layers[Layer.L3_RESPONSIVENESS].calls == 0
+    assert judge.calls == 0, "the judge is never reached from an L0 failure"
+    assert state.short_circuited is True
+    assert state.short_circuit_reason == gate.REASON_HARD_FAIL
+
+
+async def test_the_claim_split_reaches_l2_and_l3_from_l0():
+    """One split, two consumers. L2 and L3 used to call the splitter each.
+
+    Beyond the saved model call, this is what makes "claim 3" mean the same sentence in
+    both layers' findings.
+    """
+    seen: dict[Layer, tuple[str, ...]] = {}
+
+    class ClaimRecording(StubLayer):
+        async def run(self, data):  # type: ignore[override]
+            seen[self.layer] = tuple(c.text for c in data.claims)
+            return await super().run(data)
+
+    layers: dict[Layer, Any] = {
+        Layer.L1_CITATION_INTEGRITY: StubLayer(Layer.L1_CITATION_INTEGRITY),
+        Layer.L2_ALIGNMENT: ClaimRecording(Layer.L2_ALIGNMENT),
+        Layer.L3_RESPONSIVENESS: ClaimRecording(Layer.L3_RESPONSIVENESS),
+    }
+    orchestrator = Orchestrator(
+        layers=layers, judge=RecordingJudgeLayer(), extractor=extractor_for(make_extraction())
+    )
+    await orchestrator.run(make_request(), run_id="run-claims")
+
+    assert seen[Layer.L2_ALIGNMENT], "L0 must hand the claim split down"
+    assert seen[Layer.L2_ALIGNMENT] == seen[Layer.L3_RESPONSIVENESS]
 
 
 async def test_the_event_stream_follows_the_documented_order():

@@ -27,11 +27,11 @@ unreachable, because NEUTRAL_CITATION only matches the enumerated SG courts.
 unenumerated series, a practice direction, a textbook -- is real authority we cannot
 check. Clustering it would send the phrase to a case-name search, and zero hits is
 precisely what this system reads as fabrication (F6). So it goes to
-``ExtractionResult.untyped``: it counts for L1a and is never fetched.
+``ExtractionResult.untyped``: it counts for L0's gate and is never fetched.
 
 And when the extractor does not run at all, the result carries ``extractor_degraded``
 and NO citations. There is deliberately no regex fallback: falling back would report a
-run as deterministically checked when it was not. L1a reads the flag and declines to
+run as deterministically checked when it was not. L0 reads the flag and declines to
 fail, which is the same rule as everywhere else here -- "cannot verify" is never
 "fabricated".
 """

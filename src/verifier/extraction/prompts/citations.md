@@ -1,7 +1,7 @@
 <!--
-L1a's citation finder. Placeholders: none -- the answer is sent as the user turn.
+L0's citation finder. Placeholders: none -- the answer is sent as the user turn.
 
-This prompt is the recall half of L1a. The precision half is extraction/citations.py,
+This prompt is the recall half of L0. The precision half is extraction/citations.py,
 which types whatever this returns; a form it cannot type is recorded as authority but
 never fetched. So the failure that matters here is a MISS, not a spurious hit.
 

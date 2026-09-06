@@ -1,4 +1,4 @@
-"""Run L3 over a real judgment and print what it scored, per claim, per config.
+"""Run L2 over a real judgment and print what it scored, per claim, per config.
 
     uv run python -m scripts.l3_probe                    # grouped vs paragraph chunks
     uv run python -m scripts.l3_probe --mode heading     # add a prefix arm
@@ -8,12 +8,12 @@
 
 Arms are the GRID of --mode x --chunk, and each arm reports TWO things.
 
-*The live run* -- L3 through the layer on a real answer, with whatever claims the
+*The live run* -- L2 through the layer on a real answer, with whatever claims the
 splitter produces. This is what the pipeline actually does.
 
 *Separation* -- a fixed calibration set of GENUINE claims (verified present in the
 cited judgment, by paragraph) and FOREIGN ones (true Singapore law the judgment does
-not decide), scored the way L3 scores: max cos(claim, chunks).
+not decide), scored the way L2 scores: max cos(claim, chunks).
 
 The second exists because the first cannot answer the question on its own. A change
 that raises every score looks like an improvement when measured on genuine claims
@@ -102,9 +102,10 @@ DEFAULT_ANSWER = (
 
 DEFAULT_QUESTION = "What is the test for a duty of care in Singapore?"
 
-#: The answer whose L3 failure opened bug 1 (docs/03-findings.md F14): a correct answer
-#: citing [2007] SGCA 37 and quoting paragraph [115] verbatim, which L3 failed at 0.325
-#: against the 0.35 floor while L1 scored the quote 1.000 and L4 scored 0.751.
+#: The answer whose grounding failure opened bug 1 (docs/03-findings.md F14): a correct
+#: answer citing [2007] SGCA 37 and quoting paragraph [115] verbatim, which the grounding
+#: layer failed at 0.325 against the 0.35 floor. (F14's numbers were recorded under the
+#: five-layer numbering, where grounding was L3 and the judge was L5.)
 #:
 #: Reconstructed from F14's description -- the original was a live run and its text was
 #: never captured, which is precisely why this one is kept. The verbatim quotation is
@@ -210,7 +211,7 @@ def layer_input(question: str, answer: str, document: SourceDocument) -> LayerIn
     """
     extraction = extract(answer)
     if not extraction.clusters:
-        raise SystemExit("no citation found in the answer text; L3 would be NOT_APPLICABLE")
+        raise SystemExit("no citation found in the answer text; L2 would be NOT_APPLICABLE")
     key = extraction.clusters[0].preferred.citation_key
     return LayerInput(
         run_id="l3-probe",
@@ -416,7 +417,7 @@ def report(arm: dict[str, Any]) -> None:
 
     sep = arm["separation"]
     print("-" * 78)
-    print("  separation (fixed calibration set, scored as L3 scores)")
+    print("  separation (fixed calibration set, scored as L2 scores)")
     for row in sep["rows"]:
         mark = {"genuine": "  +", "foreign": "  -", "fragment": "  ?"}[row["kind"]]
         flag = " <floor" if row["score"] < floor else ""

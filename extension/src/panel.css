@@ -533,11 +533,41 @@
 }
 
 /*
+ * The L0 gate. Same grid, deliberately quieter than the four that score.
+ *
+ * A rule UNDER it rather than a colour on it: the separator says "everything below is
+ * a measurement, this is not", which is the actual relationship. Colouring the row
+ * would have made it look like a status, and its status is already in the pill.
+ */
+#sigma-panel .sigma-gate .sigma-layer-name,
+#sigma-panel .sigma-gate .sigma-layer-code {
+  color: var(--sigma-fg-subtle);
+}
+
+/*
+ * The separator is its OWN grid item spanning all four columns, not a border on the
+ * row. `display: contents` means the row element itself is not a box, so a border has
+ * to go on the four cells -- and the grid's 6px column gaps then render it as four
+ * dashes with holes between them rather than as a rule.
+ */
+#sigma-panel .sigma-gate-rule {
+  grid-column: 1 / -1;
+  border-bottom: 1px solid var(--sigma-rule);
+  margin: -1px 0 0;
+}
+
+/* Where a scoring layer prints its score, the gate prints what it actually counted. */
+#sigma-panel .sigma-gate-count {
+  min-width: 4.2em;
+  text-align: right;
+}
+
+/*
  * Layer 1's sub-checks. They are rows in the SAME grid -- `display: contents` again --
  * so their statuses line up under the layers' statuses instead of forming a second
  * table with its own column widths. Indenting the code cell is the only thing that
- * marks them as subordinate, which is the whole intent: three parts of one question,
- * not three more layers.
+ * marks them as subordinate, which is the whole intent: two parts of one question,
+ * not two more layers.
  */
 #sigma-panel .sigma-sublayer .sigma-layer-code,
 #sigma-panel .sigma-sublayer .sigma-layer-name {

@@ -33,7 +33,7 @@ from verifier.contracts.enums import (
     Severity,
 )
 from verifier.contracts.layers import ExtractionResult, LayerInput
-from verifier.layers.l1ab_citations import CitationExistenceLayer, normalize
+from verifier.layers.l1a_existence import CitationExistenceLayer, normalize
 
 # --- the real judgment -------------------------------------------------------------
 
@@ -528,7 +528,7 @@ async def test_an_unknown_detail_gets_the_honest_default() -> None:
 
 async def test_every_unresolvable_reason_stays_a_warn() -> None:
     """Only the sentence changes. None of these may drift toward a verdict."""
-    from verifier.layers.l1ab_citations import _UNRESOLVABLE_REASONS
+    from verifier.layers.l1a_existence import _UNRESOLVABLE_REASONS
 
     citation = report_citation()
     for detail in [*_UNRESOLVABLE_REASONS, None]:

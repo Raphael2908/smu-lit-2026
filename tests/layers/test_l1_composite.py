@@ -1,4 +1,4 @@
-"""Layer 1 as one layer: 1a, 1b and 1c merged into a single result.
+"""Layer 1 as one layer: 1a and 1b merged into a single result.
 
 The load-bearing test here is ``test_a_whitelist_cannot_clear_a_fabricated_citation``.
 Everything else is table stakes; that one is the security property, and it is the test
@@ -102,8 +102,8 @@ async def test_a_whitelist_cannot_clear_a_fabricated_citation():
     """The laundering hole this layer's structure exists to close.
 
     ``elitigation.sg`` is the Singapore Courts' own judgment portal and is whitelisted,
-    so 1c is perfectly happy. The citation resolves from that trusted domain to a
-    document that does not exist, so 1b is not. Trust in a publisher is not evidence
+    so 1b is perfectly happy. The citation resolves from that trusted domain to a
+    document that does not exist, so 1a is not. Trust in a publisher is not evidence
     about a document, and now that both live in ONE layer, the merged result has to
     keep saying so.
     """
@@ -115,12 +115,12 @@ async def test_a_whitelist_cannot_clear_a_fabricated_citation():
 
     result = await CitationIntegrityLayer(await build_seeded_list_repo()).run(data)
 
-    # 1c cleared it, and cleared ONLY itself.
-    assert sub(result, SubLayer.L1C_SOURCE_TRUST).status is LayerStatus.PASS
-    assert sub(result, SubLayer.L1C_SOURCE_TRUST).finding_count == 0
+    # 1b cleared it, and cleared ONLY itself.
+    assert sub(result, SubLayer.L1B_SOURCE_TRUST).status is LayerStatus.PASS
+    assert sub(result, SubLayer.L1B_SOURCE_TRUST).finding_count == 0
 
-    # 1b did not, and the whole layer fails with it.
-    assert sub(result, SubLayer.L1B_EXISTENCE).status is LayerStatus.FAIL
+    # 1a did not, and the whole layer fails with it.
+    assert sub(result, SubLayer.L1A_EXISTENCE).status is LayerStatus.FAIL
     assert result.status is LayerStatus.FAIL
     assert FindingCode.CITATION_NOT_FOUND in [f.code for f in result.findings]
     assert any(f.severity is Severity.FAIL for f in result.findings)
@@ -137,12 +137,12 @@ async def test_the_merge_may_only_concatenate():
 
     citations = await layer.citations.run(data)
     trust = await layer.trust.run(data)
-    assert citations.findings, "the fixture must produce a 1b finding to drop"
+    assert citations.findings, "the fixture must produce a 1a finding to drop"
 
     # The merge as it stands keeps everything, so the tripwire is silent.
     assert layer._merge(data, citations, trust).status is LayerStatus.FAIL  # noqa: SLF001
 
-    # And a merge that dropped 1b's findings -- exactly what "whitelisted overrules
+    # And a merge that dropped 1a's findings -- exactly what "whitelisted overrules
     # all" would look like if anyone ever built it -- raises instead of quietly
     # clearing the run.
     with pytest.raises(ContractViolation, match="may only concatenate"):
@@ -150,7 +150,7 @@ async def test_the_merge_may_only_concatenate():
 
 
 async def test_a_blacklisted_source_fails_even_when_the_citation_is_real():
-    """The mirror image: 1b passing does not clear 1c either."""
+    """The mirror image: 1a passing does not clear 1b either."""
     real = citation()
     data = layer_input(
         clusters=(cluster_of(real),),
@@ -160,11 +160,11 @@ async def test_a_blacklisted_source_fails_even_when_the_citation_is_real():
     result = await CitationIntegrityLayer(await build_seeded_list_repo()).run(data)
 
     assert result.status is LayerStatus.FAIL
-    assert sub(result, SubLayer.L1C_SOURCE_TRUST).status is LayerStatus.FAIL
+    assert sub(result, SubLayer.L1B_SOURCE_TRUST).status is LayerStatus.FAIL
     assert FindingCode.SOURCE_BLACKLISTED in [f.code for f in result.findings]
 
 
-# --- one layer, three reported sub-checks ------------------------------------------
+# --- one layer, two reported sub-checks -------------------------------------------
 
 
 async def test_every_finding_is_tagged_with_the_sub_check_that_raised_it():
@@ -178,9 +178,8 @@ async def test_every_finding_is_tagged_with_the_sub_check_that_raised_it():
     result = await CitationIntegrityLayer(await build_seeded_list_repo()).run(data)
 
     assert [r.sub_layer for r in result.sub_results] == [
-        SubLayer.L1A_CITEDNESS,
-        SubLayer.L1B_EXISTENCE,
-        SubLayer.L1C_SOURCE_TRUST,
+        SubLayer.L1A_EXISTENCE,
+        SubLayer.L1B_SOURCE_TRUST,
     ]
     assert result.findings, "the graylisted domain should have been reported"
     assert all(f.sub_layer is not None for f in result.findings)
@@ -226,7 +225,7 @@ async def test_a_trust_list_outage_cannot_erase_a_fabrication_finding():
 
     ``BaseLayer.run`` maps a crash to ERROR with NO findings. If the composite ran its
     sub-checks in one try block, a list-repo outage would take the whole layer to ERROR
-    and 1b's CITATION_NOT_FOUND would vanish -- a fabricated citation passing because an
+    and 1a's CITATION_NOT_FOUND would vanish -- a fabricated citation passing because an
     unrelated service was down.
     """
     fake = citation("[2019] SGCA 999", year=2019, number=999)
@@ -239,14 +238,14 @@ async def test_a_trust_list_outage_cannot_erase_a_fabrication_finding():
 
     assert FindingCode.CITATION_NOT_FOUND in [f.code for f in result.findings]
     assert result.status is LayerStatus.FAIL
-    assert sub(result, SubLayer.L1C_SOURCE_TRUST).status is LayerStatus.ERROR
+    assert sub(result, SubLayer.L1B_SOURCE_TRUST).status is LayerStatus.ERROR
 
 
 # --- the pre-fetch pass ------------------------------------------------------------
 
 
-async def test_the_pre_fetch_pass_says_the_other_checks_did_not_run():
-    """A blacklist FAIL ends the run, so 1a and 1b are SKIPPED -- not passed."""
+async def test_the_pre_fetch_pass_says_the_other_check_did_not_run():
+    """A blacklist FAIL ends the run, so 1a is SKIPPED -- not passed."""
     repo = InMemoryListRepo()
     await repo.add(ListType.BLACK, MatchType.DOMAIN, BLACK, "known fabricator")
 
@@ -255,7 +254,6 @@ async def test_the_pre_fetch_pass_says_the_other_checks_did_not_run():
     )
 
     assert result.status is LayerStatus.FAIL
-    assert sub(result, SubLayer.L1C_SOURCE_TRUST).status is LayerStatus.FAIL
-    assert sub(result, SubLayer.L1A_CITEDNESS).status is LayerStatus.SKIPPED
-    assert sub(result, SubLayer.L1B_EXISTENCE).status is LayerStatus.SKIPPED
+    assert sub(result, SubLayer.L1B_SOURCE_TRUST).status is LayerStatus.FAIL
+    assert sub(result, SubLayer.L1A_EXISTENCE).status is LayerStatus.SKIPPED
     assert result.detail["phase"] == "pre_fetch"

@@ -101,7 +101,7 @@ def get_judge() -> Judge:
 
 @lru_cache
 def get_citation_extractor() -> CitationExtractor:
-    """L1a's citation finder.
+    """L0's citation finder.
 
     The mock is not a stub: it runs the real regex extractor, so mock mode still finds
     citations with no key and no network. See MockCitationExtractor.

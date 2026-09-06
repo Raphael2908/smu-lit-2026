@@ -101,7 +101,7 @@ class CitationExtraction:
     """What one extraction call produced.
 
     ``degraded`` carries WHY the extractor contributed nothing -- a timeout, a missing
-    key, unparseable output. It is not decoration. L1a's FAIL means "this output cited
+    key, unparseable output. It is not decoration. L0's FAIL means "this output cited
     nothing", and without this field an extractor that never ran is indistinguishable
     from an answer that cited nothing at all.
     """
@@ -160,10 +160,10 @@ class Judge(Protocol):
 class CitationExtractor(Protocol):
     """Finds the citations an answer offers. It does not judge whether they are good.
 
-    Existence is L1b's question and quote fidelity is L1c's; both already answer them
-    deterministically against the real corpus. This interface exists only to widen what
-    reaches them, because a regex recognises the citation forms someone enumerated and
-    an answer may use one nobody did (docs/03-findings.md F13).
+    Whether a citation exists is L1's question, answered deterministically against the
+    real corpus. This interface exists only to widen what reaches it, because a regex
+    recognises the citation forms someone enumerated and an answer may use one nobody
+    did (docs/03-findings.md F13).
 
     An implementation MUST NOT raise to signal failure. Return a ``CitationExtraction``
     with ``degraded`` set instead: an extractor that is down must never be reported to a

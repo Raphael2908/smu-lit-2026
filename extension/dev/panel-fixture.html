@@ -47,19 +47,27 @@
 // Finding, Evidence, Resolution). Preview only -- nothing here ships.
 const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache_hits: cache || 0 });
 
-  // Layer 1's three sub-checks. `L1(...)` builds a Layer 1 result with them attached;
+  // Layer 1's two sub-checks. `L1(...)` builds a Layer 1 result with them attached;
   // every other layer has none. Statuses default to the layer's own, so a fixture only
-  // names the ones that differ -- which is how a run where 1c cleared a domain while 1b
+  // names the ones that differ -- which is how a run where 1b cleared a domain while 1a
   // failed gets expressed.
-  const SUBS = (a, b, c) => [
+  const SUBS = (a, b) => [
     { sub_layer: 'L1a', status: a, finding_count: 0, detail: {} },
     { sub_layer: 'L1b', status: b, finding_count: 0, detail: {} },
-    { sub_layer: 'L1c', status: c, finding_count: 0, detail: {} },
   ];
   const L1 = (status, ms, cache, subs) => ({
     ...L(status, null, ms, cache),
-    sub_results: subs || SUBS(status, status, status),
+    sub_results: subs || SUBS(status, status),
   });
+
+  // L0, the preprocessing gate. `cites` is the citation list the model returned; the
+  // panel prints its length where a scoring layer prints a score, so a fixture with an
+  // empty list is what an uncited answer looks like on screen.
+  const L0 = (status, ms, cites) => ({
+    ...L(status, null, ms, 0),
+    detail: { citations: (cites || []).map((t, i) => ({ ordinal: i, text: t, type: 'neutral' })) },
+  });
+  const CITED = ['[2007] SGCA 37', '[2013] SGCA 43'];
 
   const LONG = 'The appellant submits that the doctrine of common mistake operates to render the contract void ab initio. In our judgment that submission cannot be sustained on the authorities. A common mistake as to quality will only avoid a contract where it renders the subject matter essentially and radically different from that which the parties believed it to be, and the burden of establishing that state of affairs lies squarely on the party asserting it. Nothing in the evidence before the Judge came close to discharging that burden, and we are unable to accept that the parties were labouring under any operative mistake at the moment of contracting. We would add, for completeness, that the point was not pleaded below.';
 
@@ -67,7 +75,7 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
     'Pass — everything checked': {
       verdict: 'pass', is_final: true,
       timings: { total_ms: 8420 }, cache: { hits: 3, misses: 1 }, cost_usd: 0.0182,
-      layers: { L1: L1('pass', 305, 2), L2: L('pass', 0.61, 3180, 1), L3: L('pass', 0.58, 1240), L4: L('pass', null, 3690) },
+      layers: { L0: L0('pass', 980, CITED), L1: L1('pass', 305, 2), L2: L('pass', 0.61, 3180, 1), L3: L('pass', 0.58, 1240), L4: L('pass', null, 3690) },
       findings: [],
       resolutions: {
         'sgca:2007:37': { status: 'resolved', case_name: 'Chwee Kin Keong v Digilandmall.com Pte Ltd', domain: 'elitigation.sg', url: 'https://www.elitigation.sg/gd/s/2007_SGCA_37' },
@@ -77,14 +85,14 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
 
     'Fail — fabricated citation': {
       verdict: 'fail', is_final: true, short_circuited: true,
-      short_circuit_reason: '1b found a citation the source reports does not exist, so the judge was never consulted.',
+      short_circuit_reason: '1a found a citation the source reports does not exist, so the judge was never consulted.',
       timings: { total_ms: 4110 }, cache: { hits: 1, misses: 2 },
-      layers: { L1: L1('fail', 1068, 0, SUBS('warn', 'fail', 'pass')), L2: L('skipped', null, 0), L3: L('pass', 0.55, 1190), L4: null },
+      layers: { L0: L0('warn', 1042, ['[2018] SGCA 12', '[2007] SGCA 37']), L1: L1('fail', 1068, 0, SUBS('fail', 'pass')), L2: L('skipped', null, 0), L3: L('pass', 0.55, 1190), L4: null },
       findings: [
         { source: 'deterministic', severity: 'fail', code: 'CITATION_NOT_FOUND', sub_layer: 'L1b',
           message: 'The answer cites [2018] SGCA 12 as authority for the proposition that a unilateral mistake known to the other party voids the contract. eLitigation was reachable and reports no such judgment.',
           evidence: { source_url: 'https://www.elitigation.sg/gd/s/2018_SGCA_12', http_status: 404 } },
-        { source: 'deterministic', severity: 'warn', code: 'PROPOSITION_UNCITED', sub_layer: 'L1a',
+        { source: 'deterministic', severity: 'warn', code: 'PROPOSITION_UNCITED',
           message: 'The sentence beginning "It is well established that..." asserts a rule of law with no citation in scope.',
           evidence: {} },
       ],
@@ -97,7 +105,7 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
     'Nothing was verified': {
       verdict: 'warn', is_final: true,
       timings: { total_ms: 6050 }, cache: { hits: 0, misses: 3 },
-      layers: { L1: L1('warn', 3111, 0, SUBS('pass', 'warn', 'pass')), L2: L('not_applicable', null, 0), L3: L('pass', 0.52, 1310), L4: L('pass', null, 1620) },
+      layers: { L0: L0('pass', 1130, CITED), L1: L1('warn', 3111, 0, SUBS('warn', 'pass')), L2: L('not_applicable', null, 0), L3: L('pass', 0.52, 1310), L4: L('pass', null, 1620) },
       findings: [],
       resolutions: {
         'sgca:2007:37': { status: 'unauthenticated', case_name: null },
@@ -116,9 +124,9 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
     'Partial — judge advisory, long evidence': {
       verdict: 'warn', is_final: true,
       timings: { total_ms: 12980 }, cache: { hits: 2, misses: 4 }, cost_usd: 0.0341,
-      layers: { L1: L1('warn', 342, 1, SUBS('pass', 'pass', 'warn')), L2: L('warn', 0.279, 4820, 1), L3: L('pass', 0.61, 1450), L4: L('warn', null, 6310) },
+      layers: { L0: L0('pass', 1004, CITED), L1: L1('warn', 342, 1, SUBS('pass', 'warn')), L2: L('warn', 0.279, 4820, 1), L3: L('pass', 0.61, 1450), L4: L('warn', null, 6310) },
       findings: [
-        { source: 'deterministic', severity: 'warn', code: 'SOURCE_GRAYLISTED', sub_layer: 'L1c',
+        { source: 'deterministic', severity: 'warn', code: 'SOURCE_GRAYLISTED', sub_layer: 'L1b',
           message: 'singaporelawwatch.sg is a secondary or unofficial source. Check the primary authority before relying on it.',
           evidence: { domain: 'singaporelawwatch.sg' } },
         { source: 'deterministic', severity: 'warn', code: 'CLAIM_NOT_GROUNDED_IN_SOURCE',
@@ -134,6 +142,37 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
         'raw:lipkin gorman v karpnale ltd': { status: 'ambiguous', case_name: null },
       },
       errors: [],
+    },
+
+    // --- the two ways a run dies at the gate ---------------------------------------
+    // Both are reachable terminal states with NO other row to explain them, which is
+    // why L0 is rendered at all. Eyeball these two whenever the panel changes.
+
+    'Fail at L0 — nothing cited': {
+      verdict: 'fail', is_final: true, short_circuited: true,
+      short_circuit_reason: 'The answer asserts law and cites nothing, so no layer had anything to check.',
+      timings: { total_ms: 1180 }, cache: { hits: 0, misses: 0 },
+      layers: { L0: L0('fail', 1150, []) },
+      findings: [
+        { source: 'deterministic', severity: 'fail', code: 'OUTPUT_UNCITED',
+          message: 'This answer states the law but cites no authority at all: 3 assertions with no case, statute or source behind them.',
+          evidence: { assertions: 4, uncited: 3, authorities: 0 } },
+      ],
+      resolutions: {},
+    },
+
+    'Fail at L0 — the extractor was down': {
+      verdict: 'fail', is_final: true, short_circuited: true,
+      short_circuit_reason: 'Preprocessing failed, so nothing in the answer was read.',
+      timings: { total_ms: 15320 }, cache: { hits: 0, misses: 0 },
+      layers: { L0: L0('fail', 15010, []) },
+      findings: [
+        { source: 'deterministic', severity: 'fail', code: 'PREPROCESSING_FAILED',
+          message: 'This answer could not be read for citations, so nothing in it was verified: citation extractor timed out after 15.0s. This is a failure of the checker, not a finding about the answer — re-run once the extractor is available.',
+          evidence: { reason: 'citation extractor timed out after 15.0s' } },
+      ],
+      resolutions: {},
+      errors: ['citation extractor timed out after 15.0s'],
     },
   };
 

@@ -41,7 +41,13 @@ dev: docker-check env ## Primary dev path: postgres+redis in Docker, api+worker 
 	@echo "      simply not there -- curl falls back to IPv4 and succeeds, Chrome does"
 	@echo "      not, so it fails only in the browser and looks like a dead backend."
 	@echo "      Do not 'fix' this with --host :: -- that binds IPv6 ONLY on macOS.)"
-	@echo "  uv run celery -A verifier.worker.celery_app.celery_app worker -Q default,maintenance -l info"
+	@echo "  uv run celery -A verifier.worker.celery_app.celery_app worker -Q default,judge,maintenance -l info"
+
+# NOTE the 'judge' queue in the celery line above. L4 is dispatched to QUEUE_JUDGE
+# (worker/tasks.py) so that a 90 s frontier-model call cannot block the deterministic
+# queue. A worker started without it consumes the run but never the judge, and the run
+# sits at status=judging until the client's poll timeout -- which reads exactly like a
+# hung backend. `make up` gets this right on its own; it runs a separate judgeworker.
 
 up: docker-check env ## Full stack in Docker
 	docker compose up -d --build

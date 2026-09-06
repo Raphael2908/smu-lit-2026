@@ -1,8 +1,8 @@
-"""L1a extraction: which sentences assert law, and what authority stands behind them.
+"""L0 extraction: which sentences assert law, and what authority stands behind them.
 
 This module answers the question that comes *before* "does the citation exist": an
-output can be entirely free of fabricated citations by citing nothing whatsoever. L1b
-and L1c only ever look at authority the output actually offered, so without this an
+output can be entirely free of fabricated citations by citing nothing whatsoever. L1's
+two sub-checks only ever look at authority the output actually offered, so without this an
 answer that states the law from memory, confidently and with no support at all, passes
 the citation-integrity layer untouched.
 
@@ -22,7 +22,7 @@ head of a paragraph that then discusses it for five sentences. So anything in th
 scope counts, at any distance (``CARRIED``). The consequence is deliberate: where the
 attribution is ambiguous we call an uncited claim cited, never the reverse.
 
-That asymmetry is what lets L1a carry a FAIL at all. The FAIL is not an attribution
+That asymmetry is what lets L0 carry a FAIL at all. The FAIL is not an attribution
 judgement -- it is a count over the whole output (``ExtractionResult.authority_count``
 is zero), so there is nothing in it to be wrong about beyond whether the text contains
 a citation. Per-proposition findings, where the hard judgement lives, only ever WARN.
@@ -69,7 +69,7 @@ def extract_statutes(text: str) -> list[StatuteReference]:
     ("under the Act") is not -- it points at something that must have been named
     earlier, and an output that never names it has supported nothing.
 
-    These are deliberately not ``CitationCluster``s. A cluster is something L1b tries to
+    These are deliberately not ``CitationCluster``s. A cluster is something L1a tries to
     resolve against the judgment corpus; a statute is not in that corpus, so making one
     a cluster would emit CITATION_UNVERIFIED for every correctly cited section.
     """
@@ -146,7 +146,7 @@ def _merge_adjacent(
     """Fold "s 20 of the Building Control Act (Cap 29)" into ONE reference.
 
     Three regexes match that string. Reporting three statutes would treble the
-    authority count, and ``authority_count`` is what L1a's FAIL turns on -- so the
+    authority count, and ``authority_count`` is what L0's FAIL turns on -- so the
     count has to mean "distinct pieces of authority", not "regex hits".
     """
     if not found:
@@ -177,7 +177,7 @@ def _anchored(
 
     "2007 Rev Ed" or "Act 19 of 2016" standing alone -- with no Act, section or chapter
     beside it to attach to -- names no legislation. Counting one as authority would let
-    an answer clear L1a by writing an edition marker.
+    an answer clear L0's gate by writing an edition marker.
     """
     anchors = ("act", "section", "chapter")
     return [item for item in merged if any(item[2].get(key) for key in anchors)]
@@ -357,7 +357,7 @@ def extract_propositions(
     # Classify against a copy with quotations blanked out. A cue inside a quotation is
     # the COURT's words, not the model's assertion: "the court said: 'it is well
     # established that ...'" must not be read as the answer itself appealing to settled
-    # law. Quoted text is L1c's question, checked against the source it came from.
+    # law. Quoted text is the court's, and L2 scores the answer against the source.
     masked = _mask(text, quotes or [])
     scopes = scope_spans(text)
     authorities = _authorities(clusters, statutes, subsequent_references(text, clusters))
