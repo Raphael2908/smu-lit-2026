@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="360" viewBox="0 0 720 360">
+<rect width="100%" height="100%" fill="#fff"/>
+<text x="360.0" y="28" text-anchor="middle" font-family="sans-serif" font-size="16">Agreement by Harvey group</text>
+<text x="18" y="168.0" text-anchor="middle" font-family="sans-serif" font-size="11" transform="rotate(-90 18 168.0)">Agreement (0-1)</text>
+<line x1="64" y1="48" x2="64" y2="288" stroke="#333"/>
+<line x1="64" y1="288" x2="696" y2="288" stroke="#333"/>
+<line x1="64" y1="288.0" x2="696" y2="288.0" stroke="#ddd"/>
+<text x="56" y="292.0" text-anchor="end" font-family="sans-serif" font-size="11">0.00</text>
+<line x1="64" y1="228.0" x2="696" y2="228.0" stroke="#ddd"/>
+<text x="56" y="232.0" text-anchor="end" font-family="sans-serif" font-size="11">0.25</text>
+<line x1="64" y1="168.0" x2="696" y2="168.0" stroke="#ddd"/>
+<text x="56" y="172.0" text-anchor="end" font-family="sans-serif" font-size="11">0.50</text>
+<line x1="64" y1="108.0" x2="696" y2="108.0" stroke="#ddd"/>
+<text x="56" y="112.0" text-anchor="end" font-family="sans-serif" font-size="11">0.75</text>
+<line x1="64" y1="48.0" x2="696" y2="48.0" stroke="#ddd"/>
+<text x="56" y="52.0" text-anchor="end" font-family="sans-serif" font-size="11">1.00</text>
+<text x="103.5" y="308" text-anchor="middle" font-family="sans-serif" font-size="11">G1</text>
+<rect x="78.2" y="120.0" width="25.3" height="168.0" fill="#4c6ef5"><title>Correctness agreement G1: 0.700</title></rect>
+<rect x="103.5" y="120.0" width="25.3" height="168.0" fill="#e8590c"><title>Groundness agreement G1: 0.700</title></rect>
+<text x="182.5" y="308" text-anchor="middle" font-family="sans-serif" font-size="11">G2</text>
+<rect x="157.2" y="120.0" width="25.3" height="168.0" fill="#4c6ef5"><title>Correctness agreement G2: 0.700</title></rect>
+<rect x="182.5" y="120.0" width="25.3" height="168.0" fill="#e8590c"><title>Groundness agreement G2: 0.700</title></rect>
+<text x="261.5" y="308" text-anchor="middle" font-family="sans-serif" font-size="11">G3</text>
+<rect x="236.2" y="120.0" width="25.3" height="168.0" fill="#4c6ef5"><title>Correctness agreement G3: 0.700</title></rect>
+<rect x="261.5" y="72.0" width="25.3" height="216.0" fill="#e8590c"><title>Groundness agreement G3: 0.900</title></rect>
+<text x="340.5" y="308" text-anchor="middle" font-family="sans-serif" font-size="11">G4</text>
+<rect x="315.2" y="96.0" width="25.3" height="192.0" fill="#4c6ef5"><title>Correctness agreement G4: 0.800</title></rect>
+<rect x="340.5" y="72.0" width="25.3" height="216.0" fill="#e8590c"><title>Groundness agreement G4: 0.900</title></rect>
+<text x="419.5" y="308" text-anchor="middle" font-family="sans-serif" font-size="11">G5</text>
+<rect x="394.2" y="48.0" width="25.3" height="240.0" fill="#4c6ef5"><title>Correctness agreement G5: 1.000</title></rect>
+<rect x="419.5" y="48.0" width="25.3" height="240.0" fill="#e8590c"><title>Groundness agreement G5: 1.000</title></rect>
+<text x="498.5" y="308" text-anchor="middle" font-family="sans-serif" font-size="11">G6</text>
+<rect x="473.2" y="48.0" width="25.3" height="240.0" fill="#4c6ef5"><title>Correctness agreement G6: 1.000</title></rect>
+<rect x="498.5" y="48.0" width="25.3" height="240.0" fill="#e8590c"><title>Groundness agreement G6: 1.000</title></rect>
+<text x="577.5" y="308" text-anchor="middle" font-family="sans-serif" font-size="11">G7</text>
+<rect x="552.2" y="48.0" width="25.3" height="240.0" fill="#4c6ef5"><title>Correctness agreement G7: 1.000</title></rect>
+<rect x="577.5" y="48.0" width="25.3" height="240.0" fill="#e8590c"><title>Groundness agreement G7: 1.000</title></rect>
+<text x="656.5" y="308" text-anchor="middle" font-family="sans-serif" font-size="11">G8</text>
+<rect x="631.2" y="88.0" width="25.3" height="200.0" fill="#4c6ef5"><title>Correctness agreement G8: 0.833</title></rect>
+<rect x="656.5" y="112.0" width="25.3" height="176.0" fill="#e8590c"><title>Groundness agreement G8: 0.733</title></rect>
+<rect x="64" y="328" width="12" height="12" fill="#4c6ef5"/>
+<text x="82" y="338" font-family="sans-serif" font-size="12">Correctness agreement</text>
+<rect x="204" y="328" width="12" height="12" fill="#e8590c"/>
+<text x="222" y="338" font-family="sans-serif" font-size="12">Groundness agreement</text>
+</svg>
