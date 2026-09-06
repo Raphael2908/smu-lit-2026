@@ -17,9 +17,9 @@ uv run python -m tests.contracts.test_schema_snapshot   # regenerate deliberatel
 |---|---|---|
 | `contracts/**`, `settings.py`, `*/base.py`, `alembic/**` | shared, frozen | changes require announcement |
 | `extraction/**`, `sources/**`, `providers/fetcher_http.py`, `providers/mock/fetcher.py` | Stream A | |
-| `layers/l1_existence.py`, `layers/l2_lists.py`, `extraction/propositions.py`, `repos/lists.py`, `repos/seed_lists.py` | Stream B | |
-| `semantic/**`, `layers/l3_*.py`, `layers/l4_*.py`, `providers/voyage.py`, `providers/mock/embeddings.py` | Stream C | |
-| `layers/l5_judge.py`, `layers/prompts/**`, `pipeline/**`, `worker/**`, judge providers | Stream D | |
+| `layers/l1_citation_integrity.py`, `layers/l1ab_citations.py`, `layers/l1c_lists.py`, `extraction/propositions.py`, `repos/lists.py`, `repos/seed_lists.py` | Stream B | |
+| `semantic/**`, `layers/l2_alignment.py`, `layers/l3_responsiveness.py`, `providers/voyage.py`, `providers/mock/embeddings.py` | Stream C | |
+| `layers/l4_judge.py`, `layers/prompts/**`, `pipeline/**`, `worker/**`, judge providers | Stream D | |
 | `repos/` (Postgres), `api/**`, `extension/**` | Stream E | |
 
 `providers/factory.py` and `layers/registry.py` were written with **all** branches up
@@ -50,7 +50,7 @@ practice direction, a textbook. It counts for L1a and is deliberately never clus
 resolving one means searching a Singapore judgment corpus for a phrase that is not in
 it, and zero hits is exactly what this system reads as fabrication (F6). A separate
 field rather than a new `CitationType` member, because three dicts index `citation_type`
-without a default (`CitationCluster.preferred`, `l1_existence._TYPE_ORDER`,
+without a default (`CitationCluster.preferred`, `l1ab_citations._TYPE_ORDER`,
 `ElitigationAdapter.resolve_cluster`) and a fourth member reaches them as a `KeyError`.
 
 ### 2026-09-05 — `ExtractionResult.propositions` and `.statutes` (L1a)
@@ -66,17 +66,24 @@ models.
 
 Why it landed on the contract rather than inside L1: propositions are L0's output, and
 L1 is pure with respect to `LayerInput` like every other layer. Putting them on
-`ExtractionResult` also makes them visible to the panel and to L5, which is what lets
+`ExtractionResult` also makes them visible to the panel and to L4, which is what lets
 the judge take over the attribution question L1a deliberately refuses to decide.
 
 ## Four contract decisions that are load-bearing
 
 ### 1. `ExtractedQuote.delimiter` is required
 
-Not decoration. Lexical matching is *anti-correlated* on paraphrase: a genuine
-paraphrase scores **lower** than a fabrication. So L1 may only ever score text that was
-actually presented as a direct quotation, and paraphrased attributions belong to L3.
-Making `delimiter` required means the type system enforces what a comment would not.
+Not decoration. Lexical matching cannot separate a genuine paraphrase from a fabrication:
+the two land 3.6 points apart, and which one scores higher does not even reproduce across
+measurements (`docs/03-findings.md` Part 3, `docs/v1-plan.md` F8). That is why the
+quote-verification check was eventually removed altogether — a 75/90 band sitting 25
+points above both regimes was deciding FAIL on noise.
+
+The type survives the check that motivated it, and `delimiter` stays required, because
+two things still turn on knowing a span was presented as a quotation: L2 attributes a
+claim to the citation whose quotation it overlaps, and L1a MASKS quoted text before
+deciding which sentences are the answer's own assertions of law. Drop the delimiter and
+every quoted sentence starts counting as an uncited assertion.
 
 ### 2. `Finding.source` separates ground truth from opinion
 
@@ -99,7 +106,7 @@ Authority may precede its proposition, follow it, or sit once at the head of a
 paragraph that discusses it for five sentences, and no rule over prose gets that right
 every time. So coverage is deliberately generous (`AttributionMethod.CARRIED` clears
 everything after a citation in its scope), per-proposition findings only WARN, and the
-residue is handed to L5's `citation_integrity` dimension — where a reasoning model may
+residue is handed to L4's `citation_integrity` dimension — where a reasoning model may
 convict on it, labelled `llm`, and still cannot acquit.
 
 ### 4. `Verdict` is an ordered lattice, and `PENDING` is excluded from it
@@ -136,9 +143,9 @@ derived from it is meaningless.
 `PROVIDER_MODE=mock` boots and passes the whole suite with **no keys and no network**
 (`pytest-socket` enforces it).
 
-The mock fetcher serves `tests/corpus/*.html`, so **L1 and L2 are fully real in mock
-mode** — only L3/L4/L5 are stubbed. The layers that produce failures are the ones
-testable offline, which is the right split.
+The mock fetcher serves `tests/corpus/*.html`, so **all three of L1's sub-checks are
+fully real in mock mode** — only L2/L3/L4 are stubbed. The layer that produces failures
+is the one testable offline, which is the right split.
 
 The mock embedder is a **hashed bag-of-words** vectorizer, not random vectors, so
 threshold and margin logic is genuinely exercised.

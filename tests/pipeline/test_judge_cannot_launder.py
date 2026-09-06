@@ -38,7 +38,7 @@ from verifier.contracts.enums import (
 from verifier.contracts.layers import LayerResult
 from verifier.contracts.runs import RunOptions
 from verifier.errors import ContractViolation
-from verifier.layers.l5_judge import FaithfulnessJudgeLayer
+from verifier.layers.l4_judge import FaithfulnessJudgeLayer
 from verifier.pipeline import aggregate, gate
 from verifier.pipeline.orchestrator import Orchestrator
 from verifier.providers.base import JudgeRubric
@@ -67,12 +67,13 @@ async def _run_with_l1_failure(options: RunOptions | None = None):
 
     orchestrator = Orchestrator(
         layers={
-            Layer.L1_EXISTENCE: StubLayer(Layer.L1_EXISTENCE, findings=(l1_fail,)),
-            Layer.L2_SOURCE_TRUST: StubLayer(Layer.L2_SOURCE_TRUST),
-            Layer.L3_GROUNDING: StubLayer(Layer.L3_GROUNDING),
-            Layer.L4_RESPONSIVENESS: StubLayer(Layer.L4_RESPONSIVENESS),
+            Layer.L1_CITATION_INTEGRITY: StubLayer(
+                Layer.L1_CITATION_INTEGRITY, findings=(l1_fail,)
+            ),
+            Layer.L2_ALIGNMENT: StubLayer(Layer.L2_ALIGNMENT),
+            Layer.L3_RESPONSIVENESS: StubLayer(Layer.L3_RESPONSIVENESS),
         },
-        # The real L5, wired to the mock provider: the gate is what must stop it, not a
+        # The real L4, wired to the mock provider: the gate is what must stop it, not a
         # stub that happens not to call out.
         judge_factory=lambda ctx: FaithfulnessJudgeLayer(provider, context=ctx),
         extractor=extractor_for(make_extraction(citations=1)),
@@ -87,7 +88,7 @@ async def test_judge_provider_is_never_invoked_after_a_deterministic_fail():
 
     # 1. Never asked. This is the assertion the whole architecture exists to satisfy.
     assert provider.calls == 0
-    assert Layer.L5_JUDGE not in state.layers
+    assert Layer.L4_JUDGE not in state.layers
 
 
 async def test_final_verdict_is_still_fail():
@@ -107,7 +108,7 @@ async def test_the_l1_finding_survives_intact():
     survivors = [f for f in state.findings if f.code is FindingCode.CITATION_NOT_FOUND]
     assert len(survivors) == 1
     assert survivors[0].severity is Severity.FAIL
-    assert survivors[0].layer is Layer.L1_EXISTENCE
+    assert survivors[0].layer is Layer.L1_CITATION_INTEGRITY
     assert survivors[0].message == l1_fail.message
 
 
@@ -126,7 +127,7 @@ async def test_force_judge_lets_the_judge_speak_but_not_acquit():
     state, provider, _ = await _run_with_l1_failure(RunOptions(force_judge=True))
 
     assert provider.calls == 1, "force_judge must actually consult the judge"
-    assert state.layers[Layer.L5_JUDGE].status is LayerStatus.PASS
+    assert state.layers[Layer.L4_JUDGE].status is LayerStatus.PASS
     # It said everything was fine. The verdict is still FAIL.
     assert state.verdict is Verdict.FAIL
     assert state.short_circuited is False
@@ -137,7 +138,7 @@ async def test_force_judge_lets_the_judge_speak_but_not_acquit():
 
 def test_finalize_holds_the_line_when_the_judge_passes():
     l1_fail = l1_fabrication_finding()
-    judge_pass = LayerResult(layer=Layer.L5_JUDGE, status=LayerStatus.PASS, findings=())
+    judge_pass = LayerResult(layer=Layer.L4_JUDGE, status=LayerStatus.PASS, findings=())
 
     outcome = aggregate.finalize(Verdict.FAIL, [l1_fail], judge_pass)
 
@@ -155,7 +156,7 @@ def test_finalize_raises_when_a_judge_verdict_would_upgrade_a_deterministic_fail
     """
     monkeypatch.setattr(aggregate, "lattice_min", lambda _det, judge: judge)
 
-    judge_pass = LayerResult(layer=Layer.L5_JUDGE, status=LayerStatus.PASS, findings=())
+    judge_pass = LayerResult(layer=Layer.L4_JUDGE, status=LayerStatus.PASS, findings=())
     with pytest.raises(ContractViolation, match="cannot acquit"):
         aggregate.finalize(Verdict.FAIL, [l1_fabrication_finding()], judge_pass)
 
@@ -194,7 +195,7 @@ def test_finalize_refuses_to_let_deterministic_findings_be_dropped():
         aggregate.assert_additive([l1_fail], [])
 
     # And through finalize, where the deterministic findings are carried verbatim.
-    judge = LayerResult(layer=Layer.L5_JUDGE, status=LayerStatus.PASS, findings=())
+    judge = LayerResult(layer=Layer.L4_JUDGE, status=LayerStatus.PASS, findings=())
     outcome = aggregate.finalize(Verdict.FAIL, [l1_fail], judge)
     assert l1_fail in outcome.findings
     aggregate.assert_additive([l1_fail], outcome.findings)

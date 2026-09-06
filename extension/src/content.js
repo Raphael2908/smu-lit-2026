@@ -11,7 +11,7 @@
  * a service worker.
  */
 (function contentScript() {
-  const { selectors, capture, api, panel, config } = SALV;
+  const { selectors, capture, api, panel, config } = SIGMA;
 
   /** The verification currently in flight, if any. */
   let active = null;
@@ -56,7 +56,7 @@
 
   function setBadge(state) {
     try {
-      chrome.runtime.sendMessage({ type: 'salv:badge', state });
+      chrome.runtime.sendMessage({ type: 'sigma:badge', state });
     } catch {
       /* the service worker may be asleep; the badge is cosmetic */
     }
@@ -71,7 +71,7 @@
    * Either alone is unreliable. The DOM goes quiet between tokens on a slow connection,
    * and the stop button can linger for a moment after the last token lands. Verifying a
    * half-written answer is the main correctness trap in this extension: a truncated
-   * answer reads as unresponsive to L4 and its citations read as fabricated to L1, so
+   * answer reads as unresponsive to L3 and its citations read as fabricated to L1, so
    * the run goes confidently red on an answer that was never actually finished.
    */
   function watchForCompletion(node, onComplete) {
@@ -151,7 +151,7 @@
           surface: 'claude.ai',
           selector_tier: selectors.lastTier || 'unknown',
           extension_version: chrome.runtime.getManifest().version,
-          // Rendered citation links are real source domains; sending them lets L2a
+          // Rendered citation links are real source domains; sending them lets 1c
           // check them without re-deriving a domain from the prose.
           citation_links: JSON.stringify(answer.links.slice(0, 20)),
         },
@@ -180,7 +180,7 @@
           panel.renderIdle(err.message);
           setBadge('idle');
         } else {
-          SALV.log('nothing to verify on this node:', err.message);
+          SIGMA.log('nothing to verify on this node:', err.message);
         }
       } else {
         panel.renderError(err.message);
@@ -190,7 +190,7 @@
     }
 
     if (!options?.force && verified.get(assistantEl) === built.textHash) {
-      SALV.log('already verified this exact response; skipping');
+      SIGMA.log('already verified this exact response; skipping');
       return;
     }
 
@@ -289,7 +289,7 @@
         try {
           const current = await capture.sha256Hex(capture.fromNode(assistantEl).text);
           if (current !== built.textHash) {
-            SALV.log('response changed mid-run; restarting verification');
+            SIGMA.log('response changed mid-run; restarting verification');
             run.cancelled = true;
             active = null;
             verified.delete(assistantEl);
@@ -412,7 +412,7 @@
   /**
    * MOUNT FIRST, THEN AWAIT ANYTHING.
    *
-   * This used to `await SALV.loadConfig()` before `panel.mount()`, which made the
+   * This used to `await SIGMA.loadConfig()` before `panel.mount()`, which made the
    * panel's existence contingent on a `chrome.storage` round trip. In an orphaned
    * content script that promise never settles (see config.js), so boot parked on line
    * one and the extension presented as never having injected at all -- no panel, no
@@ -424,17 +424,17 @@
   async function boot() {
     panel.mount();
     panel.renderIdle();
-    SALV.banner('content script running on', location.host);
-    await SALV.loadConfig();
+    SIGMA.banner('content script running on', location.host);
+    await SIGMA.loadConfig();
     setBadge('idle');
     // Applied AFTER the mount above, never before it: restoring a remembered view is
     // a nicety and the panel must already be on the page by the time we ask storage
     // anything at all.
-    panel.setView(SALV.config.panelView, false);
-    panel.setTheme(SALV.config.panelTheme, false);
+    panel.setView(SIGMA.config.panelView, false);
+    panel.setTheme(SIGMA.config.panelTheme, false);
 
     if (!panel.highlightsSupported()) {
-      SALV.log('CSS.highlights unavailable; findings will be listed but not painted');
+      SIGMA.log('CSS.highlights unavailable; findings will be listed but not painted');
     }
 
     document.addEventListener(
@@ -451,22 +451,22 @@
     try {
       chrome.runtime.onMessage.addListener((message) => {
         if (!message || typeof message.type !== 'string') return;
-        if (message.type === 'salv:verify') {
+        if (message.type === 'sigma:verify') {
           // Tier 4 of the selector strategy: whatever happened to the DOM, this works.
           manualVerify(message.source === 'context-menu' ? lastContextTarget : null);
         }
-        if (message.type === 'salv:config-changed') {
-          SALV.loadConfig();
+        if (message.type === 'sigma:config-changed') {
+          SIGMA.loadConfig();
         }
       });
     } catch (err) {
-      SALV.warn('message listener unavailable; reload the tab:', (err && err.message) || err);
+      SIGMA.warn('message listener unavailable; reload the tab:', (err && err.message) || err);
     }
 
     watchTranscript();
     // console.info, not debug: this line is what tells a human at a console the
     // script is alive, and Chrome hides debug at its default log level.
-    SALV.banner('ready; selector tier =', selectors.lastTier, '; api =', config.apiBase);
+    SIGMA.banner('ready; selector tier =', selectors.lastTier, '; api =', config.apiBase);
   }
 
   if (document.readyState === 'loading') {

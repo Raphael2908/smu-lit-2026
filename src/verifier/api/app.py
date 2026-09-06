@@ -70,10 +70,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="SAL Verifier",
+        title="Sigma Tech",
         version="0.1.0",
         description=(
-            "Five-layer verification of legal AI outputs. Layers 1-4 are deterministic "
+            "Four-layer verification of legal AI outputs. Layers 1-3 are deterministic "
             "and run first; if any fails the judge is never consulted."
         ),
         lifespan=lifespan,

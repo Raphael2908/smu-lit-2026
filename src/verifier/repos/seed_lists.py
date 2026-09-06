@@ -5,7 +5,7 @@
 WHITE means "primary or official" -- the court, the statute book, the Academy. It
 suppresses L2's own findings for that domain and NOTHING ELSE. It cannot clear an L1
 finding, so whitelisting eLitigation does not make a fabricated eLitigation citation
-pass. See ``verifier.layers.l2_lists`` for that invariant.
+pass. See ``verifier.layers.l1c_lists`` for that invariant.
 
 GRAY means "real, but secondary": encyclopaedias, commentary, self-published writing
 and foreign aggregators. These pass with an annotation, because citing them is a

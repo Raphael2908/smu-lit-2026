@@ -42,7 +42,7 @@ def finding(
     code: FindingCode,
     severity: Severity,
     *,
-    layer: Layer = Layer.L1_EXISTENCE,
+    layer: Layer = Layer.L1_CITATION_INTEGRITY,
     message: str = "",
     source: FindingSource = FindingSource.DETERMINISTIC,
     ident: str | None = None,
@@ -64,7 +64,7 @@ def l1_fabrication_finding() -> Finding:
     return finding(
         FindingCode.CITATION_NOT_FOUND,
         Severity.FAIL,
-        layer=Layer.L1_EXISTENCE,
+        layer=Layer.L1_CITATION_INTEGRITY,
         message="[2019] SGCA 999 does not exist: eLitigation returned a soft-404.",
         ident="run:L1:CITATION_NOT_FOUND:0",
     )
@@ -105,13 +105,13 @@ class StubLayer:
 
 @dataclass
 class RecordingJudgeLayer:
-    """An L5 stand-in that records whether it was invoked at all.
+    """An L4 stand-in that records whether it was invoked at all.
 
     ``calls == 0`` on a failing run is the proof the gate did its job: the judge was
     never given the chance to disagree.
     """
 
-    layer: Layer = Layer.L5_JUDGE
+    layer: Layer = Layer.L4_JUDGE
     findings: tuple[Finding, ...] = ()
     calls: int = 0
 
@@ -122,7 +122,7 @@ class RecordingJudgeLayer:
 
 
 class StubListRepo:
-    """Just enough of ``ListRepo`` for L2a."""
+    """Just enough of ``ListRepo`` for sub-check 1c."""
 
     def __init__(self, entries: dict[str, tuple[ListType, str]] | None = None) -> None:
         self.entries = entries or {}

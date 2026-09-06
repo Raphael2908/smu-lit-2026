@@ -84,8 +84,8 @@ class DocumentParagraph(Base):
         Uuid, ForeignKey("documents.id", ondelete="CASCADE")
     )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    #: The '[115]' a pinpoint citation refers to. Verifying a quote against one
-    #: paragraph instead of ~84k chars is a large precision win for partial_ratio.
+    #: The '[115]' a pinpoint citation refers to, so a retrieved passage can be
+    #: labelled with the paragraph a reader would cite it by.
     para_no: Mapped[int | None] = mapped_column(Integer)
     kind: Mapped[str] = mapped_column(Text, nullable=False, default="body")
     heading_path: Mapped[list[str] | None] = mapped_column(ARRAY(Text), default=list)
@@ -285,6 +285,8 @@ class FindingRow(Base):
     severity: Mapped[str] = mapped_column(Text, nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     citation_ordinal: Mapped[int | None] = mapped_column(Integer)
+    #: Written only by the removed quote-verification check. The column stays so no
+    #: migration is needed and old rows keep their data; nothing writes it now.
     quote_ordinal: Mapped[int | None] = mapped_column(Integer)
     span_start: Mapped[int | None] = mapped_column(Integer)
     span_end: Mapped[int | None] = mapped_column(Integer)

@@ -77,10 +77,21 @@ class CitationCluster(BaseModel):
 class ExtractedQuote(BaseModel):
     """Text presented as a DIRECT QUOTATION.
 
-    ``delimiter`` is required and load-bearing, not decorative. Lexical matching is
-    anti-correlated on paraphrase -- a genuine paraphrase scores LOWER than a
-    fabrication (F8) -- so L1 must only ever score text that was actually presented
-    as a quote. Paraphrased attributions are L3's job.
+    NOTHING VERIFIES A QUOTATION ANY MORE, AND THIS TYPE IS STILL LOAD-BEARING. The
+    check that compared quoted text against the fetched judgment was removed. It turned
+    on a fuzzy 75/90 band, and an honest paraphrase and an invented sentence score 3.6
+    points apart under it -- noise, in both directions across two measurements
+    (docs/03-findings.md Part 3, docs/v1-plan.md F8). A check that cannot separate its
+    two most important inputs must not be able to FAIL a run. What survives are two
+    consumers that need the spans and never needed the score:
+
+    * L3 attributes a claim to a citation when the claim overlaps a quotation hung on
+      that citation (``layers/l2_alignment.py``, ``_quote_spans_by_cluster``).
+    * L1a masks quoted text before extracting propositions, so a quotation is never
+      scored as the answer's own assertion (``extraction/propositions.py``, ``_mask``).
+
+    Delete this type and both break silently: claims lose their citation, and every
+    quoted sentence starts counting as an uncited assertion of law.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -91,8 +102,8 @@ class ExtractedQuote(BaseModel):
     delimiter: str  # '"' | '“' | "'" | 'blockquote' -- provenance that this IS a quote
     attributed_cluster_ordinal: int | None = None
     attribution_method: AttributionMethod = AttributionMethod.NONE
-    #: From 'at [115]'. Narrows verification to one paragraph instead of ~84k chars,
-    #: which is a large precision win for partial_ratio.
+    #: From 'at [115]'. Now used only for attribution -- a pinpoint is the strongest
+    #: signal for WHICH citation a quotation hangs on (``extraction/attribution.py``).
     pinpoint_paragraph: int | None = None
 
 
@@ -165,7 +176,7 @@ class Resolution(BaseModel):
     status: ResolutionStatus
     method: ResolutionMethod = ResolutionMethod.NONE
     url: str | None = None
-    domain: str | None = None  # feeds L2b -- a bare citation has no domain until now
+    domain: str | None = None  # feeds 1c -- a bare citation has no domain until now
     fetch_strategy: FetchStrategy | None = None
     document_id: str | None = None
     title: str | None = None

@@ -1,7 +1,7 @@
 /*
  * Panel styling, plus the ::highlight() rules that paint offending spans in the page.
  *
- * Every rule is scoped under #salv-panel except the ::highlight() ones, which must be
+ * Every rule is scoped under #sigma-panel except the ::highlight() ones, which must be
  * page-level to paint page ranges. `all: initial` on the root blunts inheritance from
  * claude.ai without needing shadow DOM (which cannot host the highlight rules).
  *
@@ -9,7 +9,7 @@
  *
  * 1. EVERY COLOUR IS A TOKEN. The dark-mode block used to override the panel's
  *    background and a handful of containers while leaving the TEXT colours at their
- *    light-mode values -- `.salv-finding-msg` stayed #23262e (near-black) on a #1f222a
+ *    light-mode values -- `.sigma-finding-msg` stayed #23262e (near-black) on a #1f222a
  *    surface. The finding bodies, which are the entire product, were invisible in dark
  *    mode while the pills and links looked fine, so the panel read as working. A theme
  *    that redefines surfaces without redefining ink is not a theme. Tokens make that
@@ -18,7 +18,7 @@
  *
  * 2. THE TYPE SCALE IS ONE NUMBER. Readers are lawyers reading dense findings with
  *    paragraph pinpoints, not developers skimming a debug overlay. Everything sizes off
- *    --salv-scale, so "make it bigger" is one property and nothing drifts out of
+ *    --sigma-scale, so "make it bigger" is one property and nothing drifts out of
  *    proportion. Expanding to full screen raises the same number rather than
  *    introducing a second set of sizes.
  *
@@ -29,14 +29,14 @@
  *    setting neither of them touched is a verdict presented two ways.
  */
 
-#salv-panel {
+#sigma-panel {
   /* --- type scale ------------------------------------------------------------ */
   /* One multiplier drives every size in the panel. See note 2 above. */
-  --salv-scale: 1;
-  --salv-fs-base: calc(var(--salv-scale) * 15px);
-  --salv-fs-body: calc(var(--salv-scale) * 14px);
-  --salv-fs-small: calc(var(--salv-scale) * 13px);
-  --salv-fs-meta: calc(var(--salv-scale) * 12px);
+  --sigma-scale: 1;
+  --sigma-fs-base: calc(var(--sigma-scale) * 15px);
+  --sigma-fs-body: calc(var(--sigma-scale) * 14px);
+  --sigma-fs-small: calc(var(--sigma-scale) * 13px);
+  --sigma-fs-meta: calc(var(--sigma-scale) * 12px);
 
   /* --- type ------------------------------------------------------------------- */
   /*
@@ -50,7 +50,7 @@
    * Cambria (Windows) are screen-designed serifs with lining figures; Linux reaches
    * its own through the final `serif`.
    */
-  --salv-serif:
+  --sigma-serif:
     "Iowan Old Style", Charter, "Bitstream Charter",
     "Sitka Text", Cambria,
     "Palatino Linotype", Palatino, Georgia,
@@ -61,7 +61,7 @@
    * rather than assumed: the stack has five fallbacks and the reader may land on any
    * of them, so the request has to travel with the rule, not with the font choice.
    */
-  --salv-figures: lining-nums tabular-nums;
+  --sigma-figures: lining-nums tabular-nums;
 
   /* --- light palette --------------------------------------------------------- */
   /*
@@ -72,68 +72,68 @@
    * as another shade of the amber warn beside it. That distinction is load-bearing --
    * see docs/01-architecture.md, "Cannot verify is never fabricated".
    */
-  --salv-bg: #fdfcfa;
-  --salv-surface: #f6f3ee;
-  --salv-surface-header: #f3efe8;
-  --salv-surface-raised: #fffdf9;
+  --sigma-bg: #fdfcfa;
+  --sigma-surface: #f6f3ee;
+  --sigma-surface-header: #f3efe8;
+  --sigma-surface-raised: #fffdf9;
 
-  --salv-fg: #1a1815;
+  --sigma-fg: #1a1815;
   /* Body copy inside findings. The single most important colour in the panel. */
-  --salv-fg-body: #26221d;
-  --salv-fg-muted: #5f584e;
-  --salv-fg-subtle: #6d655a;
+  --sigma-fg-body: #26221d;
+  --sigma-fg-muted: #5f584e;
+  --sigma-fg-subtle: #6d655a;
 
-  --salv-border: #ddd6ca;
-  --salv-border-soft: #e7e1d6;
-  --salv-border-faint: #efeae0;
-  --salv-rule: #cfc7b8;
+  --sigma-border: #ddd6ca;
+  --sigma-border-soft: #e7e1d6;
+  --sigma-border-faint: #efeae0;
+  --sigma-rule: #cfc7b8;
 
-  --salv-pass-bg: #e9f1e6;
-  --salv-pass-fg: #1f5130;
-  --salv-pass-br: #c5dcc3;
-  --salv-fail-bg: #fbeae6;
-  --salv-fail-fg: #8a2318;
-  --salv-fail-br: #eec8bf;
-  --salv-warn-bg: #fbf1de;
-  --salv-warn-fg: #7a5410;
-  --salv-warn-br: #e8d3a8;
-  --salv-error-bg: #f2ecf7;
-  --salv-error-fg: #563184;
-  --salv-error-br: #d8c9e8;
-  --salv-muted-bg: #eeeae2;
-  --salv-muted-fg: #5a5347;
-  --salv-muted-br: #ddd6ca;
+  --sigma-pass-bg: #e9f1e6;
+  --sigma-pass-fg: #1f5130;
+  --sigma-pass-br: #c5dcc3;
+  --sigma-fail-bg: #fbeae6;
+  --sigma-fail-fg: #8a2318;
+  --sigma-fail-br: #eec8bf;
+  --sigma-warn-bg: #fbf1de;
+  --sigma-warn-fg: #7a5410;
+  --sigma-warn-br: #e8d3a8;
+  --sigma-error-bg: #f2ecf7;
+  --sigma-error-fg: #563184;
+  --sigma-error-br: #d8c9e8;
+  --sigma-muted-bg: #eeeae2;
+  --sigma-muted-fg: #5a5347;
+  --sigma-muted-br: #ddd6ca;
 
   /* "we could not look" -- deliberately its own colour, not a second warn. */
-  --salv-unver-bg: #e9ebef;
-  --salv-unver-fg: #333a47;
-  --salv-unver-br: #94a0b3;
+  --sigma-unver-bg: #e9ebef;
+  --sigma-unver-fg: #333a47;
+  --sigma-unver-br: #94a0b3;
 
-  --salv-note-bg: #fbf4e4;
-  --salv-note-fg: #644c12;
-  --salv-note-br: #d3a441;
+  --sigma-note-bg: #fbf4e4;
+  --sigma-note-fg: #644c12;
+  --sigma-note-br: #d3a441;
 
-  --salv-llm-bg: #f8f5fb;
-  --salv-llm-br: #7a5cb8;
-  --salv-llm-absent-bg: #f5f1fa;
-  --salv-llm-absent-fg: #543189;
-  --salv-llm-absent-br: #c4b3de;
+  --sigma-llm-bg: #f8f5fb;
+  --sigma-llm-br: #7a5cb8;
+  --sigma-llm-absent-bg: #f5f1fa;
+  --sigma-llm-absent-fg: #543189;
+  --sigma-llm-absent-br: #c4b3de;
 
-  --salv-det-br: #3a3229;
-  --salv-link: #1a5490;
-  --salv-link-hover: #12406e;
-  --salv-cache: #1f6b45;
-  --salv-shadow: rgba(60, 50, 35, 0.13);
+  --sigma-det-br: #3a3229;
+  --sigma-link: #1a5490;
+  --sigma-link-hover: #12406e;
+  --sigma-cache: #1f6b45;
+  --sigma-shadow: rgba(60, 50, 35, 0.13);
 
   /*
-   * The panel's own scrollbar and form controls. `.salv-body` scrolls, and `all:
+   * The panel's own scrollbar and form controls. `.sigma-body` scrolls, and `all:
    * initial` below resets `color-scheme` to `normal`, so without this the scrollbar is
    * painted in claude.ai's scheme rather than the panel's -- a light scrollbar down the
    * side of a dark panel. It travels as a token for the same reason every colour does:
    * the dark block may then redefine it without becoming the first rule in there that
    * styles something.
    */
-  --salv-color-scheme: light;
+  --sigma-color-scheme: light;
 
   all: initial;
   position: fixed;
@@ -145,29 +145,29 @@
   display: flex;
   flex-direction: column;
   /* AFTER `all: initial` above -- `all` is a shorthand that covers color-scheme. */
-  color-scheme: var(--salv-color-scheme);
-  font-family: var(--salv-serif);
-  font-size: var(--salv-fs-base);
+  color-scheme: var(--sigma-color-scheme);
+  font-family: var(--sigma-serif);
+  font-size: var(--sigma-fs-base);
   /* Serif prose wants a little more leading than the sans it replaced. */
   line-height: 1.55;
-  color: var(--salv-fg);
-  background: var(--salv-bg);
-  border: 1px solid var(--salv-border);
+  color: var(--sigma-fg);
+  background: var(--sigma-bg);
+  border: 1px solid var(--sigma-border);
   border-radius: 6px;
-  box-shadow: 0 4px 18px var(--salv-shadow);
+  box-shadow: 0 4px 18px var(--sigma-shadow);
   overflow: hidden;
 }
 
-#salv-panel *,
-#salv-panel *::before,
-#salv-panel *::after {
+#sigma-panel *,
+#sigma-panel *::before,
+#sigma-panel *::after {
   box-sizing: border-box;
   font-family: inherit;
   margin: 0;
   padding: 0;
 }
 
-#salv-panel[data-collapsed="true"] .salv-body {
+#sigma-panel[data-collapsed="true"] .sigma-body {
   display: none;
 }
 
@@ -182,8 +182,8 @@
  * Capped at 1100px: findings are prose, and prose set across a 27-inch monitor is a
  * different readability problem from the one being fixed.
  */
-#salv-panel[data-view="full"] {
-  --salv-scale: 1.15;
+#sigma-panel[data-view="full"] {
+  --sigma-scale: 1.15;
   top: 24px;
   right: 24px;
   left: 24px;
@@ -195,60 +195,60 @@
   border-radius: 8px;
 }
 
-#salv-panel[data-view="full"] .salv-body {
+#sigma-panel[data-view="full"] .sigma-body {
   padding: 16px 22px 22px;
 }
 
 /* --- header ------------------------------------------------------------------ */
-#salv-panel .salv-header {
+#sigma-panel .sigma-header {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--salv-border-soft);
-  background: var(--salv-surface-header);
+  border-bottom: 1px solid var(--sigma-border-soft);
+  background: var(--sigma-surface-header);
   flex: none;
 }
 
-#salv-panel .salv-title {
+#sigma-panel .sigma-title {
   font-weight: 600;
-  font-size: var(--salv-fs-base);
+  font-size: var(--sigma-fs-base);
   flex: 1;
 }
 
-#salv-panel .salv-toggle {
+#sigma-panel .sigma-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: calc(var(--salv-scale) * 24px);
-  height: calc(var(--salv-scale) * 24px);
-  border: 1px solid var(--salv-muted-br);
+  width: calc(var(--sigma-scale) * 24px);
+  height: calc(var(--sigma-scale) * 24px);
+  border: 1px solid var(--sigma-muted-br);
   border-radius: 4px;
-  background: var(--salv-surface-raised);
-  color: var(--salv-fg-muted);
-  font-size: var(--salv-fs-body);
+  background: var(--sigma-surface-raised);
+  color: var(--sigma-fg-muted);
+  font-size: var(--sigma-fs-body);
   line-height: 1;
   cursor: pointer;
   flex: none;
 }
 
-#salv-panel .salv-toggle:hover {
-  background: var(--salv-muted-bg);
-  color: var(--salv-fg);
+#sigma-panel .sigma-toggle:hover {
+  background: var(--sigma-muted-bg);
+  color: var(--sigma-fg);
 }
 
-#salv-panel .salv-toggle:focus-visible {
-  outline: 2px solid var(--salv-link);
+#sigma-panel .sigma-toggle:focus-visible {
+  outline: 2px solid var(--sigma-link);
   outline-offset: 1px;
 }
 
 /* --- verdict + status pills -------------------------------------------------- */
-#salv-panel .salv-verdict-pill,
-#salv-panel .salv-pill {
+#sigma-panel .sigma-verdict-pill,
+#sigma-panel .sigma-pill {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 3px;
-  font-size: var(--salv-fs-meta);
+  font-size: var(--sigma-fs-meta);
   font-weight: 600;
   letter-spacing: 0.01em;
   border: 1px solid transparent;
@@ -260,57 +260,57 @@
  * first letter ONLY -- `text-transform: capitalize` would give "Not Verified", which is
  * a headline, not a status.
  */
-#salv-panel .salv-verdict-pill::first-letter,
-#salv-panel .salv-pill::first-letter {
+#sigma-panel .sigma-verdict-pill::first-letter,
+#sigma-panel .sigma-pill::first-letter {
   text-transform: uppercase;
 }
 
-#salv-panel .salv-pill-sm {
-  font-size: var(--salv-fs-meta);
+#sigma-panel .sigma-pill-sm {
+  font-size: var(--sigma-fs-meta);
   padding: 1px 6px;
 }
 
-#salv-panel [data-kind="pass"] {
-  background: var(--salv-pass-bg);
-  color: var(--salv-pass-fg);
-  border-color: var(--salv-pass-br);
+#sigma-panel [data-kind="pass"] {
+  background: var(--sigma-pass-bg);
+  color: var(--sigma-pass-fg);
+  border-color: var(--sigma-pass-br);
 }
 
-#salv-panel [data-kind="fail"] {
-  background: var(--salv-fail-bg);
-  color: var(--salv-fail-fg);
-  border-color: var(--salv-fail-br);
+#sigma-panel [data-kind="fail"] {
+  background: var(--sigma-fail-bg);
+  color: var(--sigma-fail-fg);
+  border-color: var(--sigma-fail-br);
 }
 
-#salv-panel [data-kind="warn"],
-#salv-panel [data-kind="verifying"] {
-  background: var(--salv-warn-bg);
-  color: var(--salv-warn-fg);
-  border-color: var(--salv-warn-br);
+#sigma-panel [data-kind="warn"],
+#sigma-panel [data-kind="verifying"] {
+  background: var(--sigma-warn-bg);
+  color: var(--sigma-warn-fg);
+  border-color: var(--sigma-warn-br);
 }
 
-#salv-panel [data-kind="error"] {
-  background: var(--salv-error-bg);
-  color: var(--salv-error-fg);
-  border-color: var(--salv-error-br);
+#sigma-panel [data-kind="error"] {
+  background: var(--sigma-error-bg);
+  color: var(--sigma-error-fg);
+  border-color: var(--sigma-error-br);
 }
 
-#salv-panel [data-kind="unverified"] {
-  background: var(--salv-unver-bg);
-  color: var(--salv-unver-fg);
-  border-color: var(--salv-unver-br);
+#sigma-panel [data-kind="unverified"] {
+  background: var(--sigma-unver-bg);
+  color: var(--sigma-unver-fg);
+  border-color: var(--sigma-unver-br);
 }
 
-#salv-panel [data-kind="idle"],
-#salv-panel [data-kind="muted"] {
-  background: var(--salv-muted-bg);
-  color: var(--salv-muted-fg);
-  border-color: var(--salv-muted-br);
+#sigma-panel [data-kind="idle"],
+#sigma-panel [data-kind="muted"] {
+  background: var(--sigma-muted-bg);
+  color: var(--sigma-muted-fg);
+  border-color: var(--sigma-muted-br);
 }
 
 /*
  * FILLS ARE FOR THE HEADLINES. The verdict pill and the coverage banner are what a
- * reader looks at first, and they keep the tint. A filled chip on all five layer rows
+ * reader looks at first, and they keep the tint. A filled chip on all four layer rows
  * and again on every finding turns the same signal into wallpaper, so in-row statuses
  * carry their meaning in the ink alone.
  *
@@ -319,7 +319,7 @@
  * counterpart here. `transparent` is theme-independent and is not a palette literal --
  * the token rule in the file header still holds.
  */
-#salv-panel .salv-pill {
+#sigma-panel .sigma-pill {
   background: transparent;
   border-color: transparent;
   padding-left: 0;
@@ -327,54 +327,54 @@
 }
 
 /* --- body -------------------------------------------------------------------- */
-#salv-panel .salv-body {
+#sigma-panel .sigma-body {
   overflow-y: auto;
   padding: 10px 12px 14px;
 }
 
-#salv-panel .salv-summary {
-  font-size: var(--salv-fs-meta);
-  color: var(--salv-fg-muted);
+#sigma-panel .sigma-summary {
+  font-size: var(--sigma-fs-meta);
+  color: var(--sigma-fg-muted);
   margin-bottom: 8px;
-  font-variant-numeric: var(--salv-figures);
+  font-variant-numeric: var(--sigma-figures);
 }
 
-#salv-panel .salv-hint,
-#salv-panel .salv-empty {
-  color: var(--salv-fg-muted);
-  font-size: var(--salv-fs-small);
+#sigma-panel .sigma-hint,
+#sigma-panel .sigma-empty {
+  color: var(--sigma-fg-muted);
+  font-size: var(--sigma-fs-small);
   padding: 2px 0;
 }
 
-#salv-panel .salv-note {
+#sigma-panel .sigma-note {
   margin-top: 6px;
   padding: 6px 8px;
-  border-left: 3px solid var(--salv-note-br);
-  background: var(--salv-note-bg);
-  font-size: var(--salv-fs-small);
-  color: var(--salv-note-fg);
+  border-left: 3px solid var(--sigma-note-br);
+  background: var(--sigma-note-bg);
+  font-size: var(--sigma-fs-small);
+  color: var(--sigma-note-fg);
   /* Notes now carry full sentences, not the one clause they were written for. In the
      380px rail an unbroken run -- a long word, a URL -- would otherwise push the whole
-     panel sideways. `.salv-error` has carried this for the same reason. */
+     panel sideways. `.sigma-error` has carried this for the same reason. */
   word-break: break-word;
 }
 
-#salv-panel .salv-error {
-  color: var(--salv-fail-fg);
-  font-size: var(--salv-fs-small);
+#sigma-panel .sigma-error {
+  color: var(--sigma-fail-fg);
+  font-size: var(--sigma-fs-small);
   padding: 2px 0;
   word-break: break-word;
 }
 
 /* The fail-fast invariant, stated rather than implied. */
-#salv-panel .salv-shortcircuit {
+#sigma-panel .sigma-shortcircuit {
   margin: 6px 0 10px;
   padding: 8px 10px;
-  border: 1px solid var(--salv-fail-br);
+  border: 1px solid var(--sigma-fail-br);
   border-radius: 4px;
-  background: var(--salv-fail-bg);
-  color: var(--salv-fail-fg);
-  font-size: var(--salv-fs-small);
+  background: var(--sigma-fail-bg);
+  color: var(--sigma-fail-fg);
+  font-size: var(--sigma-fs-small);
 }
 
 /* --- coverage banner ---------------------------------------------------------- */
@@ -386,43 +386,43 @@
  * found small problems" and "we verified nothing at all" looked identical at a glance.
  * The verdict does not change (only positive evidence of non-existence may fail a
  * run, F12), so the REPORT has to carry the weight instead. Hence a block that cannot
- * be skimmed past, sized off the same --salv-scale as everything else.
+ * be skimmed past, sized off the same --sigma-scale as everything else.
  */
-#salv-panel .salv-banner {
+#sigma-panel .sigma-banner {
   margin: 6px 0 10px;
   padding: 10px 12px;
   border-radius: 5px;
-  border: 1px solid var(--salv-unver-br);
+  border: 1px solid var(--sigma-unver-br);
   border-left-width: 4px;
-  background: var(--salv-unver-bg);
-  color: var(--salv-unver-fg);
+  background: var(--sigma-unver-bg);
+  color: var(--sigma-unver-fg);
 }
 
-#salv-panel .salv-banner[data-kind="fail"] {
-  border-color: var(--salv-fail-br);
-  background: var(--salv-fail-bg);
-  color: var(--salv-fail-fg);
+#sigma-panel .sigma-banner[data-kind="fail"] {
+  border-color: var(--sigma-fail-br);
+  background: var(--sigma-fail-bg);
+  color: var(--sigma-fail-fg);
 }
 
-#salv-panel .salv-banner[data-kind="partial"] {
-  border-color: var(--salv-warn-br);
-  background: var(--salv-warn-bg);
-  color: var(--salv-warn-fg);
+#sigma-panel .sigma-banner[data-kind="partial"] {
+  border-color: var(--sigma-warn-br);
+  background: var(--sigma-warn-bg);
+  color: var(--sigma-warn-fg);
 }
 
-#salv-panel .salv-banner-title {
+#sigma-panel .sigma-banner-title {
   display: block;
-  font-size: var(--salv-fs-base);
+  font-size: var(--sigma-fs-base);
   font-weight: 600;
   margin-bottom: 3px;
 }
 
-#salv-panel .salv-banner-body {
-  font-size: var(--salv-fs-small);
+#sigma-panel .sigma-banner-body {
+  font-size: var(--sigma-fs-small);
   line-height: 1.5;
 }
 
-#salv-panel .salv-banner-list {
+#sigma-panel .sigma-banner-list {
   list-style: none;
   margin-top: 7px;
   display: flex;
@@ -437,12 +437,12 @@
  * do not -- `flex-wrap` decides that per row, so `[2007] SGCA 37 — does not exist` stays
  * compact and a full case name still gets the width it needs.
  */
-#salv-panel .salv-banner-item {
+#sigma-panel .sigma-banner-item {
   display: flex;
   flex-wrap: wrap;
   gap: 2px 8px;
   align-items: baseline;
-  font-size: var(--salv-fs-small);
+  font-size: var(--sigma-fs-small);
 }
 
 /*
@@ -460,24 +460,24 @@
  * still sit on one line whenever they fit. `break-word` is the backstop for a label with
  * no spaces to break at.
  */
-#salv-panel .salv-banner-cite {
+#sigma-panel .sigma-banner-cite {
   font-weight: 600;
-  font-variant-numeric: var(--salv-figures);
+  font-variant-numeric: var(--sigma-figures);
   overflow-wrap: break-word;
   min-width: 0;
 }
 
-#salv-panel .salv-banner-why {
+#sigma-panel .sigma-banner-why {
   opacity: 0.85;
   /* Takes the rest of its line, and a line of its own once the name has used the row. */
   flex: 1 1 auto;
   min-width: 0;
 }
 
-#salv-panel .salv-section {
+#sigma-panel .sigma-section {
   margin-top: 12px;
   padding-top: 10px;
-  border-top: 1px solid var(--salv-border-faint);
+  border-top: 1px solid var(--sigma-border-faint);
 }
 
 /*
@@ -486,16 +486,16 @@
  * meant to be introducing. A heading in the same serif as the body, one step up in
  * size and a shade darker, does the same job without raising its voice.
  */
-#salv-panel .salv-section-title {
-  font-size: var(--salv-fs-small);
+#sigma-panel .sigma-section-title {
+  font-size: var(--sigma-fs-small);
   font-weight: 600;
-  color: var(--salv-fg-muted);
+  color: var(--sigma-fg-muted);
   margin-bottom: 6px;
 }
 
-#salv-panel .salv-section-note {
-  font-size: var(--salv-fs-meta);
-  color: var(--salv-fg-subtle);
+#sigma-panel .sigma-section-note {
+  font-size: var(--sigma-fs-meta);
+  color: var(--sigma-fg-subtle);
   margin-bottom: 6px;
 }
 
@@ -514,57 +514,83 @@
  * all five rows, so the statuses and the timings line up with no hardcoded width to
  * keep in step with the type scale.
  */
-#salv-panel .salv-layers {
+#sigma-panel .sigma-layers {
   display: grid;
-  grid-template-columns: calc(var(--salv-scale) * 24px) 1fr auto auto;
+  grid-template-columns: calc(var(--sigma-scale) * 24px) 1fr auto auto;
   align-items: center;
   column-gap: 6px;
   row-gap: 7px;
 }
 
 /* The section heading is not a row; it spans the table. */
-#salv-panel .salv-layers .salv-section-title {
+#sigma-panel .sigma-layers .sigma-section-title {
   grid-column: 1 / -1;
   margin-bottom: 0;
 }
 
-#salv-panel .salv-layer {
+#sigma-panel .sigma-layer {
   display: contents;
 }
 
-#salv-panel .salv-layer-code {
+/*
+ * Layer 1's sub-checks. They are rows in the SAME grid -- `display: contents` again --
+ * so their statuses line up under the layers' statuses instead of forming a second
+ * table with its own column widths. Indenting the code cell is the only thing that
+ * marks them as subordinate, which is the whole intent: three parts of one question,
+ * not three more layers.
+ */
+#sigma-panel .sigma-sublayer .sigma-layer-code,
+#sigma-panel .sigma-sublayer .sigma-layer-name {
+  color: var(--sigma-fg-subtle);
+  font-size: var(--sigma-fs-small);
+}
+
+#sigma-panel .sigma-sublayer .sigma-layer-code {
+  font-weight: 400;
+  /*
+   * NOT padding-left. The code column is a fixed 24px, and "L1a" already fills it at
+   * this size -- padding pushes the text past the column edge and it collides with the
+   * label. Indent the NAME cell instead, which has 1fr to give.
+   */
+}
+
+#sigma-panel .sigma-sublayer .sigma-layer-name {
+  padding-left: 10px;
+}
+
+#sigma-panel .sigma-layer-code {
   font-weight: 600;
-  font-size: var(--salv-fs-small);
-  color: var(--salv-fg-subtle);
-  width: calc(var(--salv-scale) * 24px);
+  font-size: var(--sigma-fs-small);
+  color: var(--sigma-fg-subtle);
+  width: calc(var(--sigma-scale) * 24px);
 }
 
-#salv-panel .salv-layer-name {
+#sigma-panel .sigma-layer-name {
   flex: 1;
-  font-size: var(--salv-fs-body);
+  font-size: var(--sigma-fs-body);
 }
 
-#salv-panel .salv-layer-meta {
+#sigma-panel .sigma-layer-meta {
   display: flex;
   gap: 6px;
   align-items: center;
   justify-content: flex-end;
-  font-size: var(--salv-fs-meta);
-  color: var(--salv-fg-subtle);
-  font-variant-numeric: var(--salv-figures);
+  font-size: var(--sigma-fs-meta);
+  color: var(--sigma-fg-subtle);
+  font-variant-numeric: var(--sigma-figures);
 }
 
 /*
  * Reserved slots inside the meta cluster, so scores sit under scores and durations
  * under durations. Sized in `em` off the tabular figures rather than in px, so they
- * follow --salv-scale and the type stack without a second number to maintain.
+ * follow --sigma-scale and the type stack without a second number to maintain.
  */
-#salv-panel .salv-score {
+#sigma-panel .sigma-score {
   min-width: 2.4em;
   text-align: right;
 }
 
-#salv-panel .salv-duration {
+#sigma-panel .sigma-duration {
   min-width: 4.4em;
   text-align: right;
 }
@@ -574,27 +600,27 @@
  * lengths left the score column ragged. A reserved, right-aligned slot puts the
  * statuses in a column of their own, which is the whole reason a table is a table.
  */
-#salv-panel .salv-layer .salv-pill {
+#sigma-panel .sigma-layer .sigma-pill {
   text-align: right;
 }
 
-#salv-panel .salv-cache {
-  color: var(--salv-cache);
+#sigma-panel .sigma-cache {
+  color: var(--sigma-cache);
 }
 
 /* --- findings ---------------------------------------------------------------- */
-#salv-panel .salv-findings {
+#sigma-panel .sigma-findings {
   list-style: none;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-#salv-panel .salv-finding {
+#sigma-panel .sigma-finding {
   padding: 8px 9px;
   border-radius: 4px;
-  border: 1px solid var(--salv-border-soft);
-  background: var(--salv-surface);
+  border: 1px solid var(--sigma-border-soft);
+  background: var(--sigma-surface);
 }
 
 /*
@@ -602,21 +628,21 @@
  * and definite, judge findings are dashed, tinted and unmistakably a second class of
  * claim. A user should never have to read a label to know which is which.
  */
-#salv-panel .salv-finding[data-source="deterministic"] {
-  border-left: 3px solid var(--salv-det-br);
+#sigma-panel .sigma-finding[data-source="deterministic"] {
+  border-left: 3px solid var(--sigma-det-br);
 }
 
-#salv-panel .salv-finding[data-source="llm"] {
+#sigma-panel .sigma-finding[data-source="llm"] {
   border-style: dashed;
-  border-left: 3px dashed var(--salv-llm-br);
-  background: var(--salv-llm-bg);
+  border-left: 3px dashed var(--sigma-llm-br);
+  background: var(--sigma-llm-bg);
 }
 
-#salv-panel .salv-finding-locatable {
+#sigma-panel .sigma-finding-locatable {
   cursor: crosshair;
 }
 
-#salv-panel .salv-finding-head {
+#sigma-panel .sigma-finding-head {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -631,23 +657,23 @@
 }
 
 /*
- * The backend's finding code, e.g. L1B_CITATION_NOT_FOUND. It used to be monospace;
+ * The backend's finding code, e.g. CITATION_NOT_FOUND. It used to be monospace;
  * now that the whole panel is one serif it needs the size and the tracking back, or a
  * long screaming identifier sets as a solid grey brick. It stays UPPER CASE: this is
  * an identifier the reader may have to quote in a bug report, not a title.
  */
-#salv-panel .salv-code {
-  font-size: var(--salv-fs-small);
+#sigma-panel .sigma-code {
+  font-size: var(--sigma-fs-small);
   letter-spacing: 0.03em;
-  color: var(--salv-fg-subtle);
+  color: var(--sigma-fg-subtle);
   min-width: 0;
   word-break: break-word;
 }
 
 /* The sentence the reader is actually here for. */
-#salv-panel .salv-finding-msg {
-  font-size: var(--salv-fs-body);
-  color: var(--salv-fg-body);
+#sigma-panel .sigma-finding-msg {
+  font-size: var(--sigma-fs-body);
+  color: var(--sigma-fg-body);
 }
 
 /*
@@ -655,72 +681,72 @@
  * full height it pushed the layer table below the fold -- the reader lost the shape of
  * the report to a single quotation. The cap scales with everything else.
  */
-#salv-panel .salv-evidence {
+#sigma-panel .sigma-evidence {
   margin: 6px 0 2px;
   padding: 6px 9px;
-  border-left: 2px solid var(--salv-rule);
-  background: var(--salv-surface-raised);
-  font-size: var(--salv-fs-small);
-  color: var(--salv-fg-body);
-  max-height: calc(var(--salv-scale) * 190px);
+  border-left: 2px solid var(--sigma-rule);
+  background: var(--sigma-surface-raised);
+  font-size: var(--sigma-fs-small);
+  color: var(--sigma-fg-body);
+  max-height: calc(var(--sigma-scale) * 190px);
   overflow-y: auto;
 }
 
-#salv-panel .salv-para {
+#sigma-panel .sigma-para {
   display: block;
   margin-top: 3px;
   font-style: normal;
-  font-size: var(--salv-fs-meta);
-  color: var(--salv-fg-subtle);
+  font-size: var(--sigma-fs-meta);
+  color: var(--sigma-fg-subtle);
 }
 
-#salv-panel .salv-evidence-meta {
-  font-size: var(--salv-fs-meta);
-  color: var(--salv-fg-subtle);
+#sigma-panel .sigma-evidence-meta {
+  font-size: var(--sigma-fs-meta);
+  color: var(--sigma-fg-subtle);
   margin-top: 4px;
-  font-variant-numeric: var(--salv-figures);
+  font-variant-numeric: var(--sigma-figures);
 }
 
-#salv-panel .salv-judge-absent {
+#sigma-panel .sigma-judge-absent {
   padding: 8px 10px;
-  border: 1px dashed var(--salv-llm-absent-br);
+  border: 1px dashed var(--sigma-llm-absent-br);
   border-radius: 4px;
-  background: var(--salv-llm-absent-bg);
-  color: var(--salv-llm-absent-fg);
-  font-size: var(--salv-fs-small);
+  background: var(--sigma-llm-absent-bg);
+  color: var(--sigma-llm-absent-fg);
+  font-size: var(--sigma-fs-small);
 }
 
 /* --- citations --------------------------------------------------------------- */
-#salv-panel .salv-citation {
+#sigma-panel .sigma-citation {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 4px 0;
-  font-size: var(--salv-fs-body);
+  font-size: var(--sigma-fs-body);
 }
 
-#salv-panel .salv-citation-key {
+#sigma-panel .sigma-citation-key {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#salv-panel .salv-unresolved {
-  font-size: var(--salv-fs-small);
-  color: var(--salv-fail-fg);
+#sigma-panel .sigma-unresolved {
+  font-size: var(--sigma-fs-small);
+  color: var(--sigma-fail-fg);
   font-style: italic;
 }
 
-#salv-panel .salv-link {
-  font-size: var(--salv-fs-small);
-  color: var(--salv-link);
+#sigma-panel .sigma-link {
+  font-size: var(--sigma-fs-small);
+  color: var(--sigma-link);
   text-decoration: underline;
   word-break: break-all;
 }
 
-#salv-panel .salv-link:hover {
-  color: var(--salv-link-hover);
+#sigma-panel .sigma-link:hover {
+  color: var(--sigma-link-hover);
 }
 
 /* --- page highlights ---------------------------------------------------------- */
@@ -728,20 +754,20 @@
  * Painted over live Ranges by the browser. Nothing in claude.ai's DOM is touched, so
  * React never re-renders our marks away and its reconciler is never surprised.
  */
-::highlight(salv-fail) {
+::highlight(sigma-fail) {
   background-color: rgba(214, 60, 60, 0.28);
   text-decoration: underline wavy rgba(160, 30, 30, 0.7);
 }
 
-::highlight(salv-warn) {
+::highlight(sigma-warn) {
   background-color: rgba(224, 169, 60, 0.28);
 }
 
-::highlight(salv-info) {
+::highlight(sigma-info) {
   background-color: rgba(120, 140, 190, 0.2);
 }
 
-::highlight(salv-focus) {
+::highlight(sigma-focus) {
   background-color: rgba(90, 120, 220, 0.38);
 }
 
@@ -754,65 +780,65 @@
  * with the header toggle and remembered in chrome.storage as `panelTheme`.
  *
  * TOKENS ONLY. Every value below is a redefinition of a custom property declared on
- * #salv-panel above; no selector here styles anything. If a rule that is not a token
+ * #sigma-panel above; no selector here styles anything. If a rule that is not a token
  * redefinition ever appears in this block, the light and dark themes have started to
  * diverge and the invisible-text bug is back.
  *
  * The semantic inks are LIGHTENED rather than reused: #8a2318 on a #232019 card is
  * about 2:1, which is unreadable however correct the hue is.
  */
-#salv-panel[data-theme="dark"] {
-  --salv-color-scheme: dark;
+#sigma-panel[data-theme="dark"] {
+  --sigma-color-scheme: dark;
 
-  --salv-bg: #1c1a17;
-  --salv-surface: #232019;
-  --salv-surface-header: #262219;
-  --salv-surface-raised: #191713;
+  --sigma-bg: #1c1a17;
+  --sigma-surface: #232019;
+  --sigma-surface-header: #262219;
+  --sigma-surface-raised: #191713;
 
-  --salv-fg: #ece8e0;
-  --salv-fg-body: #e3ded4;
-  --salv-fg-muted: #b5ada0;
-  --salv-fg-subtle: #9d958a;
+  --sigma-fg: #ece8e0;
+  --sigma-fg-body: #e3ded4;
+  --sigma-fg-muted: #b5ada0;
+  --sigma-fg-subtle: #9d958a;
 
-  --salv-border: #3a352c;
-  --salv-border-soft: #3a352c;
-  --salv-border-faint: #2e2a23;
-  --salv-rule: #453f34;
+  --sigma-border: #3a352c;
+  --sigma-border-soft: #3a352c;
+  --sigma-border-faint: #2e2a23;
+  --sigma-rule: #453f34;
 
-  --salv-pass-bg: #17301f;
-  --salv-pass-fg: #86d9a4;
-  --salv-pass-br: #2f5c3f;
-  --salv-fail-bg: #351a17;
-  --salv-fail-fg: #ffa295;
-  --salv-fail-br: #6b302c;
-  --salv-warn-bg: #332810;
-  --salv-warn-fg: #f0c674;
-  --salv-warn-br: #6a5423;
-  --salv-error-bg: #271e38;
-  --salv-error-fg: #cbb0f2;
-  --salv-error-br: #4a3d6b;
-  --salv-muted-bg: #2a271f;
-  --salv-muted-fg: #c6bfb2;
-  --salv-muted-br: #453f34;
+  --sigma-pass-bg: #17301f;
+  --sigma-pass-fg: #86d9a4;
+  --sigma-pass-br: #2f5c3f;
+  --sigma-fail-bg: #351a17;
+  --sigma-fail-fg: #ffa295;
+  --sigma-fail-br: #6b302c;
+  --sigma-warn-bg: #332810;
+  --sigma-warn-fg: #f0c674;
+  --sigma-warn-br: #6a5423;
+  --sigma-error-bg: #271e38;
+  --sigma-error-fg: #cbb0f2;
+  --sigma-error-br: #4a3d6b;
+  --sigma-muted-bg: #2a271f;
+  --sigma-muted-fg: #c6bfb2;
+  --sigma-muted-br: #453f34;
 
   /* Still the one cool family, for the same reason it is cool in light mode. */
-  --salv-unver-bg: #23262f;
-  --salv-unver-fg: #d3d8e4;
-  --salv-unver-br: #6a7488;
+  --sigma-unver-bg: #23262f;
+  --sigma-unver-fg: #d3d8e4;
+  --sigma-unver-br: #6a7488;
 
-  --salv-note-bg: #2b2413;
-  --salv-note-fg: #e8cf94;
-  --salv-note-br: #a17b1f;
+  --sigma-note-bg: #2b2413;
+  --sigma-note-fg: #e8cf94;
+  --sigma-note-br: #a17b1f;
 
-  --salv-llm-bg: #221f2c;
-  --salv-llm-br: #9d84e0;
-  --salv-llm-absent-bg: #241f31;
-  --salv-llm-absent-fg: #cbb8f0;
-  --salv-llm-absent-br: #4a3d6b;
+  --sigma-llm-bg: #221f2c;
+  --sigma-llm-br: #9d84e0;
+  --sigma-llm-absent-bg: #241f31;
+  --sigma-llm-absent-fg: #cbb8f0;
+  --sigma-llm-absent-br: #4a3d6b;
 
-  --salv-det-br: #9a9081;
-  --salv-link: #7fb0f5;
-  --salv-link-hover: #a6c9fa;
-  --salv-cache: #5fcf95;
-  --salv-shadow: rgba(0, 0, 0, 0.55);
+  --sigma-det-br: #9a9081;
+  --sigma-link: #7fb0f5;
+  --sigma-link-hover: #a6c9fa;
+  --sigma-cache: #5fcf95;
+  --sigma-shadow: rgba(0, 0, 0, 0.55);
 }

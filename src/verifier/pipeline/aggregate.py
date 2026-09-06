@@ -2,8 +2,8 @@
 
 THE INVARIANT: **the judge can convict but never acquit.**
 
-Layers 1-4 are deterministic. If any of them produces a FAIL finding, the run has
-failed on machine-checkable grounds and no amount of model opinion may undo it. L5's
+Layers 1-3 are deterministic. If any of them produces a FAIL finding, the run has
+failed on machine-checkable grounds and no amount of model opinion may undo it. L3's
 only channel into the verdict is *adding* findings; ``JudgeResult`` has no field
 capable of clearing one, and if a future schema grew such a field this module would
 ignore it. ``lattice_min`` is monotone, so the final verdict can only move DOWN from
@@ -172,9 +172,9 @@ def summarise_layers(
 ) -> dict[Layer, LayerResult]:
     """Index layer results by layer, keeping the last write for a repeated layer.
 
-    L2 legitimately runs twice (L2a on explicit domains before any fetch, L2b on the
-    domains L1 resolved), and the second result supersedes the first for display --
-    but both sets of findings are already in the run's finding list, so nothing is lost.
+    Every layer reports exactly once. Source trust used to run twice under its own
+    layer key and let the second result supersede the first; it is now L1's sub-check 1c,
+    and L1's pre-fetch pass is discarded unless it failed.
     """
     return {r.layer: r for r in results}
 

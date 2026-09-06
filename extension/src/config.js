@@ -6,9 +6,9 @@
  * off. No build step, no modules -- an extension that needs `npm run build` before a
  * demo is an extension that will not be rebuilt at 3am.
  */
-globalThis.SALV = globalThis.SALV || {};
+globalThis.SIGMA = globalThis.SIGMA || {};
 
-SALV.config = {
+SIGMA.config = {
   /**
    * The verifier API. Must match `host_permissions` in manifest.json.
    *
@@ -61,7 +61,7 @@ SALV.config = {
   /**
    * Streaming-completion debounce. Verifying a half-written answer is the main
    * correctness trap in the whole extension: a truncated answer looks unresponsive to
-   * L4 and its citations look fabricated to L1, producing a confident false red.
+   * L3 and its citations look fabricated to L1, producing a confident false red.
    */
   settleMs: 1200,
 
@@ -95,7 +95,7 @@ SALV.config = {
 };
 
 /** How long to wait for chrome.storage before falling back to the defaults above. */
-SALV.STORAGE_TIMEOUT_MS = 1000;
+SIGMA.STORAGE_TIMEOUT_MS = 1000;
 
 /**
  * The ONLY keys that round-trip through chrome.storage.
@@ -104,7 +104,7 @@ SALV.STORAGE_TIMEOUT_MS = 1000;
  * in `config` is a tuning constant that ships with the extension, and persisting one
  * freezes it forever on that machine.
  *
- * That is not hypothetical: `saveConfig` used to store `{...SALV.config}` -- the whole
+ * That is not hypothetical: `saveConfig` used to store `{...SIGMA.config}` -- the whole
  * object -- so the first ever click on the full-screen or theme toggle wrote a complete
  * snapshot of that session's config, `pollTimeoutMs: 45000` included. `loadConfig` then
  * applied the blob over the defaults on every boot, so raising the default to 240000 and
@@ -113,7 +113,7 @@ SALV.STORAGE_TIMEOUT_MS = 1000;
  * in any file. Filtering on READ as well as write is what heals an already-poisoned
  * profile without asking anyone to clear site data by hand.
  */
-SALV.PERSISTED_KEYS = ['panelView', 'panelTheme'];
+SIGMA.PERSISTED_KEYS = ['panelView', 'panelTheme'];
 
 /**
  * User overrides from chrome.storage.sync, applied over the defaults above.
@@ -127,29 +127,29 @@ SALV.PERSISTED_KEYS = ['panelView', 'panelTheme'];
  * nothing to read anywhere. A config read is a nicety; it may never be able to stop
  * the panel from mounting.
  */
-SALV.loadConfig = async function loadConfig() {
+SIGMA.loadConfig = async function loadConfig() {
   try {
     const stored = await Promise.race([
       chrome.storage.sync.get('config'),
-      new Promise((resolve) => setTimeout(() => resolve(null), SALV.STORAGE_TIMEOUT_MS)),
+      new Promise((resolve) => setTimeout(() => resolve(null), SIGMA.STORAGE_TIMEOUT_MS)),
     ]);
     if (stored === null) {
-      SALV.warn('chrome.storage did not answer; using defaults (is this tab orphaned?)');
+      SIGMA.warn('chrome.storage did not answer; using defaults (is this tab orphaned?)');
     } else if (stored.config) {
       // Allowlisted, NOT Object.assign(config, stored.config): a stored blob from an
       // older version carries every tuning constant it had at the time, and applying it
       // wholesale silently pins them forever. See PERSISTED_KEYS.
-      for (const key of SALV.PERSISTED_KEYS) {
+      for (const key of SIGMA.PERSISTED_KEYS) {
         if (Object.prototype.hasOwnProperty.call(stored.config, key)) {
-          SALV.config[key] = stored.config[key];
+          SIGMA.config[key] = stored.config[key];
         }
       }
     }
   } catch (err) {
     // Storage is unavailable in some contexts; defaults are always usable.
-    SALV.warn('config load skipped:', (err && err.message) || err);
+    SIGMA.warn('config load skipped:', (err && err.message) || err);
   }
-  return SALV.config;
+  return SIGMA.config;
 };
 
 /**
@@ -161,18 +161,18 @@ SALV.loadConfig = async function loadConfig() {
  * orphaned content script the chrome.* bindings point at a destroyed extension context
  * and the call may never settle at all.
  */
-SALV.saveConfig = function saveConfig(patch) {
-  Object.assign(SALV.config, patch);
+SIGMA.saveConfig = function saveConfig(patch) {
+  Object.assign(SIGMA.config, patch);
   try {
     const stored = {};
-    for (const key of SALV.PERSISTED_KEYS) stored[key] = SALV.config[key];
+    for (const key of SIGMA.PERSISTED_KEYS) stored[key] = SIGMA.config[key];
     void Promise.resolve(chrome.storage.sync.set({ config: stored })).catch((err) => {
-      SALV.warn('config save skipped:', (err && err.message) || err);
+      SIGMA.warn('config save skipped:', (err && err.message) || err);
     });
   } catch (err) {
-    SALV.warn('config save skipped:', (err && err.message) || err);
+    SIGMA.warn('config save skipped:', (err && err.message) || err);
   }
-  return SALV.config;
+  return SIGMA.config;
 };
 
 /**
@@ -182,17 +182,17 @@ SALV.saveConfig = function saveConfig(patch) {
  * Verbose. That is fine for chatter and actively harmful for anything diagnostic:
  * "there was no console output" was treated as evidence this script never ran, when
  * it was only evidence of the log level. Anything a human might go looking for uses
- * SALV.banner or SALV.warn below.
+ * SIGMA.banner or SIGMA.warn below.
  */
-SALV.log = function log(...args) {
-  console.debug('[SAL Verifier]', ...args);
+SIGMA.log = function log(...args) {
+  console.debug('[Sigma Tech]', ...args);
 };
 
 /** Visible at the default log level. Use for anything worth finding. */
-SALV.banner = function banner(...args) {
-  console.info('[SAL Verifier]', ...args);
+SIGMA.banner = function banner(...args) {
+  console.info('[Sigma Tech]', ...args);
 };
 
-SALV.warn = function warn(...args) {
-  console.warn('[SAL Verifier]', ...args);
+SIGMA.warn = function warn(...args) {
+  console.warn('[Sigma Tech]', ...args);
 };

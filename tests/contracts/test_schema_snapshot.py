@@ -72,3 +72,43 @@ def test_contracts_have_not_drifted():
 if __name__ == "__main__":
     SNAPSHOT.write_text(json.dumps(_current(), indent=2, sort_keys=True) + "\n")
     print(f"wrote {SNAPSHOT}")
+
+
+def test_sub_layer_results_survive_the_json_column_they_ride_in():
+    """``LayerResult.sub_results`` has no column in the frozen migration.
+
+    It rides in ``layer_results.detail`` under ``_sub_results`` as plain JSON (see
+    ``repos/runs.py``), so the pack/unpack has to be exact -- the panel renders Layer 1's
+    per-sub-check status from whatever comes back out. The Pg repo itself needs a
+    database and cannot be exercised offline, so the shape is pinned here instead.
+    """
+    from verifier.contracts.enums import LayerStatus, SubLayer
+    from verifier.contracts.layers import SubLayerResult
+
+    original = SubLayerResult(
+        sub_layer=SubLayer.L1B_EXISTENCE,
+        status=LayerStatus.FAIL,
+        finding_count=2,
+        detail={"clusters": 3, "not_found": 1},
+    )
+    packed = original.model_dump(mode="json")
+    assert packed["sub_layer"] == "L1b", "the wire value is the string the panel keys on"
+    assert SubLayerResult(**packed) == original
+
+
+def test_a_finding_carries_its_sub_layer_through_the_evidence_column():
+    """Same story for ``Finding.sub_layer``, packed under ``_sub_layer`` in evidence."""
+    from verifier.contracts.enums import FindingCode, Layer, Severity, SubLayer
+    from verifier.contracts.findings import Finding
+
+    finding = Finding(
+        id="run:L1c:domain:medium.com:SOURCE_GRAYLISTED",
+        layer=Layer.L1_CITATION_INTEGRITY,
+        sub_layer=SubLayer.L1C_SOURCE_TRUST,
+        code=FindingCode.SOURCE_GRAYLISTED,
+        severity=Severity.WARN,
+        message="graylisted",
+    )
+    packed = str(finding.sub_layer)
+    assert packed == "L1c"
+    assert SubLayer(packed) is finding.sub_layer

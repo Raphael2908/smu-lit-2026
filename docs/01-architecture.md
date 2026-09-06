@@ -26,17 +26,18 @@ POST /v1/verify {question, ai_output, context, is_followup}
    ├─ L0 Haiku finds the citations; regex extracts quotes, propositions, source URLs
    │     ├─ L1a: output asserts law and cites NOTHING → FAIL now.
    │     │       No fetch, no worker. ~5 ms deterministic, ~1 s with the LLM extractor.
-   │     └─ L2a: blacklisted domain named outright → FAIL now.
+   │     └─ L1c, pre-fetch: blacklisted domain named outright → FAIL now.
    │             No fetch, no worker, no tokens. ~5 ms.
    │
    └─ enqueue ─────────────────────────────────────────► 202 {run_id} in ~5 ms
 
-        parallel from t=0                                  GATE            final
-        ┌ L1b/c resolve → existence + quote ┬─► L2b source trust ┐
-        │      (shared single-flight        │   (needs L1b's     │
-        │       document fetch)             │   resolved domain) ├─► any L1-L4 FAIL?
-        ├ L3 grounding (shares the fetch) ──┘                    │   ├ yes → FAIL, no judge
-        └ L4 responsiveness (no deps) ───────────────────────────┘   └ no  → L5 judge
+        parallel from t=0                                GATE              final
+        ┌ L1  1a cited at all ──► 1b resolve ──► 1c trust ┐
+        │     (shared single-flight document fetch;       │
+        │      1c needs 1b's resolved domain, which is    ├─► any L1-L3 FAIL?
+        │      why it is sequenced INSIDE L1)             │   ├ yes → FAIL, no judge
+        ├ L2 alignment (shares the fetch) ────────────────┤   └ no  → L4 judge
+        └ L3 responsiveness (no deps) ────────────────────┘
 ```
 
 ### Why this ordering
@@ -69,25 +70,39 @@ timeout, no key, unreadable output — the run carries `extractor_degraded` and 
 declines to fail: "we did not look" is not "it cited nothing". There is deliberately no
 regex fallback, because falling back would report a run as checked when it was not.
 
-**L2 follows L1** because a bare citation like `[2007] SGCA 37` has no source until L1
-resolves it to a document on a domain. L2 asks "is this source trustworthy?", which
+**1c is sequenced last inside L1**, because a bare citation like `[2007] SGCA 37` has
+no source until 1b resolves it to a document on a domain. "Is this source trustworthy?"
 cannot be answered before there is a source. Domains written out explicitly in the
-output are the exception — they carry a domain already, so L2a checks them at
-extraction time and can fail the run before anything is fetched.
+output are the exception — they carry a domain already, so 1c runs a pre-fetch pass over
+those at extraction time and can fail the run before anything is fetched.
 
-**L3 does not wait for L1's verdict.** It needs the *fetched document*, not L1's
+That data dependency is *why* trust is a sub-check rather than a layer. As a layer it
+had to wait for the whole of L1 to finish, which gave the pipeline a sequential tail for
+a check that only ever needed one field. Inside L1 the dependency sits where it actually
+lives, and every deterministic layer now starts at t=0.
+
+**A whitelist can never clear a 1b finding.** Merging the two brought that guarantee
+into one object, so it is enforced there rather than promised: `check_source_trust`
+receives a `LayerInput` and nothing else — no findings, no other sub-check's result — so
+it is not *capable* of reading a fabrication finding, let alone clearing one. The
+composite only concatenates, and a tripwire raises `ContractViolation` if a future edit
+ever drops a sub-check's findings on the way out. If "whitelisted overrules all" were
+implemented literally, putting elitigation.sg on the whitelist would clear every
+fabricated eLitigation citation in existence.
+
+**L2 does not wait for L1's verdict.** It needs the *fetched document*, not L1's
 opinion of it, so both consume one shared single-flight `resolve_document()` — one
 fetch, two consumers, both proceeding the moment it lands. We are deliberately
-optimistic: L3 and L4 score the output regardless of how L1 rules.
+optimistic: L2 and L3 score the output regardless of how L1 rules.
 
 The reason is a product one. **A citation can be fabricated while the legal argument is
 sound, and a lawyer needs to know that.** "Citation is fabricated, but the proposition
 is well-grounded and does answer your question" is far more useful than "failed at
 layer 1". The verdict is still FAIL; the *report* is complete.
 
-This costs almost nothing: when a citation does not resolve, L3 returns
-`NOT_APPLICABLE` and spends no embeddings, so only L4 runs. And because the layers are
-parallel, a fabricated-citation red is bounded by `max(L1, L4)` ≈ 0.6 s.
+This costs almost nothing: when a citation does not resolve, L2 returns
+`NOT_APPLICABLE` and spends no embeddings, so only L3 runs. And because the layers are
+parallel, a fabricated-citation red is bounded by `max(L1, L3)` ≈ 0.6 s.
 
 ### Concurrency
 
@@ -100,11 +115,11 @@ on isolated queues where they cannot starve the fast path.
 
 ## The verdict model
 
-- **FAIL** — any L1–L4 failure: **nothing cited at all** · citation not found ·
-  soft-404 · title or party mismatch · quote not found · blacklisted source · claim not
-  grounded · question not answered. The judge is skipped.
+- **FAIL** — any L1–L3 failure: **nothing cited at all** · citation not found ·
+  soft-404 · title or party mismatch · blacklisted source · claim not grounded ·
+  question not answered. The judge is skipped.
 - **WARN** — passes, annotated: an individual assertion with no citation in scope ·
-  nothing cited on a *follow-up* turn · graylisted source · inexact-but-close quote ·
+  nothing cited on a *follow-up* turn · graylisted source ·
   `UNVERIFIED` citation (report-only, source unavailable, session expired).
 - **PASS** — clear; the judge then runs and returns the final verdict.
 
@@ -116,7 +131,7 @@ politeness — it is the difference between a tool lawyers trust and one they tu
 See `docs/03-findings.md` F12 for the near-miss that made this concrete.
 
 **But WARN must not be allowed to read as "fine."** A run in which no citation could be
-checked used to present as a mild warn with a grey `not_applicable` beside L3 — both
+checked used to present as a mild warn with a grey `not_applicable` beside L2 — both
 statements true, and together misleading, because "we found small problems" and "we
 verified nothing at all" looked identical at a glance. The verdict is unchanged; the
 *report* now carries the weight:
@@ -129,7 +144,7 @@ verified nothing at all" looked identical at a glance. The verdict is unchanged;
 
 The unverified state is given its own label and colour rather than a second shade of
 warn, because it is a different fact: not a small problem, but an absence of evidence in
-either direction. `L3 NOT_APPLICABLE` means the layer received no document to score —
+either direction. `L2 NOT_APPLICABLE` means the layer received no document to score —
 it is not a failed check and must never be aggregated as one.
 
 ## The invariant
@@ -164,11 +179,14 @@ cosine to decide truth — see `docs/03-findings.md` Part 2.
 |---|---|---|
 | L1a | Is the proposition supported by any authority at all? | Model finds, deterministic count |
 | L1b | Does this citation exist, and is it the right document? | Deterministic lookup |
-| L1c | Is the quote really in it? | Deterministic lookup |
-| L2 | Is the source trustworthy? | Deterministic lookup |
-| L3 | Does the output *use* this source? | Retrieval / ranking |
-| L4 | Does the output answer *this* question? | Retrieval / ranking |
-| L5 | Is it *faithful* to what the source holds? | Reasoning |
+| L1c | Is the source trustworthy? | Deterministic lookup |
+| L2 | Does the output *use* this source? | Retrieval / ranking |
+| L3 | Does the output answer *this* question? | Retrieval / ranking |
+| L4 | Is it *faithful* to what the source holds? | Reasoning |
+
+L1a/L1b/L1c are SUB-CHECKS, not layers: they are parts of one question — "is the citation
+integrity of this answer sound?" — and the run reports them on `LayerResult.sub_results` inside
+a single L1 row. Four scoring layers, four rows.
 
 ## Latency
 
@@ -176,7 +194,7 @@ cosine to decide truth — see `docs/03-findings.md` Part 2.
 |---|---|---|
 | Blacklisted URL named in the output | ~5 ms | ~5 ms |
 | Output asserts law and cites nothing | ~5 ms + one Haiku call | same (judge skipped) |
-| Fabricated citation | ~0.6 s = `max(L1, L4)` | ~0.6 s (judge skipped) |
+| Fabricated citation | ~0.6 s = `max(L1, L3)` | ~0.6 s (judge skipped) |
 | Cold pass, open source | ~4 s | ~12–19 s |
 | Cold pass, login-walled source | ~7–9 s | ~15–24 s |
 | Warm pass (cached doc + summary + embeddings) | ~0.15 s | ~6–15 s |

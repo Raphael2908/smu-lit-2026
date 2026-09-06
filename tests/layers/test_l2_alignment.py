@@ -29,7 +29,7 @@ from tests.semantic.fixtures import (
     tenancy_document,
 )
 from verifier.contracts.enums import FindingCode, LayerStatus, Severity
-from verifier.layers.l3_alignment import SourceGroundingLayer
+from verifier.layers.l2_alignment import SourceGroundingLayer
 from verifier.providers.mock.embeddings import MockEmbedder
 from verifier.repos.memory import InMemoryEmbeddingRepo
 from verifier.semantic.chunking import chunk_output_claims, chunk_source_document
@@ -55,7 +55,7 @@ async def seed_background(repo, documents, *, prefix: str = "heading") -> None:
     from criminal and landlord-and-tenant law.
 
     ``prefix`` must match the layer's regime. Vectors embedded under a different
-    ``L3_CONTEXTUAL_PREFIX`` are deliberately invisible to it (see
+    ``L2_CONTEXTUAL_PREFIX`` are deliberately invisible to it (see
     ``CachedEmbedder.cache_model``), so seeding under the wrong one leaves L3 on a cold
     cache -- which it reports rather than hides, but which silently stops the margin
     being the thing under test.
@@ -256,7 +256,7 @@ async def test_the_absolute_floor_fails_a_claim_even_with_no_background():
     # so assert it matches the ACTIVE configuration rather than a literal.
     from verifier.settings import settings
 
-    assert finding.evidence.threshold == pytest.approx(settings.L3_ABSOLUTE_FLOOR)
+    assert finding.evidence.threshold == pytest.approx(settings.L2_ABSOLUTE_FLOOR)
 
 
 async def test_a_middling_margin_warns_rather_than_fails():
@@ -377,7 +377,7 @@ async def test_the_registry_can_build_and_run_l3_with_no_injection():
 
     reset_default_repos()
     try:
-        layer = build_from_registry(Layer.L3_GROUNDING)
+        layer = build_from_registry(Layer.L2_ALIGNMENT)
         cluster = spandeck_cluster(GROUNDED_OUTPUT)
         resolutions, documents = cited(cluster, spandeck_document())
         result = await layer.run(
@@ -388,7 +388,7 @@ async def test_the_registry_can_build_and_run_l3_with_no_injection():
                 documents=documents,
             )
         )
-        assert result.layer is Layer.L3_GROUNDING
+        assert result.layer is Layer.L2_ALIGNMENT
         assert result.status is not LayerStatus.ERROR
     finally:
         reset_default_repos()
@@ -441,7 +441,7 @@ async def test_a_claim_never_leaks_into_a_later_runs_background_pool():
 
 # --- what the judge gets to read ----------------------------------------------------
 #
-# L5 reasons only over the passages L3 hands it and is told not to fill gaps from
+# L4 reasons only over the passages L2 hands it and is told not to fill gaps from
 # memory, so its verdict is bounded by this layer's recall. These tests pin that
 # boundary: they assert L3 hands over ENOUGH, correctly labelled, and -- critically --
 # that widening the evidence set moves no score, because every threshold in
@@ -492,7 +492,7 @@ def test_every_claim_is_represented_before_any_claim_gets_depth():
     because the property is about how the budget is SPENT, and reproducing budget
     pressure through the layer would need a fixture larger than the point being made.
     """
-    from verifier.layers.l3_alignment import _select_passages
+    from verifier.layers.l2_alignment import _select_passages
 
     def passage(name: str, score: float) -> dict[str, object]:
         return {"text": name, "citation": "c", "paragraph": None, "score": score}
@@ -582,7 +582,7 @@ async def test_an_oversized_chunk_is_split_into_its_own_numbered_paragraphs():
 
 # --- which text gets embedded -------------------------------------------------------
 #
-# settings.L3_CONTEXTUAL_PREFIX selects WHAT is embedded, never a threshold. The
+# settings.L2_CONTEXTUAL_PREFIX selects WHAT is embedded, never a threshold. The
 # summary variant is kept runnable because docs/03-findings.md F14 is an A/B and an
 # A/B whose arms cannot both be built is not reproducible -- the old plan's "config 1
 # vs config 2" was never runnable in-process, which is why the prefix survived a

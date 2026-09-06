@@ -6,13 +6,13 @@
   "What changed during the build" at the foot of this file.
 -->
 
-# SAL Verifier — 5-Layer Legal AI Output Verification
+# Sigma Tech — 4-Layer Legal AI Output Verification
 
 ## Context
 
 **Problem (SMU LIT 2026, sponsor: Singapore Academy of Law).** LLMs fabricate case law and misread precedent; subscribers to a case-law database demand absolute accuracy. Build an automated, scalable framework that scores the accuracy and citation integrity of legal AI outputs, and answers "who audits the auditor?".
 
-**Solution.** A verification service running five layers over `(question, ai_output)`. Layers 1–4 are deterministic and run in parallel; **if any of them fails, the output fails immediately and the LLM judge is never consulted.** The judge runs only on output that already passed every deterministic check, as a final correctness arbiter.
+**Solution.** A verification service running four layers over `(question, ai_output)`. Layers 1–3 are deterministic and run in parallel; **if any of them fails, the output fails immediately and the LLM judge is never consulted.** The judge runs only on output that already passed every deterministic check, as a final correctness arbiter.
 
 **The input comes entirely from the Chrome extension**, which scrapes two things off the claude.ai page: **the user's prompt** and **Claude's rendered output**. That pair is the whole input — there is no API integration, no access to Claude's retrieval context, logprobs, or internals. Two consequences, one good and one to design around:
 
@@ -21,14 +21,14 @@
 
 **How it answers the brief:**
 - *Fake cases* → L1 resolves every citation against the live source corpus. Non-resolution is ground truth, not an opinion.
-- *Contextual accuracy* → split across two task types on purpose. L3/L4 use legal-domain embeddings as **retrieval**: does the output actually draw on the cited source, and does it answer *this* question? L5 then does the **reasoning** part — is it faithful to what the case holds. Published results show embedding similarity cannot judge faithfulness; the architecture reflects that rather than ignoring it.
+- *Contextual accuracy* → split across two task types on purpose. L2/L3 use legal-domain embeddings as **retrieval**: does the output actually draw on the cited source, and does it answer *this* question? L4 then does the **reasoning** part — is it faithful to what the case holds. Published results show embedding similarity cannot judge faithfulness; the architecture reflects that rather than ignoring it.
 - *Scalability* → content-hash caches (document, summary, embeddings) make the warm path sub-second, and a deterministic failure costs no LLM tokens at all.
 - *Who audits the auditor* → **the LLM never gets to clear a failure.** It only ever sees output that passed all four deterministic layers, and it can only fail it further. It can convict, never acquit.
 
 ### Scope decided with the user
 Progressive delivery + short-circuit · Singapore corpus (eLitigation open; LawNet behind a login wall) · **no** bias layer · **no** benchmark harness — the architectural rule, made executable as one test, is the "who audits the auditor" answer.
 
-> *If judges ask about the omissions:* bias would attach as an L5 rubric dimension plus an authority-balance signal — the citation graph it needs is already free (F5). Measuring the verifier itself would be a labelled poisoned-citation set scored for precision/recall. Both are additive; neither changes the architecture.
+> *If judges ask about the omissions:* bias would attach as an L4 rubric dimension plus an authority-balance signal — the citation graph it needs is already free (F5). Measuring the verifier itself would be a labelled poisoned-citation set scored for precision/recall. Both are additive; neither changes the architecture.
 
 ---
 
@@ -52,17 +52,17 @@ Progressive delivery + short-circuit · Singapore corpus (eLitigation open; LawN
 
 1. **Two fetch strategies, routed by source.** Open sources (eLitigation) go over plain HTTP at 0.26 s — a browser there would add seconds for nothing. **Login-walled sources (LawNet, the sponsor's own product) need the headless browser**, with a persistent authenticated profile. Fetching is a `Fetcher` protocol with `HttpFetcher` and `BrowserFetcher` impls, chosen per domain by the source registry. Fast path stays fast; pay browser cost only where required.
 2. **Fuzzy, not Ctrl+F (F8).** A one-word drift breaks exact matching while fuzzy stays at 0.869 — naive Ctrl+F would falsely accuse correct output of fabrication.
-3. **L1 must run on quoted text only (F8).** A genuine paraphrase scores **lower** (0.267) than a fabrication (0.483) — lexical matching is *anti-correlated* on paraphrase. Paraphrased attributions are L3's job. Enforce in the type system: `ExtractedQuote` requires a quote-delimiter provenance field.
+3. **L1 must run on quoted text only (F8).** A genuine paraphrase scores **lower** (0.267) than a fabrication (0.483) — lexical matching is *anti-correlated* on paraphrase. Paraphrased attributions are L2's job. Enforce in the type system: `ExtractedQuote` requires a quote-delimiter provenance field.
 4. **"Cannot verify" is never "fabricated."** A report-only citation (F7) and an unreachable login-walled source both yield `UNVERIFIED` — a WARN that passes, not a FAIL. Claiming fabrication on correct input is the worst error this product can make.
 
 ---
 
 ## Architecture
 
-**Run L1, L3 and L4 optimistically in parallel; L2 follows L1.** Two things drive this:
+**Run L1, L2 and L3 optimistically in parallel.** Two things drive this:
 
-- **L2 depends on L1.** L2 asks "is this source trustworthy?", but a bare citation like `[2007] SGCA 37` has *no source* until L1 resolves it to a document on a domain. L2 can only judge a resolved citation, so it runs after L1. (Explicit URLs written in the output are the exception — those carry a domain already and get checked instantly at L0.)
-- **L3 and L4 do not wait on L1's verdict.** L3 needs the *fetched document*, not L1's opinion of it, so both consume one shared single-flight `resolve_document(citation)` — the fetch happens once and both proceed the moment it lands. **We assume optimistically that citations are valid** and score grounding and responsiveness regardless of how L1 rules.
+- **Source trust depends on citation resolution.** "Is this source trustworthy?" cannot be asked of a bare citation like `[2007] SGCA 37`, which has *no source* until it is resolved to a document on a domain. **AS BUILT:** this is why source trust is not a layer at all but sub-check **1c**, sequenced after 1b *inside* L1 — the dependency is between two checks, not between two layers, and modelling it as the latter gave the pipeline a sequential tail. (Explicit URLs written in the output are the exception — those carry a domain already, so 1c runs a pre-fetch pass over them at L0 and can fail the run before anything is fetched.)
+- **L2 and L3 do not wait on L1's verdict.** L2 needs the *fetched document*, not L1's opinion of it, so both consume one shared single-flight `resolve_document(citation)` — the fetch happens once and both proceed the moment it lands. **We assume optimistically that citations are valid** and score grounding and responsiveness regardless of how L1 rules.
 
 The product reason is the important one: **a citation can be fabricated while the legal argument is sound, and a lawyer needs to know that.** "Citation is fabricated, but the proposition is well-grounded and does answer your question" is far more useful than "failed at layer 1." The verdict is still FAIL; the *report* is complete.
 
@@ -74,18 +74,16 @@ POST /api/verify {question, ai_output}
    │
    └─ enqueue ───────────────────────────────────► return {run_id} at once (~5 ms)
 
-        parallel from t=0                              GATE              final
-        ┌ L1 resolve → existence + quote ─┬─► L2 source trust ─┐
-        │      (shared single-flight       │   (needs L1's       │
-        │       document fetch)            │    resolved domain) │
-        ├ L3 grounding ───────────────────┘                     ├─► any L1-L4 FAIL?
-        └ L4 responsiveness (no deps)                           │   ├ yes → FAIL, no judge
-                                                                 └   └ no  → L5 judge
+        parallel from t=0                                GATE              final
+        ┌ L1  1a cited at all ──► 1b resolve ──► 1c trust ┐
+        │     (shared single-flight document fetch)       ├─► any L1-L3 FAIL?
+        ├ L2 alignment ───────────────────────────────────┤   ├ yes → FAIL, no judge
+        └ L3 responsiveness (no deps) ────────────────────┘   └ no  → L4 judge
 ```
 
-**Fail-fast remains the gate.** If any of L1–L4 fails, the run fails and the judge is never called — the judge only ever sees output that passed every deterministic check, which makes "the judge cannot launder a failure" structural rather than merely enforced. But all four layers **run to completion** before the verdict is emitted, so the user gets every reason at once instead of one per re-run.
+**Fail-fast remains the gate.** If any of L1–L3 fails, the run fails and the judge is never called — the judge only ever sees output that passed every deterministic check, which makes "the judge cannot launder a failure" structural rather than merely enforced. But all three deterministic layers **run to completion** before the verdict is emitted, so the user gets every reason at once instead of one per re-run.
 
-This costs almost nothing. On a fabricated citation the document never resolves, so L3 returns `NOT_APPLICABLE` and spends no embeddings; only L4 runs (~1 cached-or-cheap Voyage call). And because the layers are parallel, the fabricated-citation red is bounded by `max(L1, L4)` ≈ L1 ≈ **0.6 s** — no latency regression versus the old serial ordering.
+This costs almost nothing. On a fabricated citation the document never resolves, so L2 returns `NOT_APPLICABLE` and spends no embeddings; only L3 runs (~1 cached-or-cheap Voyage call). And because the layers are parallel, the fabricated-citation red is bounded by `max(L1, L3)` ≈ L1 ≈ **0.6 s** — no latency regression versus the old serial ordering.
 
 *Future hook:* when a citation is fabricated but the proposition looks sound, the natural next step is to search the corpus for **any** real authority supporting it — turning "this citation is fake" into "this citation is fake, but [2007] SGCA 37 does say this." Out of scope now; the search path (F6) already exists.
 
@@ -93,7 +91,7 @@ This costs almost nothing. On a fabricated citation the document never resolves,
 
 ### Verdict model
 
-- **FAIL** — any L1–L4 failure: citation not found · soft-404 · title or party mismatch · quote not found · **blacklisted source** · alignment below threshold · doesn't answer the question. → judge skipped.
+- **FAIL** — any L1–L3 failure: citation not found · soft-404 · title or party mismatch · quote not found · **blacklisted source** · alignment below threshold · doesn't answer the question. → judge skipped.
 - **WARN** — passes, annotated: graylisted source · inexact-but-close quote · `UNVERIFIED` citation (report-only, or login-walled source unreachable).
 - **PASS** — all clear; the judge then runs and returns the final verdict.
 
@@ -107,7 +105,7 @@ def deterministic_verdict(findings):
 
 def should_run_judge(det_verdict, opts):
     if opts.force_judge: return True                  # debug/eval escape hatch only
-    return det_verdict is not FAIL                    # ← fail-fast: any L1-L4 failure skips L5
+    return det_verdict is not FAIL                    # ← fail-fast: any L1-L3 failure skips L4
 
 def finalize(det_verdict, det_findings, judge):
     if judge is None:
@@ -126,8 +124,8 @@ def finalize(det_verdict, det_findings, judge):
 
 | Path | Deterministic verdict | Final |
 |---|---|---|
-| Blacklisted URL named in the output (L2a) | **~5 ms** | ~5 ms (no fetch, no worker) |
-| Fabricated citation | **~0.6 s** = `max(L1, L4)` | ~0.6 s (judge skipped) |
+| Blacklisted URL named in the output (1c-prefetch) | **~5 ms** | ~5 ms (no fetch, no worker) |
+| Fabricated citation | **~0.6 s** = `max(L1, L3)` | ~0.6 s (judge skipped) |
 | Cold pass, open source | ~4 s | ~12–19 s |
 | Cold pass, login-walled source | ~7–9 s | ~15–24 s |
 | Warm pass (cached doc + summary + embeddings) | **~0.15 s** | ~6–15 s |
@@ -142,12 +140,18 @@ def finalize(det_verdict, det_findings, judge):
 
 **Quote attribution**, in priority order: (1) **pinpoint** — `at \[(\d+)\]` → attribute *and record the paragraph*, so verification runs against one paragraph rather than 83K chars, a large precision win for `partial_ratio`; (2) explicit, same sentence; (3) proximity, same paragraph ≤400 chars; (4) none → INFO, never a fail.
 
-**L1 — citation existence + quote verification** (`layers/l1_existence.py`). Cache lookup → neutral URL, else name search (F6), else `UNVERIFIED` (F7). Soft-404 needs all three signals to agree (`len < 10_000` **and** empty first `<title>` **and** "Page Not Found") — disagreement is `AMBIGUOUS`, a WARN. Then confirm `<title>` equals the requested citation, and cross-check party names — this catches the nastiest class, a *real* citation attached to the *wrong* case name. Quote check: normalize (NFKD, curly→straight quotes, dashes, whitespace, casefold — each alone breaks exact matching), scope to the pinpointed paragraph when known, `rapidfuzz.fuzz.partial_ratio`. Skip quotes <40 chars; short strings match anything.
+**L1 — citation integrity** (`layers/l1_citation_integrity.py`, sub-checks in
+`l1ab_citations.py` and `l1c_lists.py`). **AS BUILT:** three sub-checks, one layer
+result — 1a (cited at all?), 1b (does it resolve to the right document?), 1c (is the
+domain trusted?). The quote check described below was **removed**; see the note after
+this paragraph. Cache lookup → neutral URL, else name search (F6), else `UNVERIFIED` (F7). Soft-404 needs all three signals to agree (`len < 10_000` **and** empty first `<title>` **and** "Page Not Found") — disagreement is `AMBIGUOUS`, a WARN. Then confirm `<title>` equals the requested citation, and cross-check party names — this catches the nastiest class, a *real* citation attached to the *wrong* case name. ~~Quote check: normalize (NFKD, curly→straight quotes, dashes, whitespace, casefold — each alone breaks exact matching), scope to the pinpointed paragraph when known, `rapidfuzz.fuzz.partial_ratio`. Skip quotes <40 chars; short strings match anything.~~
 
-**L2 — source trust lists** (`layers/l2_lists.py`). **This layer is about *where the material comes from*, not whether a citation exists** — which is why it runs **after L1**: a bare citation has no domain until L1 resolves it. Two phases:
+**REMOVED.** Part 3 of `docs/03-findings.md` measured paraphrase at 49.7 and fabrication at 46.1 against the same passage — 3.6 points apart, against a FAIL threshold of 75. (F8's `difflib` figures put them the other way round; the direction never reproduced, the non-separability always did.) Restricting the check to text presented as a direct quotation contained that, but the band itself was a judgement dressed as a measurement, and under fail-fast a false red is unrecoverable. Nothing verifies quotations now; `todo.md` #0 records the gap and who could close it. Quote *extraction* survives, because L2 uses quote spans for claim attribution and 1a masks quoted text before extracting propositions.
 
-- **L2a, inline at L0 (~5 ms).** Domains named outright in the output (bare URLs, "according to lawgurublog.com"). A blacklist hit here fails immediately with no fetch, no worker, and no tokens.
-- **L2b, after L1.** Every *resolved* citation's domain, taken from L1's resolution.
+**1c — source trust lists** (`layers/l1c_lists.py`). **AS BUILT: a sub-check of L1, not a layer.** It is about *where the material comes from*, not whether a citation exists — which is why it runs **after 1b**: a bare citation has no domain until 1b resolves it. Two phases:
+
+- **Pre-fetch, inline at L0 (~5 ms).** Domains named outright in the output (bare URLs, "according to lawgurublog.com"). A blacklist hit here fails immediately with no fetch, no worker, and no tokens.
+- **After 1b.** Every *resolved* citation's domain, taken from 1b's resolution. The pre-fetch result is discarded unless it failed, because the two passes overlap on explicit domains and keeping both reported a graylisted domain twice.
 
 Every source maps to a domain or publisher (`elitigation.sg`, `lawnet.sg`, `sso.agc.gov.sg`, or a random blog / content farm / AI-generated case site).
 
@@ -157,11 +161,13 @@ Every source maps to a domain or publisher (`elitigation.sg`, `lawnet.sg`, `sso.
 
 `list_entries(list_type, match_type, pattern, reason, active)` with `match_type ∈ {domain, url_pattern, publisher}`; domain matching covers subdomains. Seed ~30 entries. The lists are user-maintained via `/v1/lists`.
 
-> Note the clean separation: L2 answers *"is this source trustworthy?"*, L1 answers *"does this citation actually exist there?"*. Whitelisting `elitigation.sg` does not assert that `[2019] SGCA 214` exists on it — so trusting a source can never launder a fabricated citation. The two layers ask different questions and both must pass.
+> Note the clean separation: 1c answers *"is this source trustworthy?"*, 1b answers *"does this citation actually exist there?"*. Whitelisting `elitigation.sg` does not assert that `[2019] SGCA 214` exists on it — so trusting a source can never launder a fabricated citation. Both must pass.
+>
+> **AS BUILT:** merging the two into one layer is exactly when that guarantee could have been lost, so it is now structural rather than a consequence of them being separate objects. `SourceTrustLayer` receives a `LayerInput` and nothing else — no findings — so it cannot read a fabrication finding, let alone clear one; and the composite only concatenates, with a tripwire that raises `ContractViolation` if any future edit drops a sub-check's findings. See `tests/layers/test_l1_composite.py`.
 
-**L3 — source grounding** (`layers/l3_alignment.py`). **The question is "does the output actually use this source?", not "is this claim true?"** That distinction is what makes cosine the right tool: grounding is a *retrieval* problem — if the output were produced by a RAG system over this document, its content would land in the top-k chunks. Retrieval is a **ranking** task, and ranking is precisely the property that survives anisotropy ([arXiv:2601.16907](https://arxiv.org/abs/2601.16907)); factual faithfulness is L5's job, and the literature says only a reasoning judge can do it.
+**L2 — semantic alignment** (`layers/l2_alignment.py`). **The question is "does the output actually use this source?", not "is this claim true?"** That distinction is what makes cosine the right tool: grounding is a *retrieval* problem — if the output were produced by a RAG system over this document, its content would land in the top-k chunks. Retrieval is a **ranking** task, and ranking is precisely the property that survives anisotropy ([arXiv:2601.16907](https://arxiv.org/abs/2601.16907)); factual faithfulness is L4's job, and the literature says only a reasoning judge can do it.
 
-L3 consumes the **same single-flight `resolve_document()`** as L1, so the two run concurrently over one fetch and L3 never waits on L1's verdict. Pipeline: claim-chunk the output via Sonnet (`claim_split` → JSON array), falling back to 2-sentence windows on parse failure or in mock mode. Chunk the source using `Judg-1`/`Judg-Quote-1` paragraphs (F5), merged to ~1,800 tokens — chunking is **mandatory**, not an optimisation (F9). Summarise each document once with `claude-sonnet-5` (~250 tokens: court, parties, issue, holding, ratio), cached by `(text_sha256, model, prompt_version)`. Prefix `summary + heading path` onto every chunk before embedding, then embed with `voyage-law-2` (1024 dims, `input_type="document"`; claims are `input_type="query"`).
+L2 consumes the **same single-flight `resolve_document()`** as L1, so the two run concurrently over one fetch and L2 never waits on L1's verdict. Pipeline: claim-chunk the output via Sonnet (`claim_split` → JSON array), falling back to 2-sentence windows on parse failure or in mock mode. Chunk the source using `Judg-1`/`Judg-Quote-1` paragraphs (F5), merged to ~1,800 tokens — chunking is **mandatory**, not an optimisation (F9). Summarise each document once with `claude-sonnet-5` (~250 tokens: court, parties, issue, holding, ratio), cached by `(text_sha256, model, prompt_version)`. Prefix `summary + heading path` onto every chunk before embedding, then embed with `voyage-law-2` (1024 dims, `input_type="document"`; claims are `input_type="query"`).
 
 Scoring is **contrastive, not absolute** (see Thresholds):
 
@@ -171,13 +177,13 @@ s_bg    = max(cos(claim, c) for c in BACKGROUND)   # ~200 chunks from other cach
 margin  = s_cited - s_bg
 ```
 
-If the cited judgment supports the claim no better than a random unrelated judgment does, the output is not grounded in it → FAIL `CLAIM_NOT_GROUNDED_IN_SOURCE`. Report the best-matching passage as evidence either way — that is what the panel shows the user. If the citation never resolved, L3 is `NOT_APPLICABLE`.
+If the cited judgment supports the claim no better than a random unrelated judgment does, the output is not grounded in it → FAIL `CLAIM_NOT_GROUNDED_IN_SOURCE`. Report the best-matching passage as evidence either way — that is what the panel shows the user. If the citation never resolved, L2 is `NOT_APPLICABLE`.
 
 > Keep `voyage-law-2` as default. The `EmbeddingsProvider` interface also exposes `contextualized_embed()`, so `EMBEDDINGS_MODEL=voyage-context-4` switches to Voyage's native contextual endpoint and skips the manual prefix — a one-env-var A/B.
 
 **Not built.** `VoyageEmbedder.contextualized_embed` and `uses_native_context` exist but have zero call sites: `CachedEmbedder._embed` always calls `embed()` and `_embed_source` always prefixes by hand. Setting `EMBEDDINGS_MODEL=voyage-context-4` today sends chunks to the *ordinary* endpoint and still prefixes them. See `docs/03-findings.md` F15.
 
-**L4 — responsiveness** (`layers/l4_responsiveness.py`). Independent, starts at t=0, no LLM call. **Does the output answer the user's question?** Straight cosine — embed the question as it arrived, embed the answer's chunks, take the max:
+**L3 — responsiveness** (`layers/l3_responsiveness.py`). Independent, starts at t=0, no LLM call. **Does the output answer the user's question?** Straight cosine — embed the question as it arrived, embed the answer's chunks, take the max:
 
 ```python
 score = max(cos(question, c) for c in output_chunks)     # FAIL < 0.50 · WARN 0.50-0.70 · PASS >= 0.70
@@ -189,18 +195,18 @@ Three implementation details that decide whether the number means anything:
 - **Max over chunks, not the whole answer.** Embedding a 600-word answer as one vector dilutes the responsive part into surrounding analysis.
 - **Guard short answers.** Under ~20 tokens ("Yes.", "It depends.") scores erratically → WARN rather than score.
 
-*Known blind spot:* a two-part question answered only in part still scores well on max-over-chunks. That is L5's `responsiveness` dimension, and L5 sees exactly these outputs.
+*Known blind spot:* a two-part question answered only in part still scores well on max-over-chunks. That is L4's `responsiveness` dimension, and L4 sees exactly these outputs.
 
-**L5 — hallucination and faithfulness judge** (`layers/l5_judge.py`). Runs **only when L1–L4 all pass**. This is the layer that catches hallucination *proper*: the citation is real, the output is grounded in it, and it answers the question — but the substance is subtly wrong. [arXiv:2512.15068](https://arxiv.org/html/2512.15068) is the reason this layer exists and the reason it must be a reasoning model: RLHF-aligned hallucinations *"preserve the 'vibe' of the truth while altering the facts"*, are **semantically indistinguishable from faithful responses** to embeddings and NLI models (100% FPR on real hallucinations), and only reasoning-based judges succeeded (GPT-4 at 7% FPR). L3/L4 provably cannot do this; L5 is not a rubber stamp on their work, it is the only layer attempting the task.
+**L4 — hallucination and faithfulness judge** (`layers/l4_judge.py`). Runs **only when L1–L3 all pass**. This is the layer that catches hallucination *proper*: the citation is real, the output is grounded in it, and it answers the question — but the substance is subtly wrong. [arXiv:2512.15068](https://arxiv.org/html/2512.15068) is the reason this layer exists and the reason it must be a reasoning model: RLHF-aligned hallucinations *"preserve the 'vibe' of the truth while altering the facts"*, are **semantically indistinguishable from faithful responses** to embeddings and NLI models (100% FPR on real hallucinations), and only reasoning-based judges succeeded (GPT-4 at 7% FPR). L2/L3 provably cannot do this; L4 is not a rubber stamp on their work, it is the only layer attempting the task.
 
-Opus via OpenRouter, receiving the source passages L3 retrieved plus the full findings set as structured JSON. Rubric, each 0–4 with written justification:
+Opus via OpenRouter, receiving the source passages L2 retrieved plus the full findings set as structured JSON. Rubric, each 0–4 with written justification:
 
 | Dimension | Question |
 |---|---|
 | `factual_faithfulness` | Does the output assert anything the source does not support, or misstate what it holds? **Weighted highest** |
 | `contextual_accuracy` | Does it use the case for what it actually decides — the brief's "why a case matters" vs keyword matching? |
 | `citation_integrity` | Is the proposition genuinely attributable to the cited authority? |
-| `responsiveness` | Does it answer the whole question, including multi-part questions L4 can miss? |
+| `responsiveness` | Does it answer the whole question, including multi-part questions L3 can miss? |
 
 Give the judge the **retrieved passages, not the whole judgment** — it makes the faithfulness call checkable against specific text and keeps the prompt cacheable. Request `response_format: json_schema, strict: true` but **never assume enforcement**: parse ladder = strict → fenced block → first balanced object → one repair retry → `JUDGE_UNPARSEABLE` (WARN, doesn't change the verdict). Two impls behind `JudgeProvider`: `openrouter` (default, `anthropic/claude-opus-5`) and `anthropic_direct` (`claude-opus-5`).
 
@@ -208,12 +214,12 @@ Give the judge the **retrieved passages, not the whole judgment** — it makes t
 
 ## Thresholds — what the literature actually says
 
-I went looking for a defensible number. **The literature's clearest finding is that a fixed, transferable cosine threshold does not exist**, and one paper directly undermines using embeddings for this task at all. That changes the role L3/L4 play, so it is worth stating precisely.
+I went looking for a defensible number. **The literature's clearest finding is that a fixed, transferable cosine threshold does not exist**, and one paper directly undermines using embeddings for this task at all. That changes the role L2/L3 play, so it is worth stating precisely.
 
 ### The four relevant results
 
 **1. Absolute cosine values are not interpretable, and thresholds do not transfer.**
-*"Semantics at an Angle: When Cosine Similarity Works Until It Doesn't"* ([arXiv:2504.16318](https://arxiv.org/html/2504.16318v3)) — verified by reading — states it flatly: *"A score of 0.8 is not a probability, and a threshold learned for one model, layer, language, or corpus need not transfer to another."* The paper deliberately **provides no universal threshold values**. It names four failure modes, one of which lands squarely on L3: **task–score mismatch — cosine is symmetric and cannot represent asymmetric relations like entailment.** "Is this claim supported by this passage" *is* an entailment relation. Cosine is a proxy for it, not a measure of it.
+*"Semantics at an Angle: When Cosine Similarity Works Until It Doesn't"* ([arXiv:2504.16318](https://arxiv.org/html/2504.16318v3)) — verified by reading — states it flatly: *"A score of 0.8 is not a probability, and a threshold learned for one model, layer, language, or corpus need not transfer to another."* The paper deliberately **provides no universal threshold values**. It names four failure modes, one of which lands squarely on L2: **task–score mismatch — cosine is symmetric and cannot represent asymmetric relations like entailment.** "Is this claim supported by this passage" *is* an entailment relation. Cosine is a proxy for it, not a measure of it.
 
 **2. Cosine similarity can be arbitrary.**
 Steck, *"Is Cosine-Similarity of Embeddings Really About Similarity?"* (WWW'24, [arXiv:2403.05440](https://arxiv.org/abs/2403.05440)) — learned embeddings carry degrees of freedom that make cosine similarities non-unique and implicitly controlled by the regularization used in training. The authors caution against using cosine similarity blindly.
@@ -226,44 +232,44 @@ Steck, *"Is Cosine-Similarity of Embeddings Really About Similarity?"* (WWW'24, 
 
 ### What this does to the design
 
-It doesn't break the architecture — it tells us which task each layer is allowed to attempt. Once L3 and L4 are framed as **retrieval** questions rather than truth questions, the literature stops being a problem and starts being support: result #3 says **ranking survives** the anisotropy that destroys absolute calibration, and ranking is all retrieval needs.
+It doesn't break the architecture — it tells us which task each layer is allowed to attempt. Once L2 and L3 are framed as **retrieval** questions rather than truth questions, the literature stops being a problem and starts being support: result #3 says **ranking survives** the anisotropy that destroys absolute calibration, and ranking is all retrieval needs.
 
 | Layer | The question it asks | Task type | Why it's the right tool |
 |---|---|---|---|
 | **L1** | Does this citation exist, and is this quote really in it? | Deterministic lookup | Ground truth. No model, no threshold — 0.26 s and binary |
-| **L3** | Does the output *use* this source? | **Retrieval / ranking** | If a RAG system produced this from the document, the content lands in the top-k chunks. Ranking is what survives anisotropy (#3) |
-| **L4** | Does the output answer *this* question? | **Retrieval / ranking** | Same shape: question as query, answer chunks as corpus |
-| **L5** | Is it actually *true* to the source? | **Reasoning** | Faithfulness is what embeddings provably cannot judge (#4). Only reasoning judges succeeded |
+| **L2** | Does the output *use* this source? | **Retrieval / ranking** | If a RAG system produced this from the document, the content lands in the top-k chunks. Ranking is what survives anisotropy (#3) |
+| **L3** | Does the output answer *this* question? | **Retrieval / ranking** | Same shape: question as query, answer chunks as corpus |
+| **L4** | Is it actually *true* to the source? | **Reasoning** | Faithfulness is what embeddings provably cannot judge (#4). Only reasoning judges succeeded |
 
-Nothing here asks cosine to decide truth — that was the design error the literature warns against, and it is now confined to L5 where a reasoning model belongs. The pitch line: *we use embeddings for retrieval, where they're proven, and a reasoning judge for faithfulness, because the literature shows embedding similarity cannot detect real LLM hallucinations.*
+Nothing here asks cosine to decide truth — that was the design error the literature warns against, and it is now confined to L4 where a reasoning model belongs. The pitch line: *we use embeddings for retrieval, where they're proven, and a reasoning judge for faithfulness, because the literature shows embedding similarity cannot detect real LLM hallucinations.*
 
-It also resolves the fail-fast tension: L3/L4 fire only on egregious mismatch, so clean-looking output reaches L5 — which is exactly where the subtle cases need to go.
+It also resolves the fail-fast tension: L2/L3 fire only on egregious mismatch, so clean-looking output reaches L4 — which is exactly where the subtle cases need to go.
 
 ### Score on the margin, not the absolute value
 
-The single most useful consequence of result #3 is that **a difference of two cosine scores is far more stable than either score alone.** Anisotropy inflates all similarities in roughly the same direction, so it largely cancels in a subtraction — which is why L3 and L4 both score contrastively against a background set rather than against a fixed constant.
+The single most useful consequence of result #3 is that **a difference of two cosine scores is far more stable than either score alone.** Anisotropy inflates all similarities in roughly the same direction, so it largely cancels in a subtraction — which is why L2 and L3 both score contrastively against a background set rather than against a fixed constant.
 
 | Layer | Signal | FAIL | WARN | PASS |
 |---|---|---|---|---|
 | L1 quote | `rapidfuzz.partial_ratio`, 0–100 | `< 75` | `75–90` | `≥ 90` |
-| **L4 responsiveness** | `max cos(question, output_chunks)` | `< 0.50` | `0.50–0.70` | `≥ 0.70` |
-| **L3 grounding** | `max cos(claim, cited) − max cos(claim, BACKGROUND)` | `≤ 0.02` | `0.02–0.08` | `> 0.08` |
-| L3 guard | `max cos(claim, cited)` | `< 0.35` regardless of margin | | |
+| **L3 responsiveness** | `max cos(question, output_chunks)` | `< 0.50` | `0.50–0.70` | `≥ 0.70` |
+| **L2 grounding** | `max cos(claim, cited) − max cos(claim, BACKGROUND)` | `≤ 0.02` | `0.02–0.08` | `> 0.08` |
+| L2 guard | `max cos(claim, cited)` | `< 0.35` regardless of margin | | |
 
-**L4 is a plain absolute threshold, and 0.50 is chosen for where it sits relative to the decision, not because the number means anything on its own** (result #1 says it doesn't). Fail-fast makes a false FAIL unrecoverable, so the rule is **prefer a false green to a false red** — wrongly accusing correct legal work is what destroys trust in an accuracy tool. 0.50 fails only clearly off-topic answers and routes the whole contested band into WARN, which passes and still reaches L5's `responsiveness` dimension.
+**L3 is a plain absolute threshold, and 0.50 is chosen for where it sits relative to the decision, not because the number means anything on its own** (result #1 says it doesn't). Fail-fast makes a false FAIL unrecoverable, so the rule is **prefer a false green to a false red** — wrongly accusing correct legal work is what destroys trust in an accuracy tool. 0.50 fails only clearly off-topic answers and routes the whole contested band into WARN, which passes and still reaches L4's `responsiveness` dimension.
 
-**L3 keeps a contrastive margin** because its background costs nothing: `BACKGROUND` is ~200 chunks sampled from judgments already in the cache, embedded once. A margin at or below zero is a *meaningful* statement — the cited judgment supports this claim no better than an unrelated judgment does, so the output is not actually using it. That is worth more than a bare score, and it is free.
+**L2 keeps a contrastive margin** because its background costs nothing: `BACKGROUND` is ~200 chunks sampled from judgments already in the cache, embedded once. A margin at or below zero is a *meaningful* statement — the cited judgment supports this claim no better than an unrelated judgment does, so the output is not actually using it. That is worth more than a bare score, and it is free.
 
-Bands stay **three-way, not cutoffs**: the ambiguous middle goes to L5 rather than being guessed at. That is the design answer to "no transferable threshold exists."
+Bands stay **three-way, not cutoffs**: the ambiguous middle goes to L4 rather than being guessed at. That is the design answer to "no transferable threshold exists."
 
 ### Calibrate before demo — ~20 minutes
 
 Both remain seeds. Derive them from the model's own behaviour using the μ ± σ approach from the RAG threshold literature:
 
-1. Assemble ~20 pairs per layer: 10 genuine, 10 **hard negatives** — for L4, same area of law but answering a different question; for L3, a real judgment that doesn't support the claim. Easy off-topic negatives flatter any threshold and teach you nothing.
+1. Assemble ~20 pairs per layer: 10 genuine, 10 **hard negatives** — for L3, same area of law but answering a different question; for L2, a real judgment that doesn't support the claim. Easy off-topic negatives flatter any threshold and teach you nothing.
 2. Embed with the real model and correct `input_type` values.
 3. Compute μ and σ over the **positives**. Set `FAIL = μ − 2σ`, `PASS = μ − 0.5σ`.
-4. Report the false-fail rate on positives (target: zero) and recall on hard negatives — expect it to be modest. That is the honest result and exactly what #4 predicts; L5 is the safety net for the rest.
+4. Report the false-fail rate on positives (target: zero) and recall on hard negatives — expect it to be modest. That is the honest result and exactly what #4 predicts; L4 is the safety net for the rest.
 
 Thresholds live in `settings.py` **keyed by model**; switching to `voyage-context-4` invalidates all of them.
 
@@ -309,8 +315,9 @@ smu-lit-2026/
 │   ├── sources/      base.py registry.py  elitigation/{citation_url,client,search,parser}.py
 │   │                 lawnet/{client,parser}.py
 │   ├── extraction/   patterns.py citations.py quotes.py sources.py attribution.py
-│   ├── layers/       base.py registry.py l1_existence.py l2_lists.py
-│   │                 l3_alignment.py l4_responsiveness.py l5_judge.py prompts/*.md
+│   ├── layers/       base.py registry.py l1_citation_integrity.py
+│   │                 l1ab_citations.py l1c_lists.py l2_alignment.py
+│   │                 l3_responsiveness.py l4_judge.py prompts/*.md
 │   ├── semantic/     chunking.py contextualise.py embed.py similarity.py
 │   ├── pipeline/     orchestrator.py gate.py aggregate.py events.py
 │   ├── repos/        base.py models.py session.py documents.py resolutions.py
@@ -369,15 +376,15 @@ judge_calls(id, run_id, provider, model, prompt_version, request jsonb,
 | `GET/POST/DELETE /v1/lists` | Source black/gray/white CRUD |
 | `GET /healthz`, `GET /readyz` | Liveness; readiness reports provider mode + browser session health |
 
-One `RunState` schema serves the 202 body, the poll response, and every SSE payload — one schema, three transports, one renderer. Events: `accepted → extracted → layer_result(L4) → layer_result(L1) → layer_result(L3) → layer_result(L2) → deterministic_verdict → {judge_skipped | layer_result(L5)} → final`. L4 typically lands first (no dependencies), L2 last (needs L1's resolution). Layers publish to Redis pub/sub **and** `RPUSH` to a replay log (TTL 1h), so nothing is lost between `POST` and the client attaching.
+One `RunState` schema serves the 202 body, the poll response, and every SSE payload — one schema, three transports, one renderer. Events: `accepted → extracted → layer_result(L3) → layer_result(L1) → layer_result(L2) → layer_result(L2) → deterministic_verdict → {judge_skipped | layer_result(L4)} → final`. L3 typically lands first (no dependencies), L2 last (needs L1's resolution). Layers publish to Redis pub/sub **and** `RPUSH` to a replay log (TTL 1h), so nothing is lost between `POST` and the client attaching.
 
 ### Celery
 
 ```
 queues: default (orchestrator) · judge (isolated) · browser (isolated) · maintenance
   run_verification(run_id)    → default, soft=45s hard=60s
-      L0 → L2a inline → gather(L1, L3, L4) → L2b → publish deterministic → gate → judge | final
-      (L1 and L3 share one single-flight resolve_document() per citation — one fetch, two consumers)
+      L0 → 1c-prefetch inline → gather(L1, L2, L3) → 1c → publish deterministic → gate → judge | final
+      (L1 and L2 share one single-flight resolve_document() per citation — one fetch, two consumers)
   fetch_document(url)         → browser, soft=60s hard=90s
   judge_verification(run_id)  → judge,   soft=90s hard=120s
   prewarm_document(key)       → maintenance
@@ -402,7 +409,7 @@ OpenRouter is called with raw `httpx` — pulling in the OpenAI SDK for one endp
 ### Mock mode
 
 `PROVIDER_MODE=mock` boots and passes tests with **zero keys and no network** (`pytest-socket` enforces it).
-- Mock fetcher serves `tests/corpus/*.html` — real saved judgments plus the captured soft-404 — for **both** strategies, so the browser path is testable offline too. **L1 and L2 are therefore fully real in mock mode**; only L3/L4/L5 are stubbed. The layers that produce failures are the ones testable offline, which is the right split.
+- Mock fetcher serves `tests/corpus/*.html` — real saved judgments plus the captured soft-404 — for **both** strategies, so the browser path is testable offline too. **L1 and L2 are therefore fully real in mock mode**; only L2/L3/L4 are stubbed. The layers that produce failures are the ones testable offline, which is the right split.
 - Mock embedder is a **hashed bag-of-words** vectorizer (token → bucket, L2-normalized), *not* random vectors, so threshold logic is genuinely exercised.
 - The verified Spandeck page is already captured at `…/scratchpad/spandeck.html`; seed the corpus from it.
 
@@ -429,9 +436,9 @@ The extension produces exactly this, and it is the system's only input:
 
 - **Pair correctly.** In a long thread, walk *up* from the assistant node being verified to the nearest preceding user node. Do not assume "last user message" — the user may have typed a new prompt while an earlier response is being verified.
 - **Normalize to text.** Strip markdown to readable text but **preserve quote marks and blockquote structure** — L1's quote extraction depends on quote delimiters (correction 3), so a naive `innerText` that flattens `>` blockquotes loses the signal. Keep code blocks and tables as text; drop UI chrome (copy buttons, "Retry", footnote markers).
-- **Capture cited URLs.** If Claude used web search, the rendered citation links are real source domains — hand them to L2a directly rather than re-deriving them.
+- **Capture cited URLs.** If Claude used web search, the rendered citation links are real source domains — hand them to 1c-prefetch directly rather than re-deriving them.
 
-**Follow-up questions are the false-red trap.** A turn like *"why?"* or *"what about the second limb?"* cannot stand alone, and L4 will score it near-zero against a long answer even when the answer is perfect. Detect it — under ~10 tokens, or opening with a pronoun / "what about" / "and" / "why" — set `is_followup`, and **downgrade L4 to WARN instead of FAIL** for that run. Under fail-fast a false red here is unrecoverable, and follow-ups are the single most likely way to hit one during a live demo.
+**Follow-up questions are the false-red trap.** A turn like *"why?"* or *"what about the second limb?"* cannot stand alone, and L3 will score it near-zero against a long answer even when the answer is perfect. Detect it — under ~10 tokens, or opening with a pronoun / "what about" / "and" / "why" — set `is_followup`, and **downgrade L3 to WARN instead of FAIL** for that run. Under fail-fast a false red here is unrecoverable, and follow-ups are the single most likely way to hit one during a live demo.
 
 **Streaming-complete detection** needs both conditions or you verify a half-written answer: `MutationObserver` debounced 1200 ms with no mutations, **and** the stop-generation control absent. Hash the text; if it changes, cancel the in-flight run and restart.
 
@@ -458,14 +465,16 @@ The directory is empty and **not yet a git repo**; `gh` is authenticated as `Rap
 | 7 | `feat(layers): L1 citation existence and quote verification` | `l1_existence.py`; soft-404 + `partial_ratio` + the F8 regression test |
 | 8 | `feat(layers): L2 source trust lists` | `l2_lists.py`, `repos/lists.py`, seed list; blacklist-fails-before-fetch test |
 | 9 | `feat(semantic): chunking, contextualisation, embedding cache` | `semantic/**`, `providers/voyage.py`, mock embedder |
-| 10 | `feat(layers): L3 alignment and L4 responsiveness` | `l3_alignment.py`, `l4_responsiveness.py` |
-| 11 | `feat(layers): L5 judge via OpenRouter and Anthropic` | `l5_judge.py`, `prompts/**`, both judge providers, parse ladder |
+| 10 | `feat(layers): L2 alignment and L3 responsiveness` | `l3_alignment.py`, `l4_responsiveness.py` |
+| 11 | `feat(layers): L4 judge via OpenRouter and Anthropic` | `l5_judge.py`, `prompts/**`, both judge providers, parse ladder |
 | 12 | `feat(pipeline): orchestrator, fail-fast judge gate, aggregation` | `pipeline/**` + **`test_judge_cannot_launder.py`** |
 | 13 | `feat(api): FastAPI routes, SSE, and Celery workers` | `api/**`, `worker/**` |
 | 14 | `feat(extension): Chrome MV3 verification overlay` | `extension/**` |
 | 15 | `docs: architecture, contracts, and probe findings` | `docs/01-03`, incl. the F1–F11 evidence table |
 
 Commits 4–6, 7–8, and 9–11 are the parallel streams: *authored* concurrently, *committed* in dependency order so the history stays linear and bisectable. **Commit 12 is the integration point and the most important commit in the PR** — it carries the fail-fast gate and the invariant that makes the whole thing defensible.
+
+> The layer numbers in the table above are the ones those commits actually shipped under, and are left as written so the history stays greppable. They predate the renumber: what commit 8 calls "L2 source trust" is now sub-check **1c**, commit 10's "L2 alignment / L3 responsiveness" are now **L2 / L3**, and commit 11's judge is now **L4**. Commit 7's quote verification no longer exists at all.
 
 ---
 
@@ -487,30 +496,30 @@ Targeted assertions drawn from the verified evidence:
 - `[2007] 4 SLR(R) 100` alone yields `UNVERIFIED`/WARN, never FAIL (F7).
 - A blacklisted source fails in ~5 ms with **no fetch and no worker task dispatched**.
 - An expired browser session yields `UNVERIFIED`/WARN, never FAIL.
-- **Complete report on a fabricated citation**: the run FAILS at L1, and L4 still reports a real score while L3 reports `NOT_APPLICABLE` — so the panel can say "citation fabricated, but the answer does address your question." Assert L4's result is present, not skipped.
+- **Complete report on a fabricated citation**: the run FAILS at L1, and L3 still reports a real score while L2 reports `NOT_APPLICABLE` — so the panel can say "citation fabricated, but the answer does address your question." Assert L3's result is present, not skipped.
 - **Capture contract**: a fixture of saved claude.ai DOM pairs the right user turn to the right assistant turn in a 6-turn thread, and preserves blockquote quote marks through normalization (L1 depends on them).
-- **Follow-up handling**: a `"why?"` turn sets `is_followup` and yields L4 = WARN, never FAIL.
-- **One fetch, two consumers**: assert `resolve_document()` is called once per citation when both L1 and L3 need it.
-- **L2 ordering**: a citation resolving to a blacklisted domain is caught by L2b *after* L1 resolves it, not missed for lack of a domain.
-- **L3 margin**: a claim paired with its genuine source scores a clearly positive margin; the same claim paired with an unrelated judgment scores ≈0 → FAIL `CLAIM_NOT_GROUNDED_IN_SOURCE`.
-- **L4**: an on-point answer clears 0.70; an answer to a different question falls below 0.50.
-- `BACKGROUND` is asserted non-empty, ≥100 chunks, spanning ≥5 areas of law — L3's margin is meaningless otherwise.
+- **Follow-up handling**: a `"why?"` turn sets `is_followup` and yields L3 = WARN, never FAIL.
+- **One fetch, two consumers**: assert `resolve_document()` is called once per citation when both L1 and L2 need it.
+- **L2 ordering**: a citation resolving to a blacklisted domain is caught by 1c *after* L1 resolves it, not missed for lack of a domain.
+- **L2 margin**: a claim paired with its genuine source scores a clearly positive margin; the same claim paired with an unrelated judgment scores ≈0 → FAIL `CLAIM_NOT_GROUNDED_IN_SOURCE`.
+- **L3**: an on-point answer clears 0.70; an answer to a different question falls below 0.50.
+- `BACKGROUND` is asserted non-empty, ≥100 chunks, spanning ≥5 areas of law — L2's margin is meaningless otherwise.
 - **`test_judge_cannot_launder`**: on a fabricated-citation fixture the judge provider is asserted **never called**, and the verdict is FAIL.
 
 Live path (`VOYAGE_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` — **none currently set**): verify a real Claude answer about Spandeck end-to-end, then run it twice and report the cache-warm latency delta as the scalability number.
 
 **Demo:** load the unpacked extension → ask claude.ai a Singapore case-law question → badge amber → green with the per-layer breakdown → then paste a deliberately fabricated citation → **red in under a second**: *"[2019] SGCA 214 does not exist"*, with "judge not consulted — failed deterministic checks" and no Opus spend.
 
-**The beat that lands with a lawyer** is the panel underneath that red: L4 still shows a passing responsiveness score. *"The citation is fabricated — but the answer does address your question."* That is the difference between a tool that says "no" and one a practitioner would actually use. Finish by pasting an answer sourced from a blacklisted site and watching it fail in milliseconds.
+**The beat that lands with a lawyer** is the panel underneath that red: L3 still shows a passing responsiveness score. *"The citation is fabricated — but the answer does address your question."* That is the difference between a tool that says "no" and one a practitioner would actually use. Finish by pasting an answer sourced from a blacklisted site and watching it fail in milliseconds.
 
 ---
 
 ## Risks
 
-1. **Embedding similarity cannot detect real LLM hallucinations — design around it, don't hide it.** [arXiv:2512.15068](https://arxiv.org/html/2512.15068) measured 95.8% coverage at 0% FPR on synthetic hallucinations but **100% FPR on real RLHF-model hallucinations**, which *"preserve the 'vibe' of the truth while altering the facts."* Do not pitch L3/L4 as the hallucination defence — L1 is, and it's deterministic. Say this proactively: it explains why the architecture is shaped the way it is, and a judge who knows this literature will otherwise ask.
-2. **Thresholds gate the verdict directly (see Thresholds above).** The starting values — L4 FAIL `< 0.50`, L3 FAIL `< 0.45`, L1 quote FAIL `< 75` — are reasoned seeds, not measurements, and [arXiv:2504.16318](https://arxiv.org/html/2504.16318v3) is explicit that no threshold transfers across models. Run the 20-pair μ ± σ calibration before demo day, with hard negatives. Shipping uncalibrated thresholds in a tool that judges other tools' rigour is the most embarrassing failure available.
-3. **Keep L3 on the retrieval question, not the entailment question.** Cosine cannot represent asymmetric relations like entailment ([arXiv:2504.16318](https://arxiv.org/html/2504.16318v3), failure mode 4), so L3 must stay "does the output use this source?" and never drift into "does this claim follow from it?" — that is L5's. The temptation to tighten L3 until it catches wrong holdings is the trap; the upgrade path if L3 underperforms is a cross-encoder or NLI reranker over the top-k passages, not a higher threshold.
-4. **`BACKGROUND` is part of L3's contract.** Its margin is only meaningful relative to that set. If it gets seeded with judgments on the same topic as the query, margins collapse and everything looks ungrounded. Sample broadly across areas of law, version it, and assert its size and diversity in a test.
+1. **Embedding similarity cannot detect real LLM hallucinations — design around it, don't hide it.** [arXiv:2512.15068](https://arxiv.org/html/2512.15068) measured 95.8% coverage at 0% FPR on synthetic hallucinations but **100% FPR on real RLHF-model hallucinations**, which *"preserve the 'vibe' of the truth while altering the facts."* Do not pitch L2/L3 as the hallucination defence — L1 is, and it's deterministic. Say this proactively: it explains why the architecture is shaped the way it is, and a judge who knows this literature will otherwise ask.
+2. **Thresholds gate the verdict directly (see Thresholds above).** The starting values — L3 FAIL `< 0.50`, L2 FAIL `< 0.45`, L1 quote FAIL `< 75` — are reasoned seeds, not measurements, and [arXiv:2504.16318](https://arxiv.org/html/2504.16318v3) is explicit that no threshold transfers across models. Run the 20-pair μ ± σ calibration before demo day, with hard negatives. Shipping uncalibrated thresholds in a tool that judges other tools' rigour is the most embarrassing failure available.
+3. **Keep L2 on the retrieval question, not the entailment question.** Cosine cannot represent asymmetric relations like entailment ([arXiv:2504.16318](https://arxiv.org/html/2504.16318v3), failure mode 4), so L2 must stay "does the output use this source?" and never drift into "does this claim follow from it?" — that is L4's. The temptation to tighten L2 until it catches wrong holdings is the trap; the upgrade path if L2 underperforms is a cross-encoder or NLI reranker over the top-k passages, not a higher threshold.
+4. **`BACKGROUND` is part of L2's contract.** Its margin is only meaningful relative to that set. If it gets seeded with judgments on the same topic as the query, margins collapse and everything looks ungrounded. Sample broadly across areas of law, version it, and assert its size and diversity in a test.
 2. **The browser is the fragile part.** Session expiry, SSO/2FA re-prompts, layout changes, and a much larger image. Mitigations: `UNVERIFIED` (never FAIL) on auth failure, `/readyz` reports session health, isolated queue with concurrency 2, aggressive caching, and `make login` to re-auth in seconds. Test the login-walled path *before* demo day.
 3. **Rate-limit every source.** No `robots.txt` is not permission, and a logged-in session is more sensitive still. Global semaphore (≤2 concurrent, ≥250 ms spacing), descriptive User-Agent, aggressive caching, circuit breaker. Respect LawNet's terms — check whether automated access is permitted under the subscription before demoing it.
 4. **`Filter=SUPCT` is Supreme Court.** Results did surface `SGDC`/`SGMC`/`SGFC`, so it may be broader than the name suggests, but the State Courts filter value is unverified. Until checked, State Court citations resolve by direct URL (which works) and degrade to `UNVERIFIED` on name-only search.
@@ -544,7 +553,7 @@ architecture docs carry the current truth.
 3. **Thresholds became model-keyed in code, not just in principle.** The plan said
    thresholds do not transfer between models. The hashed bag-of-words mock *is* a
    different model, and applying the real-model 0.50/0.70 to it fails every answer —
-   painting a fully green run red on L4 alone. `settings.py` now resolves L4
+   painting a fully green run red on L3 alone. `settings.py` now resolves L3
    thresholds by model, measured rather than guessed.
 
 4. **`LayerInput` gained `documents`, and `EmbeddingRepo.put_many` gained

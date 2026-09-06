@@ -16,12 +16,12 @@ The heading path is short and DIFFERS per chunk, so it disambiguates. The summar
 ~1,500 chars and is byte-identical across every chunk, so it adds one large shared
 component to all of them -- and after L2 normalisation that component is bought with
 magnitude the chunk's own meaning used to have. The document ends up as 43 vectors
-that all point nearly the same way, which destroys the only thing L3 and L5 need from
+that all point nearly the same way, which destroys the only thing L2 and L4 need from
 this space: the ability to rank passages WITHIN a case. A paragraph an answer quotes
 verbatim fell from rank #2 to #16, and a correctly grounded claim fell from 0.392 to
 0.325, under the 0.35 floor.
 
-Hence ``settings.L3_CONTEXTUAL_PREFIX``, which defaults to "heading". The summary is
+Hence ``settings.L2_CONTEXTUAL_PREFIX``, which defaults to "heading". The summary is
 still built and cached -- it is useful text for a human and for the judge -- it is
 just no longer embedded.
 

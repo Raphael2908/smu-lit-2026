@@ -26,11 +26,11 @@ log = get_logger(__name__)
 #: perfect answer scores low purely on length and register -- which means every
 #: threshold derived from those scores is measuring prose style, not relevance.
 #: Voyage's asymmetric prompts pull the query and its answer into the same retrieval
-#: neighbourhood, which is the only reason a number like L4_PASS_AT can mean anything.
+#: neighbourhood, which is the only reason a number like L3_PASS_AT can mean anything.
 #:
 #: The rule: whatever is being LOOKED UP WITH is a query; whatever is being SEARCHED is
 #: a document. So questions and claims are queries, source chunks and answer chunks are
-#: documents -- note that in L4 the answer is the corpus, not the query.
+#: documents -- note that in L3 the answer is the corpus, not the query.
 INPUT_TYPE_QUERY = "query"
 INPUT_TYPE_DOCUMENT = "document"
 
@@ -70,7 +70,7 @@ class CachedEmbedder:
         Content-addressing on ``embed_input_sha256`` already stops a stale vector being
         READ after the prefix regime changes -- the hash simply misses. It does not stop
         the stale vector being SAMPLED, because ``sample_background`` selects on model
-        alone. Without a namespace, flipping ``L3_CONTEXTUAL_PREFIX`` would leave L3
+        alone. Without a namespace, flipping ``L2_CONTEXTUAL_PREFIX`` would leave L2
         contrasting freshly-embedded bare chunks against a background of prefixed ones,
         and a margin between two different embedding regimes measures the regimes rather
         than the claim.
@@ -145,7 +145,7 @@ class CachedEmbedder:
 
         # ``cache=False`` is for the query side: a question, a claim or an answer chunk
         # is unique to one run, so caching it buys nothing -- and it would be actively
-        # harmful, because L3's background pool is "every other cached vector" and a
+        # harmful, because L2's background pool is "every other cached vector" and a
         # claim that leaked into it would be compared against ITSELF. The margin would
         # then be strongly negative for a perfectly grounded claim. Only source
         # documents, which genuinely recur across runs, are cached.
@@ -179,7 +179,7 @@ class CachedEmbedder:
             fresh = {h: l2_normalise(v) for h, v in zip(miss_hashes, result.vectors, strict=True)}
             if use_repo:
                 # ``document_id`` is what lets sample_background exclude this document's
-                # own vectors from L3's contrastive baseline.
+                # own vectors from L2's contrastive baseline.
                 try:
                     await self._repo.put_many(self.cache_model, fresh, document_id=document_id)
                 except Exception as exc:  # noqa: BLE001 - a cache write is not a verdict
@@ -197,10 +197,10 @@ class CachedEmbedder:
     async def sample_background(
         self, *, limit: int, exclude_document_id: str | None = None
     ) -> list[list[float]]:
-        """Vectors from other cached judgments -- L3's contrastive baseline.
+        """Vectors from other cached judgments -- L2's contrastive baseline.
 
         Returns an empty list on a cold cache, which is a legitimate state on the very
-        first run of a deployment. L3 must degrade to its absolute floor rather than
+        first run of a deployment. L2 must degrade to its absolute floor rather than
         crash or, worse, compute a margin against nothing and call it zero.
         """
         if self._repo is None:

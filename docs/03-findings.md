@@ -103,7 +103,7 @@ transferable one **does not exist**.
    — read directly. Verbatim: *"A score of 0.8 is not a probability, and a threshold
    learned for one model, layer, language, or corpus need not transfer to another."*
    It deliberately supplies no universal values. It also names four failure modes, one
-   of which binds L3: **cosine is symmetric and cannot represent asymmetric relations
+   of which binds L2: **cosine is symmetric and cannot represent asymmetric relations
    like entailment.**
 
 2. **Cosine can be arbitrary.** Steck, *"Is Cosine-Similarity of Embeddings Really
@@ -134,28 +134,28 @@ Each layer attempts only the task its tool is proven for:
 | Layer | Question | Task type | Why this tool |
 |---|---|---|---|
 | L1 | Does this citation exist? | Deterministic lookup | Ground truth. No model, no threshold |
-| L3 | Does the output *use* this source? | **Retrieval / ranking** | Ranking is what survives anisotropy (#3) |
-| L4 | Does the output answer *this* question? | **Retrieval / ranking** | Same shape |
-| L5 | Is it *true* to the source? | **Reasoning** | Faithfulness is what embeddings cannot judge (#4) |
+| L2 | Does the output *use* this source? | **Retrieval / ranking** | Ranking is what survives anisotropy (#3) |
+| L3 | Does the output answer *this* question? | **Retrieval / ranking** | Same shape |
+| L4 | Is it *true* to the source? | **Reasoning** | Faithfulness is what embeddings cannot judge (#4) |
 
 Nothing asks cosine to decide truth — that was the design error the literature warns
-against, and it is confined to L5 where a reasoning model belongs.
+against, and it is confined to L4 where a reasoning model belongs.
 
 ### Thresholds — now measured against voyage-law-2, not estimated
 
 | Layer | Signal | FAIL | WARN | PASS |
 |---|---|---|---|---|
-| L1 quote | `rapidfuzz.partial_ratio` 0–100 | `< 75` | `75–90` | `≥ 90` |
-| **L4** | `max cos(question, output_chunks)` | **`< 0.40`** | `0.40–0.45` | `≥ 0.45` |
-| L3 | `max cos(claim, cited) − max cos(claim, BACKGROUND)` | `≤ 0.02` | `0.02–0.08` | `> 0.08` |
-| L3 floor | `max cos(claim, cited)` | `< 0.35` regardless of margin | | |
+| ~~L1 quote~~ | ~~`rapidfuzz.partial_ratio` 0–100~~ | ~~`< 75`~~ | ~~`75–90`~~ | ~~`≥ 90`~~ |
+| **L3** | `max cos(question, output_chunks)` | **`< 0.40`** | `0.40–0.45` | `≥ 0.45` |
+| L2 | `max cos(claim, cited) − max cos(claim, BACKGROUND)` | `≤ 0.02` | `0.02–0.08` | `> 0.08` |
+| L2 floor | `max cos(claim, cited)` | `< 0.35` regardless of margin | | |
 
-#### L4, measured (Part 4 below): the 0.50 seed was failing correct answers
+#### L3, measured (Part 4 below): the 0.50 seed was failing correct answers
 
 The original `0.50 / 0.70` figures were reasoned, not measured. Run against real
 `voyage-law-2` they **failed three of five correct answers**. See Part 4.
 
-L3 scores on a **margin** because a difference of two cosines is far more stable than
+L2 scores on a **margin** because a difference of two cosines is far more stable than
 either alone — anisotropy inflates both in the same direction and largely cancels.
 "The cited judgment supports this claim no better than an unrelated judgment does" is
 a meaningful statement; "0.55" is not.
@@ -171,6 +171,14 @@ false FAIL unrecoverable, and wrongly accusing correct legal work is what destro
 trust in an accuracy tool.
 
 ## Part 3 — L1 quote matching, measured under `rapidfuzz.partial_ratio`
+
+> **OUTCOME: the quote check this part calibrates has been REMOVED.** The measurement
+> below is why, so it is kept in full rather than deleted. The band it produced was the
+> last threshold in the system that could FAIL a run on a judgement dressed as a
+> measurement, and the two regimes it most needed to separate are the two it could not.
+> Nothing verifies quotations now; `todo.md` #0 records the gap. Quote *extraction*
+> survives, because L2 uses quote spans for claim attribution and L1a masks quoted text
+> before extracting propositions.
 
 The design-phase figures came from a coarse `difflib` sliding window. These are the
 real ones, measured against Spandeck paragraph [115] through L1's actual normalisation
@@ -199,10 +207,17 @@ similarity cannot tell an honest restatement from plausible fiction, and both si
 below the 75 threshold, so scoring paraphrased attribution would fail correct legal
 writing on what amounts to a coin flip.
 
+**And that is ultimately why the check went.** Restricting it to text presented as a
+direct quotation contained the problem without solving it: a 3.6-point gap between the
+honest case and the dishonest one is not a signal, and a FAIL threshold sitting 25
+points above both is a number chosen rather than measured. Under fail-fast a false red
+is unrecoverable, so a check that cannot separate its two most important inputs should
+not be able to fail a run at all.
+
 That is why `ExtractedQuote.delimiter` is a required field: **L1 may only ever score
 text that was presented as a direct quotation.** Whether the output's paraphrased
-claims are supported is L3's question, not L1's.
-`tests/layers/test_l1_existence.py::test_paraphrase_and_fabrication_are_indistinguishable`
+claims are supported is L2's question, not L1's.
+`tests/layers/test_l1b_existence.py` (the test was removed with the check)
 pins this so it cannot silently regress.
 
 The 75 / 90 seeds sit cleanly between the regimes; no change needed.
@@ -221,7 +236,7 @@ Everything above this point was either estimated or measured against the mock
 embedder. These are the first numbers from the real model, using the pipeline's own
 `input_type` asymmetry (`query` for questions and claims, `document` for chunks).
 
-### L4 — question → answer
+### L3 — question → answer
 
 | Regime | n | μ | σ | min / max |
 |---|---|---|---|---|
@@ -239,7 +254,7 @@ correct-answer distribution, and under fail-fast that silently rejects good lega
 work. This is the single clearest vindication of the "prefer a false green to a false
 red" rule.
 
-### L3 — claim → cited document, on **raw** paragraphs
+### L2 — claim → cited document, on **raw** paragraphs
 
 | Regime | cited (min/max) | margin (min/max) |
 |---|---|---|
@@ -253,9 +268,9 @@ what it was designed for.
 
 ### The open contradiction: the contextual prefix appears to hurt retrieval
 
-Those L3 numbers are from **raw** paragraphs. In the live pipeline every chunk is
+Those L2 numbers are from **raw** paragraphs. In the live pipeline every chunk is
 embedded with a document summary and heading path prefixed to it, and there a
-genuinely grounded claim was **failed** by L3.
+genuinely grounded claim was **failed** by L2.
 
 The prefix is diluting the signal. The thresholds were deliberately **not** lowered to
 compensate: that would be tuning around a bug rather than fixing it, and it would hide
@@ -265,7 +280,7 @@ without hand-built prefixes. See `todo.md`.
 
 ### Caveat that applies to every number here
 
-`n=11` for L4 and `n=5` for L3. These are **working calibrations, not benchmarks**.
+`n=11` for L3 and `n=5` for L2. These are **working calibrations, not benchmarks**.
 They are enough to replace a demonstrably wrong threshold with a measured one; they
 are not enough to quote a confidence interval. Widen the sample before relying on
 them, and re-run everything for any other embedding model — no cosine threshold
@@ -308,7 +323,7 @@ Fixed: top-k per claim, an over-long chunk split back into its own numbered para
 and ranked, passages labelled with the range they actually cover, and the budget spent
 round-robin so every attributed claim is represented before any claim gets depth. On
 the live run this took the judge's evidence from 5 passages to 21. **The score is
-untouched** — L3 still scores `max cos(claim, chunks)`, so every threshold in Part 4
+untouched** — L2 still scores `max cos(claim, chunks)`, so every threshold in Part 4
 stands, and `test_widening_retrieval_does_not_move_the_score` pins that.
 
 ### F14 — the contextual prefix is confirmed to fail correct legal work
@@ -316,8 +331,8 @@ stands, and `test_widening_retrieval_does_not_move_the_score` pins that.
 Part 4 left this as "the open contradiction". It is no longer open.
 
 **Live, first run.** A correct answer citing `[2007] SGCA 37` and quoting paragraph
-[115] verbatim: L1 scored the quote **1.000**, L4 scored responsiveness **0.751**, and
-**L3 failed it** at 0.325 against the 0.35 floor. The failing claim was the quoted
+[115] verbatim: L1 scored the quote **1.000**, L3 scored responsiveness **0.751**, and
+**L2 failed it** at 0.325 against the 0.35 floor. The failing claim was the quoted
 sentence itself. The chunk containing [115] was not among the retrieved passages at
 all.
 
@@ -334,7 +349,7 @@ every chunk) and once on raw chunk text:
 Every claim scores lower with the prefix. The failing one goes 0.506 → 0.346, crossing
 the floor. And the chunk holding the quoted paragraph falls from rank #4 to rank #11,
 which is why it never reached the judge even under top-3 retrieval — **the prefix
-damages L3 and L5 by the same mechanism.**
+damages L2 and L4 by the same mechanism.**
 
 The prefix is byte-identical across all 43 chunks of a judgment, so it adds a large
 shared component to every document vector that has no counterpart in the query vector
@@ -381,7 +396,7 @@ the other — `L3_CONTEXTUAL_PREFIX`, defaulting to `"heading"`.
 **The margin gate was never the one firing.** The prefix suppresses `s_cited` and
 `s_bg` together, so the contrastive design cancels most of the damage exactly as
 intended; every failure in every arm is a floor failure. The earlier suspicion that
-L3's background sampling was at fault is not supported: `s_bg` sits at 0.17–0.23
+L2's background sampling was at fault is not supported: `s_bg` sits at 0.17–0.23
 throughout and no claim comes near the margin threshold.
 
 #### Why it looked intermittent
@@ -408,7 +423,7 @@ The claim is genuinely grounded — Spandeck discusses the English position at [
 `settings.L3_CONTEXTUAL_PREFIX` selects `none` / `heading` / `summary_heading`, with
 `heading` the default. Two consequences beyond the score:
 
-- **The summariser is no longer called on the L3 path** unless the regime asks for it,
+- **The summariser is no longer called on the L2 path** unless the regime asks for it,
   which takes a Haiku call off the critical path.
 - **The regime namespaces the embedding cache** (`CachedEmbedder.cache_model`).
   Content-addressing already stops a stale vector being *read* after the regime
@@ -430,14 +445,14 @@ paragraph falling to rank #12–#38.
 That kills the planned "swap the env var and the problem goes away" fix. Making chunks
 attend to their neighbours *inside the model* does what stapling a shared summary on
 the front does: it pulls every chunk of a case toward the case's centroid. The manual
-prefix was never the problem in itself — contextualisation by any means is, because L3
+prefix was never the problem in itself — contextualisation by any means is, because L2
 needs to discriminate **within** a document, not between documents.
 
 ### F15a — the documented `voyage-context-4` A/B did not exist
 
 `VoyageEmbedder.contextualized_embed` and `uses_native_context` have **zero call sites
 in `src/`**. `CachedEmbedder._embed` calls `embed()` unconditionally, and
-`l3_alignment._embed_source` applies the manual prefix unconditionally. Setting
+`l2_alignment._embed_source` applies the manual prefix unconditionally. Setting
 `EMBEDDINGS_MODEL=voyage-context-4` today would send chunks to the *ordinary* embed
 endpoint under a contextual model's name **and still prefix them by hand** — the
 opposite of what `providers/voyage.py`'s own docstring claims. The "one-env-var A/B"
@@ -448,7 +463,7 @@ exists for that model either.
 
 | Path | Result |
 |---|---|
-| Grounded answer, `[2007] SGCA 37` | **PASS** — L1/L2/L3 (0.405)/L4 (0.755) then L5 `correctness 1, material_completeness 1` from `anthropic/claude-sonnet-5`, 21 passages, $0.098 |
+| Grounded answer, `[2007] SGCA 37` | **PASS** — L1/L2/L2 (0.405)/L3 (0.755) then L4 `correctness 1, material_completeness 1` from `anthropic/claude-sonnet-5`, 21 passages, $0.098 |
 | Fabricated `[2019] SGCA 999` | **FAIL** in ~9 s — `CITATION_NOT_FOUND`, judge never invoked, **$0.00** |
 
 The cache claim holds under measurement: the second run touching Spandeck reported
@@ -483,7 +498,7 @@ It also confirms which gate fires. **Every margin passes** (+0.083 to +0.106 aga
 0.02 FAIL threshold, with a real 22-chunk background pool). The floor is the only gate
 that has ever failed anything in any measurement in this document.
 
-### F17 — L3 verdicts are not reproducible, because the claim splitter is not
+### F17 — L2 verdicts are not reproducible, because the claim splitter is not
 
 The first attempt at the table above was meaningless and looked fine. Run per-arm
 through the orchestrator, the three arms scored **3/14, 4/16 and 4/16** claims — three
@@ -492,18 +507,18 @@ shipped default wins") was an artefact of which claims each arm happened to be g
 
 `chunk_output_claims` calls `Summariser.split_claims`, a Haiku call with no seed and no
 cache. The same 2,184-character answer split into 14, 15 and 16 claims across four runs
-in one session. Because L3's status is driven by the **worst** attributed claim, a
+in one session. Because L2's status is driven by the **worst** attributed claim, a
 single extra claim flips the layer, and with it the run's verdict.
 
 Measured consequence, on one answer verified twice through the browser:
 
-| Run | claims | attributed | L3 | verdict |
+| Run | claims | attributed | L2 | verdict |
 |---|---|---|---|---|
 | First | 14 | 3 | **pass** 0.545 | warn (L1a only) |
 | Replay | 15 | 4 | **fail** 0.279 | fail |
 
 Nothing about the answer, the judgment, the thresholds or the code differed. **A green
-L3 in this system is not currently a repeatable measurement**, and any A/B run through
+L2 in this system is not currently a repeatable measurement**, and any A/B run through
 the orchestrator without pinning the split is measuring the splitter.
 
 This is a pre-existing defect, not one the prefix change introduced — but it was masked
@@ -521,11 +536,11 @@ is preferable for cases of pure economic loss but this is to be done within the 
 of a single test."* The court did not decline a more restrictive approach; it said one
 might be preferable, inside the single test.
 
-So the flag may well be a true positive. It should be held loosely: **L3 asks a
+So the flag may well be a true positive. It should be held loosely: **L2 asks a
 retrieval question, not a truth question**, and a claim about what a court *declined* to
 do is a negative proposition that will match no single paragraph well even when it is
-accurate — the asymmetry arXiv:2504.16318 names and the reason this belongs to L5.
-L5 never saw it, because L3 short-circuited the judge.
+accurate — the asymmetry arXiv:2504.16318 names and the reason this belongs to L4.
+L4 never saw it, because L2 short-circuited the judge.
 
 The open question is whether a floor calibrated on `n=5` positive assertions is the
 right instrument for meta-claims of this shape. It is recorded here rather than fixed,
@@ -538,7 +553,7 @@ F17 measured the splitter's *variability*: 14, 15 and 16 claims for one answer, 
 verdict that follows whichever set arrives. This is the other half — what the splitter
 does to a claim when it does split it.
 
-It cut one sentence in two and L3 scored the halves separately:
+It cut one sentence in two and L2 scored the halves separately:
 
 | unit | `grouped` | `paragraph` |
 |---|---|---|
@@ -553,7 +568,7 @@ foreseeability and the first stage of the legal proximity test, a prima facie du
 care arises. Policy considerations should then be applied…"* — and was ranked **#1
 throughout**. Retrieval was never wrong.
 
-The fragment does not say the second stage *of what*. L3 was asked to ground a
+The fragment does not say the second stage *of what*. L2 was asked to ground a
 proposition with its referent cut away, which is the same defect L1a exists to catch
 from the other side.
 
@@ -568,12 +583,12 @@ for the failure that was attributed to them.
 
 ### F19 — a genuine-only claim set cannot tell an improvement from an inflation
 
-Every L3 A/B so far scored claims taken from an answer written to be correct. That
+Every L2 A/B so far scored claims taken from an answer written to be correct. That
 measures the **false-FAIL rate** and nothing else: a change that raises every
 similarity passes it while buying no discrimination, because the claims that should
 score low rose with the rest. Part 4 did this correctly and the later runs dropped it.
 
-`scripts/l3_probe.py` now carries a fixed calibration set — three genuine claims, each
+`scripts/l2_probe.py` now carries a fixed calibration set — three genuine claims, each
 verified present in a named Spandeck paragraph, and four foreign ones (true Singapore
 law this judgment does not decide, from other areas because an easy off-topic negative
 flatters any configuration). The reported number is the **GAP**: genuine min − foreign
@@ -591,7 +606,7 @@ stronger justification than the mean scores F14 quoted.
 
 **Paragraph granularity is worth none of it** (+0.386 → +0.380). Finer chunks match
 unrelated material better too: the foreign maximum rises 0.254 → 0.320. It is kept for
-the passage L5 reasons over — the unit for [83] becomes [83-83] rather than [83-86],
+the passage L4 reasons over — the unit for [83] becomes [83-83] rather than [83-86],
 provenance becomes exact, and the quoted paragraph [115] moves from rank #3 to #1 — and
 because it is the regime Part 4's thresholds were derived in. Not for its scores.
 
@@ -643,8 +658,8 @@ The adapter first declared `FetchStrategy.BROWSER`, on the reasoning that an
 
 | Client | Result |
 |---|---|
-| `sal-verifier/0.1 (SMU LIT 2026 research prototype)` | **403** blocked |
-| `Mozilla/5.0 (compatible; sal-verifier/0.1; SMU LIT 2026 research prototype)` | **200**, 346 kB |
+| `sigma-tech/0.1 (SMU LIT 2026 research prototype)` | **403** blocked |
+| `Mozilla/5.0 (compatible; sigma-tech/0.1; SMU LIT 2026 research prototype)` | **200**, 346 kB |
 | Playwright Chromium, `HeadlessChrome/151.0.7922.34` | **403** blocked |
 | ~12 requests in quick succession | **202**, `x-amzn-waf-action: challenge` |
 
@@ -671,15 +686,19 @@ of contents and four provisions. The rest of the Act is fetched by the page's ow
 JavaScript, and `?WholeDoc=1` — the target of the site's own "Whole Document" button —
 returns the identical four.
 
-This is the sharpest finding of the three, because the naive handling is catastrophic
+This was the sharpest finding of the three, because the naive handling was catastrophic
 rather than merely wrong. A `SourceDocument` built from that HTML contains sections 1–4;
 quote-checking section 57 against it scores near zero and emits `QUOTE_NOT_FOUND`, which
 is a FAIL. **A real statute, quoted correctly, reported as fabricated.**
 
-`SsoAdapter.document_for` therefore returns `None`. L1c's "no document" branch is silence
-rather than a finding, and L3 returns NOT_APPLICABLE, so the failure cannot occur. The
+`SsoAdapter.document_for` therefore returns `None`, so the failure could not occur even
+then. **It is now unreachable by construction:** quote verification was removed with the
+fuzzy matcher (Part 3), so there is no check left that can fail a correctly quoted statute
+against a truncated document.
+
+What survives is the softer half. L2 returns NOT_APPLICABLE for an SSO citation, so the
 honest description of SSO coverage today is: **an Act can be confirmed to exist, and can
-never be checked for what it says.** See `todo.md` bug 17.
+never be scored for whether the answer's claims are grounded in it.** See `todo.md` bug 17.
 
 ---
 
@@ -724,14 +743,17 @@ Executed in-process, with no Celery time limit, on the Spandeck answer:
 | | |
 |---|---|
 | L0 extract | pass, 1,978 ms |
-| L1 existence | **pass, score 1.0**, 14 ms |
-| L2 source trust | pass, 0 ms |
-| L3 grounding | **pass, score 0.537**, 43,392 ms |
-| L4 responsiveness | pass, score 0.745, 7,346 ms |
-| L5 judge | **pass, score 1.0**, 7,402 ms |
+| L1 citation integrity | **pass, score 1.0**, 14 ms |
+| &nbsp;&nbsp;1c source trust | pass, 0 ms |
+| L2 alignment | **pass, score 0.537**, 43,392 ms |
+| L3 responsiveness | pass, score 0.745, 7,346 ms |
+| L4 judge | **pass, score 1.0**, 7,402 ms |
 | verdict | **pass**, `$0.0338`, **53.4 s** |
 
-L3 scores rather than returning NOT_APPLICABLE, and its top passage is Spandeck [72] at
+Measured when source trust was still a layer of its own and L1 carried a quote-derived
+score; the rows are relabelled to today's numbering, and the figures are as observed.
+
+L2 scores rather than returning NOT_APPLICABLE, and its top passage is Spandeck [72] at
 0.744 — the paragraph that actually states the single-test holding — labelled with a
 `paragraph`/`paragraph_to` range and a live `source_url`, which is F13's fix working on
 real data. No `CITATION_NOT_FOUND` on any real case.
@@ -756,13 +778,13 @@ reads it. `layers/registry.py:build_layer` constructs `SourceGroundingLayer()` a
 `ResponsivenessLayer()` **with no arguments**, so `embedding_repo` resolves through
 `semantic/defaults.py:default_embedding_repo()`, which returns an
 `InMemoryEmbeddingRepo`. Grepping the tree confirms `embedding_repo` is never passed
-anywhere: the only occurrences are the defaults inside L3 and L4 themselves.
+anywhere: the only occurrences are the defaults inside L2 and L3 themselves.
 
 Three consequences, and they compound:
 
 1. Every run re-embeds the whole judgment. That ~40 s is what makes F24's 53.4 s exceed
    a 45 s budget, so **the cache that would fix the timeout is the thing that is broken**.
-2. L3's contrastive background pool is whatever one process has seen, not the corpus.
+2. L2's contrastive background pool is whatever one process has seen, not the corpus.
    Part 4's margin is calibrated against a pool that does not survive a restart.
 3. The `$0.034` per run never amortises.
 
@@ -798,12 +820,12 @@ The client is what conceals this: the panel has its own timeout and renders
 **"The verification timed out."** So the failure is visible to a user but invisible to
 the API, and the row is indistinguishable from a run still in progress.
 
-### F28 — a truncated embeddings response takes L3 down with no retry
+### F28 — a truncated embeddings response takes L2 down with no retry
 
 One run in four died differently:
 
 ```
-L3 could not complete: Response payload is not completed:
+L2 could not complete: Response payload is not completed:
 <ContentLengthError: 400, message='Not enough data to satisfy content length
 header (received 27699 of 707298 bytes)'>
 ```
@@ -811,7 +833,7 @@ header (received 27699 of 707298 bytes)'>
 A Voyage response was cut off at 4% of its declared length. There is no retry, so a
 single truncated batch errors the whole layer. The verdict degraded to `warn` with a
 `LAYER_ERROR` finding rather than failing anything, which is the safe direction and is
-the F12 rule holding — but L3 contributed nothing to that run, and the run still cost a
+the F12 rule holding — but L2 contributed nothing to that run, and the run still cost a
 judge call.
 
 ### F29 — the extension verifies the sidebar, and calls it a FAIL
@@ -840,7 +862,7 @@ spending a run on them.
 
 Established: the registry dispatches by citation type against the live source; adapters
 resolve their fetcher from `fetch_strategy`; documents reach `LayerInput.documents`; L1
-passes a real citation, L3 scores it, L5 runs; and a correct Singapore answer verifies
+passes a real citation, L2 scores it, L4 runs; and a correct Singapore answer verifies
 **pass** end to end for $0.034.
 
 Not established: any of it through the deployed worker. F24–F27 mean that as shipped,
@@ -867,10 +889,10 @@ the fixes, not a fresh install.
 | `text_embeddings` rows | **0** | 170 | 170 |
 | cache hits / misses | 0 / 171 | 0 / 171 | **170 / 1** |
 | deterministic phase | 46.0 s | 61.9 s | **11.5 s** |
-| L3 | 43.4 s | 59.8 s | **9.4 s** |
+| L2 | 43.4 s | 59.8 s | **9.4 s** |
 | total | killed at 45 s | 79.1 s | **26.5 s** |
 | verdict | *never finished* | pass | pass |
-| **L3 score** | 0.537 | **0.548** | **0.548** |
+| **L2 score** | 0.537 | **0.548** | **0.548** |
 
 The row that matters most is the last one. A cache that changed the score would be a
 bug wearing a speedup's clothes; the warm run and the cold run agree to three decimals,
@@ -918,12 +940,12 @@ Newly visible, and not fixed. All 170 cached vectors have `document_id = NULL`:
 embeddings with doc: 0 of 170
 ```
 
-`_document_key` (`l3_alignment.py:645-656`) falls back to the document's **content hash**
+`_document_key` (`l2_alignment.py:645-656`) falls back to the document's **content hash**
 when `SourceDocument.id` is unset, which it is for a freshly-fetched document.
 `PgEmbeddingRepo.put_many` does `uuid.UUID(document_id)` and, on `ValueError`, stores
 `NULL`. `sample_background` then filters `document_id IS NOT NULL` and matches nothing.
 
-L3 detects it and says so, which is the system behaving correctly:
+L2 detects it and says so, which is the system behaving correctly:
 
 ```
 background_empty: true, margin_skipped: true
@@ -935,9 +957,9 @@ note: "No background corpus was available, so the contrastive margin was
 task and had only ever seen the one document under test, so the pool was empty then too.
 What changes is that it is now *permanently* empty rather than incidentally so: 170
 durable vectors are sitting in the table and none can be sampled. The contrastive margin
-Part 4 calibrates has therefore never run in production — every live L3 verdict to date,
+Part 4 calibrates has therefore never run in production — every live L2 verdict to date,
 including Part 8's and both runs above, rests on the absolute floor alone.
 
 That does not invalidate the scores, which are `max cos(claim, cited)` and independent of
-the margin. It does mean the margin half of L3 is unmeasured outside the offline
+the margin. It does mean the margin half of L2 is unmeasured outside the offline
 calibration set, and it is recorded as todo.md bug 24.

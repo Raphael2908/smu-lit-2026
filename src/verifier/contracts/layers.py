@@ -14,7 +14,7 @@ from verifier.contracts.citations import (
     StatuteReference,
 )
 from verifier.contracts.documents import SourceDocument
-from verifier.contracts.enums import Layer, LayerStatus
+from verifier.contracts.enums import Layer, LayerStatus, SubLayer
 from verifier.contracts.findings import Finding
 
 
@@ -33,7 +33,7 @@ class ExtractionResult(BaseModel):
     #: corpus -- see StatuteReference for why they are not clusters.
     statutes: tuple[StatuteReference, ...] = ()
     #: Domains written out explicitly in the output (bare URLs, "according to x.com").
-    #: These carry a domain already, so L2a can check them before anything is fetched.
+    #: These carry a domain already, so 1c can check them before anything is fetched.
     explicit_domains: tuple[str, ...] = ()
     #: Citations the extractor found and the deterministic parser cannot type.
     #:
@@ -91,12 +91,32 @@ class LayerInput(BaseModel):
     documents: dict[str, SourceDocument] = Field(default_factory=dict)
 
 
+class SubLayerResult(BaseModel):
+    """One named check inside a layer, reported without splitting the layer.
+
+    Carries NO findings. Findings stay flat on ``LayerResult.findings``, each tagged
+    with its ``sub_layer``: a finding that existed in two places is the exact shape of
+    bug ``aggregate.assert_additive`` exists to catch, and flattening keeps the
+    orchestrator's ``state.findings.extend(result.findings)`` correct as written.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    sub_layer: SubLayer
+    status: LayerStatus
+    finding_count: int = 0
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
 class LayerResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     layer: Layer
     status: LayerStatus
     findings: tuple[Finding, ...] = ()
+    #: Per-sub-check status, when a layer has named sub-checks. Empty for layers that
+    #: ask a single question.
+    sub_results: tuple[SubLayerResult, ...] = ()
     score: float | None = None
     duration_ms: int = 0
     cache_hits: int = 0

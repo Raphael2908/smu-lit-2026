@@ -1,17 +1,17 @@
-"""L4 -- responsiveness.
+"""L3 -- responsiveness.
 
-L4 ASKS A RETRIEVAL QUESTION: "does this output answer THIS question?" That is the
+L3 ASKS A RETRIEVAL QUESTION: "does this output answer THIS question?" That is the
 classic query-document retrieval shape, which is what cosine is actually proven on. It
 does not ask whether the answer is correct, complete or well-reasoned -- an eloquent,
 perfectly-cited answer to a question nobody asked scores badly here and should.
 
-Plain absolute cosine, no contrastive margin. L3 needs a margin because "grounded in
+Plain absolute cosine, no contrastive margin. L2 needs a margin because "grounded in
 this source" only means anything relative to some other source; "answers this question"
 has no such partner. Adding distractor questions would be inventing a baseline rather
 than measuring one, so the absolute bands stand -- with the honest caveat that they are
 reasoned seeds keyed to EMBEDDINGS_MODEL, not measurements.
 
-L4 has NO DEPENDENCY ON L1. It runs at t=0 alongside citation resolution and returns a
+L3 has NO DEPENDENCY ON L1. It runs at t=0 alongside citation resolution and returns a
 real score even when every citation in the output is fabricated -- because whether an
 answer is on-point is independent of whether its authorities exist, and a lawyer needs
 both facts, not one gated on the other.
@@ -60,7 +60,7 @@ def _mock_caveat() -> str:
 
 
 class ResponsivenessLayer(BaseLayer):
-    layer = Layer.L4_RESPONSIVENESS
+    layer = Layer.L3_RESPONSIVENESS
 
     def __init__(
         self,
@@ -75,10 +75,10 @@ class ResponsivenessLayer(BaseLayer):
         self._embedder = resolve(embedder, default_embedder)
         self._summariser = resolve(summariser, default_summariser)
         self._embedding_repo = resolve(embedding_repo, default_embedding_repo)
-        self.fail_below = settings.L4_FAIL_BELOW if fail_below is None else fail_below
-        self.pass_at = settings.L4_PASS_AT if pass_at is None else pass_at
+        self.fail_below = settings.L3_FAIL_BELOW if fail_below is None else fail_below
+        self.pass_at = settings.L3_PASS_AT if pass_at is None else pass_at
         self.min_answer_tokens = (
-            settings.L4_MIN_ANSWER_TOKENS if min_answer_tokens is None else min_answer_tokens
+            settings.L3_MIN_ANSWER_TOKENS if min_answer_tokens is None else min_answer_tokens
         )
 
     async def _run(self, data: LayerInput) -> LayerResult:
@@ -98,7 +98,7 @@ class ResponsivenessLayer(BaseLayer):
         # roles are the reverse of intuition here: the answer is the corpus being
         # searched, and we are asking whether the question retrieves any part of it.
         # cache=False on both sides -- a question and its answer are unique to one run,
-        # and letting them into the shared store would pollute L3's background pool.
+        # and letting them into the shared store would pollute L2's background pool.
         question_result = await embedder.embed_texts(
             [question], input_type=INPUT_TYPE_QUERY, cache=False
         )
@@ -209,7 +209,7 @@ class ResponsivenessLayer(BaseLayer):
 def _downgrade_followup_fails(findings: tuple[Finding, ...]) -> tuple[tuple[Finding, ...], bool]:
     """Turn every FAIL into a FOLLOWUP_NOT_SCORED warning.
 
-    THE SINGLE MOST IMPORTANT GUARD IN L4. A follow-up question -- "why?", "and the
+    THE SINGLE MOST IMPORTANT GUARD IN L3. A follow-up question -- "why?", "and the
     second limb?" -- cannot stand alone. Embedded on its own it is three words of
     function vocabulary, and it will score near zero against a long, excellent answer.
     Under a fail-fast pipeline a FAIL here skips the judge entirely and the run is

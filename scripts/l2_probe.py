@@ -65,7 +65,7 @@ from verifier.contracts.documents import SourceDocument
 from verifier.contracts.enums import ResolutionMethod, ResolutionStatus
 from verifier.contracts.layers import LayerInput
 from verifier.extraction import extract
-from verifier.layers.l3_alignment import SourceGroundingLayer
+from verifier.layers.l2_alignment import SourceGroundingLayer
 from verifier.providers.factory import get_embedder, get_summariser
 from verifier.repos.memory import InMemoryEmbeddingRepo
 from verifier.settings import settings
@@ -370,10 +370,10 @@ async def run_arm(
 def report(arm: dict[str, Any]) -> None:
     detail = arm["detail"]
     claims = detail.get("claim_scores") or []
-    floor = settings.L3_ABSOLUTE_FLOOR
+    floor = settings.L2_ABSOLUTE_FLOOR
     fail_at, pass_above = (
-        settings.L3_MARGIN_FAIL_AT_OR_BELOW,
-        settings.L3_MARGIN_PASS_ABOVE,
+        settings.L2_MARGIN_FAIL_AT_OR_BELOW,
+        settings.L2_MARGIN_PASS_ABOVE,
     )
 
     print(f"\n{'=' * 78}\n{arm['label']:<28} status = {arm['status'].upper()}")
@@ -494,7 +494,7 @@ async def main() -> int:
             cited = [c["s_cited"] for c in claims]
             if not cited:
                 continue
-            below = sum(1 for v in cited if v < settings.L3_ABSOLUTE_FLOOR)
+            below = sum(1 for v in cited if v < settings.L2_ABSOLUTE_FLOOR)
             gap = arm["separation"]["gap"]
             print(
                 f"  {arm['label']:<24} {arm['status']:<8} {sum(cited) / len(cited):>7.3f} "

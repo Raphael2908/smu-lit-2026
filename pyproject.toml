@@ -1,7 +1,7 @@
 [project]
-name = "sal-verifier"
+name = "sigma-tech"
 version = "0.1.0"
-description = "Five-layer verification of legal AI outputs: citation integrity, source trust, grounding, responsiveness, faithfulness"
+description = "Four-layer verification of legal AI outputs: citation integrity, semantic alignment, responsiveness, faithfulness"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115",

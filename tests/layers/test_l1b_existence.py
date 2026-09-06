@@ -13,7 +13,6 @@ workstream's code.
 from __future__ import annotations
 
 import pytest
-from rapidfuzz import fuzz
 
 from verifier.contracts.citations import (
     CitationCluster,
@@ -24,7 +23,6 @@ from verifier.contracts.citations import (
 )
 from verifier.contracts.documents import Paragraph, SourceDocument
 from verifier.contracts.enums import (
-    AttributionMethod,
     ChunkKind,
     CitationType,
     FetchStrategy,
@@ -35,7 +33,7 @@ from verifier.contracts.enums import (
     Severity,
 )
 from verifier.contracts.layers import ExtractionResult, LayerInput
-from verifier.layers.l1_existence import CitationExistenceLayer, normalize
+from verifier.layers.l1ab_citations import CitationExistenceLayer, normalize
 
 # --- the real judgment -------------------------------------------------------------
 
@@ -73,34 +71,6 @@ PARA_116 = (
     "orders."
 )
 BODY = "\n\n".join([HEADING, PARA_83, PARA_115, PARA_116])
-
-# --- quotes, in the four regimes ---------------------------------------------------
-
-VERBATIM = (
-    "This test is a two-stage test, comprising of, first, proximity and, second, "
-    "policy considerations."
-)
-#: The same sentence as a chat model actually emits it: curly quotes, an en dash for
-#: the hyphen, a non-breaking space. Exact substring matching returns False on every
-#: one of these on its own.
-TYPOGRAPHIC = (
-    "“This test is a two–stage test, comprising of, first, proximity and, "
-    "second, policy considerations.”"
-)
-#: One word changed: "considerations" -> "factors".
-ONE_WORD_CHANGED = (
-    "This test is a two-stage test, comprising of, first, proximity and, second, policy factors."
-)
-FABRICATED = (
-    "The court held that a three-stage inquiry into assumption of responsibility, "
-    "detrimental reliance and statutory purpose governs every claim in negligence."
-)
-#: A faithful restatement of [115] in the model's own words. It is NOT a quotation and
-#: L1 must never score it -- see ``test_paraphrase_scores_below_fabrication``.
-PARAPHRASE = (
-    "The court settled on one unified approach to duty of care, resting on closeness "
-    "between the parties and broader policy, no matter what kind of loss occurred."
-)
 
 
 # --- builders ----------------------------------------------------------------------
@@ -156,31 +126,6 @@ def resolution(
     }
     fields.update(overrides)
     return Resolution(**fields)  # type: ignore[arg-type]
-
-
-def quote(
-    text: str,
-    *,
-    ordinal: int = 0,
-    cluster_ordinal: int | None = 0,
-    pinpoint: int | None = None,
-    delimiter: str = '"',
-) -> ExtractedQuote:
-    return ExtractedQuote(
-        ordinal=ordinal,
-        text=text,
-        span=Span(start=0, end=len(text)),
-        delimiter=delimiter,
-        attributed_cluster_ordinal=cluster_ordinal,
-        attribution_method=(
-            AttributionMethod.PINPOINT
-            if pinpoint is not None
-            else AttributionMethod.NONE
-            if cluster_ordinal is None
-            else AttributionMethod.EXPLICIT
-        ),
-        pinpoint_paragraph=pinpoint,
-    )
 
 
 def spandeck_document(text: str = BODY) -> SourceDocument:
@@ -445,206 +390,7 @@ async def test_a_fully_checked_citation_does_not_warn_about_a_missing_document()
     assert result.findings == ()
 
 
-# --- quote verification ------------------------------------------------------------
-
-
-async def _quote_result(
-    text: str,
-    *,
-    pinpoint: int | None = None,
-    document: SourceDocument | None = None,
-    cluster_ordinal: int | None = 0,
-):
-    citation = neutral_citation(case_name=CASE_NAME)
-    return await CitationExistenceLayer().run(
-        layer_input(
-            clusters=(cluster_of(citation),),
-            quotes=(quote(text, pinpoint=pinpoint, cluster_ordinal=cluster_ordinal),),
-            resolutions={citation.citation_key: resolution(citation)},
-            documents=None if document is None else {citation.citation_key: document},
-        )
-    )
-
-
-async def test_quote_with_one_word_changed_still_passes():
-    """THE regression test against reintroducing exact substring matching.
-
-    A quotation with a single word altered is what a careful lawyer produces when they
-    misremember a word, and what a model produces when it smooths a sentence. It is not
-    a fabrication, and failing it would be the false red that destroys trust in the
-    tool. ``in`` says False; ``partial_ratio`` says ~95.
-
-    If this test ever fails because someone reached for ``quote in body``, that is the
-    bug -- not this test.
-    """
-    haystack = normalize(BODY).text
-    needle = normalize(ONE_WORD_CHANGED).text
-    assert needle not in haystack, "fixture no longer exercises the near-miss regime"
-
-    result = await _quote_result(ONE_WORD_CHANGED)
-    assert result.status is LayerStatus.PASS
-    assert result.findings == ()
-    assert result.score is not None and result.score >= 0.90
-
-
-async def test_typographic_variants_alone_never_fail_a_quote():
-    """Curly quotes, an en dash and a non-breaking space -- each one alone breaks
-    exact matching, and all three appear in real chat output."""
-    # Ctrl+F would report this verbatim quotation as missing from its own judgment.
-    assert TYPOGRAPHIC.strip("“”") not in BODY
-    result = await _quote_result(TYPOGRAPHIC)
-    assert result.status is LayerStatus.PASS
-    assert result.findings == ()
-
-
-async def test_verbatim_quote_passes():
-    result = await _quote_result(VERBATIM)
-    assert result.status is LayerStatus.PASS
-    assert result.score == 1.0
-
-
-async def test_fabricated_quote_fails():
-    result = await _quote_result(FABRICATED)
-    assert result.status is LayerStatus.FAIL
-    finding = only(result, FindingCode.QUOTE_NOT_FOUND)
-    assert finding.severity is Severity.FAIL
-    assert finding.quote_ordinal == 0
-    assert finding.evidence.score is not None and finding.evidence.score < 75.0
-    assert finding.evidence.threshold == 75.0
-    # The panel shows the closest thing in the judgment so the reader can see for
-    # themselves that it is not the quoted sentence.
-    assert finding.evidence.best_match_text
-    assert finding.evidence.source_url == URL
-
-
-async def test_quote_inexact_warns_between_the_thresholds():
-    """75-90 is 'close but not verbatim': annotate, do not accuse."""
-    near = (
-        "A single test to determine the existence of a duty of care must be applied "
-        "whatever the nature of the loss caused (whether pure economic loss or physical "
-        "damage)."
-    )
-    result = await _quote_result(near)
-    score = fuzz.partial_ratio(normalize(near).text, normalize(BODY).text)
-    assert 75.0 <= score < 90.0, f"fixture drifted out of the WARN band: {score}"
-    assert result.status is LayerStatus.WARN
-    assert only(result, FindingCode.QUOTE_INEXACT).severity is Severity.WARN
-
-
-async def test_paraphrase_and_fabrication_are_indistinguishable():
-    """WHY L1 only ever scores text presented as a direct quotation (F8).
-
-    Measured against real Spandeck [115] text under ``partial_ratio``:
-
-        verbatim     100.0
-        paraphrase    49.7   <- an HONEST restatement of the passage
-        fabrication   46.1   <- an INVENTED sentence
-
-    The two are 3.6 points apart, which is noise. Lexical similarity cannot tell an
-    honest paraphrase from plausible fiction, and both sit far below the 75 FAIL
-    threshold -- so if L1 scored paraphrased attribution it would fail correct legal
-    writing on what amounts to a coin flip. Paraphrase is L3's question (does the
-    output USE this source), not L1's (is this quote really in it).
-
-    This test exists so that conclusion cannot silently regress.
-    """
-    haystack = normalize(BODY).text
-    paraphrase = fuzz.partial_ratio(normalize(PARAPHRASE).text, haystack)
-    fabrication = fuzz.partial_ratio(normalize(FABRICATED).text, haystack)
-    verbatim = fuzz.partial_ratio(normalize(VERBATIM).text, haystack)
-
-    # Neither survives the threshold, and neither is separable from the other.
-    assert paraphrase < 75.0
-    assert fabrication < 75.0
-    assert abs(paraphrase - fabrication) < 10.0, (
-        "paraphrase and fabrication have become separable by lexical matching; "
-        "re-examine whether L1's quoted-text-only restriction is still justified"
-    )
-    # Verbatim, by contrast, is unmistakable.
-    assert verbatim >= 95.0
-
-
-# --- pinpoint scoping --------------------------------------------------------------
-
-
-async def test_pinpoint_narrows_the_scoring_scope():
-    """'at [115]' is worth a lot: it cuts ~84k characters down to one paragraph.
-
-    The same verbatim quote passes against the whole judgment and fails against the
-    wrong paragraph -- which is the point. Over a full judgment ``partial_ratio`` will
-    eventually find some window resembling almost any legal sentence.
-    """
-    unscoped = await _quote_result(VERBATIM)
-    assert unscoped.status is LayerStatus.PASS
-
-    misplaced = await _quote_result(VERBATIM, pinpoint=83)
-    assert misplaced.status is LayerStatus.FAIL
-    finding = only(misplaced, FindingCode.QUOTE_NOT_FOUND)
-    assert finding.evidence.extra["scope"] == "paragraph"
-    assert finding.evidence.best_match_paragraph == 83
-
-    correct = await _quote_result(VERBATIM, pinpoint=115)
-    assert correct.status is LayerStatus.PASS
-
-
-async def test_pinpoint_that_is_not_in_the_document_falls_back_to_the_body():
-    """A pinpoint we cannot locate is a scoping miss, not evidence about the quote."""
-    result = await _quote_result(VERBATIM, pinpoint=999)
-    assert result.status is LayerStatus.PASS
-
-
-async def test_pinpoint_miss_is_recorded_when_a_finding_is_raised():
-    result = await _quote_result(FABRICATED, pinpoint=999)
-    finding = only(result, FindingCode.QUOTE_NOT_FOUND)
-    assert finding.evidence.extra["scope"] == "document"
-    assert finding.evidence.extra["pinpoint_found"] is False
-
-
-# --- quote edge cases --------------------------------------------------------------
-
-
-async def test_short_quotes_are_not_scored():
-    """Under partial_ratio a short string matches almost anything; a score there would
-    be noise dressed up as evidence."""
-    result = await _quote_result("a single test")
-    assert result.findings == ()
-    assert result.detail["quotes_too_short"] == 1
-    assert result.detail["quotes_scored"] == 0
-
-
-async def test_unattributed_quote_is_info_only():
-    result = await _quote_result(FABRICATED, cluster_ordinal=None)
-    assert result.status is LayerStatus.PASS
-    assert only(result, FindingCode.QUOTE_UNATTRIBUTED).severity is Severity.INFO
-
-
-async def test_quote_against_an_unverifiable_citation_is_not_scored():
-    """The citation could not be checked, so neither can its quote. No finding: the
-    citation-level WARN already records why."""
-    citation = neutral_citation()
-    result = await CitationExistenceLayer().run(
-        layer_input(
-            clusters=(cluster_of(citation),),
-            quotes=(quote(FABRICATED),),
-            resolutions={
-                citation.citation_key: resolution(citation, ResolutionStatus.UNAUTHENTICATED)
-            },
-        )
-    )
-    assert not result.has_fail
-    assert FindingCode.QUOTE_NOT_FOUND not in codes(result)
-    assert result.detail["quotes_unverifiable"] == 1
-
-
 # --- evidence, status and degraded operation ---------------------------------------
-
-
-async def test_evidence_shows_the_original_passage_not_the_normalised_one():
-    """The panel exists so a user can check our work; lowercased mush does not help."""
-    result = await _quote_result(FABRICATED)
-    best = only(result, FindingCode.QUOTE_NOT_FOUND).evidence.best_match_text
-    assert best and best in BODY, best
-    assert best != best.lower(), "best_match_text was mapped back to the raw judgment"
 
 
 async def test_layer_is_not_applicable_when_there_is_nothing_to_check():
@@ -657,15 +403,14 @@ async def test_resolution_present_but_document_absent_degrades_without_going_sil
     """The resolver answered but the text never arrived.
 
     Everything that does not need the text still runs -- fabrication is still caught --
-    and everything that does is reported as unperformed rather than passed. No quote is
-    scored against nothing, and no quote is failed for our inability to read it.
+    and everything that does is reported as unperformed rather than passed. The case
+    name is never failed for our inability to read the judgment.
     """
     fake = neutral_citation(court="SGCA", year=2019, number=999, raw="[2019] SGCA 999")
     citation = neutral_citation(1, case_name=CASE_NAME)
     result = await CitationExistenceLayer().run(
         layer_input(
             clusters=(cluster_of(fake), cluster_of(citation, ordinal=1)),
-            quotes=(quote(FABRICATED, cluster_ordinal=1),),
             resolutions={
                 fake.citation_key: resolution(fake, ResolutionStatus.NOT_FOUND),
                 citation.citation_key: resolution(citation),
@@ -675,24 +420,30 @@ async def test_resolution_present_but_document_absent_degrades_without_going_sil
     )
     assert result.status is LayerStatus.FAIL
     assert FindingCode.CITATION_NOT_FOUND in codes(result)
-    assert FindingCode.QUOTE_NOT_FOUND not in codes(result)
+    assert FindingCode.CITATION_CASE_NAME_MISMATCH not in codes(result)
 
     unverified = only(result, FindingCode.CITATION_UNVERIFIED)
     assert unverified.severity is Severity.WARN
     assert unverified.citation_ordinal == 1
-    assert unverified.evidence.extra["pending"] == ["case name", "quotation"]
+    assert unverified.evidence.extra["pending"] == ["case name"]
     assert result.detail["no_document"] == 1
-    assert result.detail["quotes_unverifiable"] == 1
-    assert result.detail["quotes_scored"] == 0
 
 
 async def test_an_empty_document_body_counts_as_no_document():
-    """A judgment page that came back with no text verifies nothing. Scoring a quote
-    against "" would produce a confident 0 and a false accusation."""
-    result = await _quote_result(VERBATIM, document=spandeck_document(text=""))
+    """A judgment page that came back with no text verifies nothing. Matching a case
+    name against "" would produce a confident 0 and a false accusation."""
+    citation = neutral_citation(case_name=CASE_NAME)
+    result = await CitationExistenceLayer().run(
+        layer_input(
+            clusters=(cluster_of(citation),),
+            resolutions={citation.citation_key: resolution(citation)},
+            documents={citation.citation_key: spandeck_document(text="")},
+        )
+    )
     assert not result.has_fail
-    assert FindingCode.QUOTE_NOT_FOUND not in codes(result)
-    assert result.detail["quotes_unverifiable"] == 1
+    assert FindingCode.CITATION_CASE_NAME_MISMATCH not in codes(result)
+    assert only(result, FindingCode.CITATION_UNVERIFIED).severity is Severity.WARN
+    assert result.detail["no_document"] == 1
 
 
 async def test_a_crash_reports_error_and_never_fails_the_run():
@@ -777,7 +528,7 @@ async def test_an_unknown_detail_gets_the_honest_default() -> None:
 
 async def test_every_unresolvable_reason_stays_a_warn() -> None:
     """Only the sentence changes. None of these may drift toward a verdict."""
-    from verifier.layers.l1_existence import _UNRESOLVABLE_REASONS
+    from verifier.layers.l1ab_citations import _UNRESOLVABLE_REASONS
 
     citation = report_citation()
     for detail in [*_UNRESOLVABLE_REASONS, None]:

@@ -41,10 +41,9 @@ def _overlaps(spans: list[tuple[int, int]], start: int, end: int) -> bool:
 def _is_substantive(body: str, min_chars: int) -> bool:
     """Reject short spans and spans that are only punctuation.
 
-    The length floor is ``L1_MIN_QUOTE_CHARS`` (40) because ``partial_ratio`` will find
-    a strong match for a short string almost anywhere in a 100kB judgment; a 15-character
-    "quote" scores high against text it has nothing to do with. Below the floor the
-    signal is noise, and acting on noise means failing correct work.
+    The length floor is ``MIN_QUOTE_CHARS`` (40). A 15-character "quote" is a turn of
+    phrase, not an appeal to what a judgment said, and treating one as a quotation only
+    adds noise to the units built on top of it.
     """
     stripped = body.strip()
     return len(stripped) >= min_chars and any(ch.isalpha() for ch in stripped)
@@ -59,7 +58,7 @@ def extract_quotes(text: str, *, min_chars: int | None = None) -> list[Extracted
     run with its markers stripped -- the marker characters are presentation, and feeding
     them to a fuzzy matcher would depress every score.
     """
-    floor = settings.L1_MIN_QUOTE_CHARS if min_chars is None else min_chars
+    floor = settings.MIN_QUOTE_CHARS if min_chars is None else min_chars
     taken: list[tuple[int, int]] = []
     collected: list[tuple[int, int, str, str]] = []  # start, end, text, delimiter
 

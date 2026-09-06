@@ -3,12 +3,12 @@
  *
  * THE SINGLE MOST IMPORTANT RULE HERE: preserve quote marks and blockquote structure.
  *
- * L1 only ever scores text that was presented as a DIRECT QUOTATION, because lexical
- * matching is anti-correlated on paraphrase -- a genuine paraphrase scores LOWER than a
- * fabrication. The delimiter is the evidence that a span IS a quote. A naive
- * `innerText` flattens `<blockquote>` into ordinary prose and strips the only signal
- * L1 has, at which point either it scores paraphrases (false reds) or it scores nothing
- * (false greens). Both are worse than not shipping the layer.
+ * The delimiter is the evidence that a span IS a quote, and two checks downstream turn
+ * on knowing that. L2 attributes a claim to the citation whose quotation it overlaps,
+ * and 1a MASKS quoted text before deciding which sentences are the answer's own
+ * assertions of law. A naive `innerText` flattens `<blockquote>` into ordinary prose
+ * and destroys both: claims lose their citation, and every quoted sentence starts
+ * counting as an uncited assertion -- a confident false red against correct work.
  *
  * Everything else follows from the same principle: keep what carries meaning (code,
  * tables, citation links), drop what is UI (copy buttons, "Retry", footnote markers).
@@ -17,7 +17,7 @@
  * normalised string. That offset map is what lets the panel highlight the exact
  * offending span with `CSS.highlights` instead of mutating claude.ai's React tree.
  */
-globalThis.SALV = globalThis.SALV || {};
+globalThis.SIGMA = globalThis.SIGMA || {};
 
 (function captureModule() {
   /** Interactive chrome and decorations that are not part of the answer. */
@@ -105,7 +105,7 @@ globalThis.SALV = globalThis.SALV || {};
         const raw = node.nodeValue || '';
         if (!raw) return;
         // Collapse whitespace the way a renderer does. Quote characters are ordinary
-        // text and pass through untouched -- they are the delimiter L1 depends on.
+        // text and pass through untouched -- they are the delimiter L0 depends on.
         const text = raw.replace(/\u00a0/g, ' ').replace(/[ \t\f\r\n]+/g, ' ');
         if (!text.trim()) {
           if (/\S$/.test(out)) push(' ');
@@ -142,7 +142,7 @@ globalThis.SALV = globalThis.SALV || {};
 
       if (tag === 'BLOCKQUOTE') {
         // PRESERVED, NOT FLATTENED. `innerText` would turn this into ordinary prose and
-        // destroy the only evidence L1 has that the span was presented as a quotation.
+        // destroy the only evidence L0 has that the span was presented as a quotation.
         breakLine(2);
         quoteDepth += 1;
         pendingMarker = true;
@@ -174,7 +174,7 @@ globalThis.SALV = globalThis.SALV || {};
           } catch {
             domain = '';
           }
-          // Rendered citation links are REAL source domains. Sending them means L2a can
+          // Rendered citation links are REAL source domains. Sending them means 1c can
           // check them without re-deriving a domain from the prose.
           links.push({ url: href, text: (node.textContent || '').trim(), domain });
         }
@@ -216,21 +216,21 @@ globalThis.SALV = globalThis.SALV || {};
   /**
    * Does this prompt stand on its own?
    *
-   * THE MOST IMPORTANT GUARD IN THE EXTENSION. "And why?" scores near zero on L4
+   * THE MOST IMPORTANT GUARD IN THE EXTENSION. "And why?" scores near zero on L3
    * responsiveness no matter how good the answer is, because the answer responds to a
-   * question the layer cannot see. The backend downgrades L4 to WARN when this flag is
+   * question the layer cannot see. The backend downgrades L3 to WARN when this flag is
    * set; without it the run goes red, and under fail-fast a false red is unrecoverable.
    */
   function isFollowup(question) {
     const trimmed = (question || '').trim();
     if (!trimmed) return true;
     const tokens = trimmed.split(/\s+/).filter(Boolean);
-    if (tokens.length < SALV.config.followupTokenThreshold) return true;
+    if (tokens.length < SIGMA.config.followupTokenThreshold) return true;
     return /^(and|but|so|why|what about|how about|which|it|its|it's|that|this|those|these|they|them|their|he|she|his|her|also|then|ok(ay)?|elaborate|expand|continue|more)\b/i
       .test(trimmed);
   }
 
-  SALV.capture = {
+  SIGMA.capture = {
     walk,
     sha256Hex,
     isFollowup,
@@ -244,7 +244,7 @@ globalThis.SALV = globalThis.SALV || {};
     contextFrom(messages, assistantEl) {
       const index = messages.findIndex((m) => m.el === assistantEl);
       if (index <= 0) return [];
-      const turns = messages.slice(0, index).slice(-SALV.config.maxContextTurns);
+      const turns = messages.slice(0, index).slice(-SIGMA.config.maxContextTurns);
       return turns.map((turn) => ({
         role: turn.role,
         content: walk(turn.el).text.slice(0, 4000),

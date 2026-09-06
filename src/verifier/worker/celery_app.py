@@ -7,7 +7,7 @@ the judge, and a judge call that takes 90 seconds cannot block the deterministic
 
 Four queues, three deployed worker roles:
 
-* ``default``     -- ``run_verification``: L0-L4, the deterministic budget.
+* ``default``     -- ``run_verification``: L0-L3, the deterministic budget.
 * ``judge``       -- ``judge_verification``: one frontier-model call, a much longer
                      time limit, its own concurrency so it never blocks the fast path.
 * ``browser``     -- login-walled fetches. Heavyweight and long-lived; isolated so a

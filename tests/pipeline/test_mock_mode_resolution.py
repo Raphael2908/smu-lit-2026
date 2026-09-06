@@ -46,14 +46,13 @@ QUESTION = "What is the test for a duty of care in Singapore?"
 def _orchestrator(judge: RecordingJudgeLayer, **kwargs) -> Orchestrator:
     """Real L0 extraction and the real eLitigation adapter over the mock fetcher.
 
-    L2-L4 are stubbed: this test is about the resolution path reaching L1, not about
-    the other layers' thresholds.
+    L2 and L3 are stubbed and L1 is left REAL: this test is about the resolution path
+    reaching L1, not about the other layers' thresholds.
     """
     return Orchestrator(
         layers={
-            Layer.L2_SOURCE_TRUST: StubLayer(Layer.L2_SOURCE_TRUST),
-            Layer.L3_GROUNDING: StubLayer(Layer.L3_GROUNDING),
-            Layer.L4_RESPONSIVENESS: StubLayer(Layer.L4_RESPONSIVENESS),
+            Layer.L2_ALIGNMENT: StubLayer(Layer.L2_ALIGNMENT),
+            Layer.L3_RESPONSIVENESS: StubLayer(Layer.L3_RESPONSIVENESS),
         },
         judge=judge,
         extractor=extract,
@@ -78,7 +77,7 @@ async def test_a_real_citation_resolves_and_its_judgment_reaches_the_layers(mock
     assert resolution.domain == "www.elitigation.sg"
     assert resolution.url.endswith("/gd/s/2007_SGCA_37")
 
-    l1 = state.layers[Layer.L1_EXISTENCE]
+    l1 = state.layers[Layer.L1_CITATION_INTEGRITY]
     assert l1.status is LayerStatus.PASS
     assert not any(f.severity is Severity.FAIL for f in l1.findings)
     assert state.verdict is not Verdict.FAIL
@@ -95,7 +94,7 @@ async def test_a_fabricated_citation_fails_and_the_judge_is_never_consulted(mock
     resolution = state.resolutions["sgca:2019:999"]
     assert resolution.status is ResolutionStatus.NOT_FOUND
 
-    l1 = state.layers[Layer.L1_EXISTENCE]
+    l1 = state.layers[Layer.L1_CITATION_INTEGRITY]
     assert l1.status is LayerStatus.FAIL
     assert any(f.code is FindingCode.CITATION_NOT_FOUND for f in l1.findings)
 
@@ -108,17 +107,16 @@ async def test_a_fabricated_citation_fails_and_the_judge_is_never_consulted(mock
 async def test_an_unresolved_citation_is_absent_from_documents_not_a_placeholder(mock_mode):
     """L1 degrades to a finding and L3 spends no embeddings -- the optimistic path."""
     layers = {
-        Layer.L1_EXISTENCE: StubLayer(Layer.L1_EXISTENCE),
-        Layer.L2_SOURCE_TRUST: StubLayer(Layer.L2_SOURCE_TRUST),
-        Layer.L3_GROUNDING: StubLayer(Layer.L3_GROUNDING),
-        Layer.L4_RESPONSIVENESS: StubLayer(Layer.L4_RESPONSIVENESS),
+        Layer.L1_CITATION_INTEGRITY: StubLayer(Layer.L1_CITATION_INTEGRITY),
+        Layer.L2_ALIGNMENT: StubLayer(Layer.L2_ALIGNMENT),
+        Layer.L3_RESPONSIVENESS: StubLayer(Layer.L3_RESPONSIVENESS),
     }
     orchestrator = Orchestrator(layers=layers, judge=RecordingJudgeLayer(), extractor=extract)
     await orchestrator.run(
         make_request(question=QUESTION, ai_output=FABRICATED), run_id="run-absent"
     )
 
-    seen = layers[Layer.L1_EXISTENCE].seen[0]
+    seen = layers[Layer.L1_CITATION_INTEGRITY].seen[0]
     assert "sgca:2019:999" in seen.resolutions
     assert "sgca:2019:999" not in seen.documents, "no placeholder for a citation that is not real"
 
@@ -152,10 +150,10 @@ async def test_an_outage_does_not_fail_the_run(mock_mode):
     layers = {
         layer: StubLayer(layer)
         for layer in (
-            Layer.L1_EXISTENCE,
-            Layer.L2_SOURCE_TRUST,
-            Layer.L3_GROUNDING,
-            Layer.L4_RESPONSIVENESS,
+            Layer.L1_CITATION_INTEGRITY,
+            Layer.L1_CITATION_INTEGRITY,
+            Layer.L2_ALIGNMENT,
+            Layer.L3_RESPONSIVENESS,
         )
     }
     orchestrator = Orchestrator(
@@ -171,7 +169,7 @@ async def test_an_outage_does_not_fail_the_run(mock_mode):
     assert state.resolutions["sgca:2007:37"].status is ResolutionStatus.ERROR
     assert state.verdict is not Verdict.FAIL
     # The unresolved citation carries no document -- absent, not a placeholder.
-    assert "sgca:2007:37" not in layers[Layer.L1_EXISTENCE].seen[0].documents
+    assert "sgca:2007:37" not in layers[Layer.L1_CITATION_INTEGRITY].seen[0].documents
 
 
 async def test_an_outage_must_not_turn_a_case_name_into_a_fabrication(mock_mode):
@@ -214,10 +212,10 @@ async def test_the_single_flight_resolver_fetches_each_judgment_once(mock_mode):
     layers = {
         layer: StubLayer(layer)
         for layer in (
-            Layer.L1_EXISTENCE,
-            Layer.L2_SOURCE_TRUST,
-            Layer.L3_GROUNDING,
-            Layer.L4_RESPONSIVENESS,
+            Layer.L1_CITATION_INTEGRITY,
+            Layer.L1_CITATION_INTEGRITY,
+            Layer.L2_ALIGNMENT,
+            Layer.L3_RESPONSIVENESS,
         )
     }
     orchestrator = Orchestrator(
@@ -271,5 +269,5 @@ async def test_an_sso_citation_warns_and_never_fails(mock_mode):
     assert sso, "the SSO URL should have been dispatched to the SSO adapter"
     assert all(r.status is not ResolutionStatus.NOT_FOUND for r in sso)
 
-    l1 = state.layers[Layer.L1_EXISTENCE]
+    l1 = state.layers[Layer.L1_CITATION_INTEGRITY]
     assert not any(f.code is FindingCode.CITATION_NOT_FOUND for f in l1.findings)

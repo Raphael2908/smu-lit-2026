@@ -120,7 +120,7 @@ async def test_an_unknown_host_is_unresolvable_never_not_found() -> None:
 
 async def test_an_unknown_host_still_reports_its_domain_so_l2_can_assess_it() -> None:
     """An unrecognised source we could not read is exactly when "is this blocklisted?"
-    is worth answering. l2_lists reads ``resolution.domain or resolution.url``."""
+    is worth answering. l1c_lists reads ``resolution.domain or resolution.url``."""
     url = cite(CitationType.URL, "https://medium.com/x", url="https://medium.com/x")
     result = await registry.resolve_cluster(cluster(url))
     assert result.domain == "medium.com"

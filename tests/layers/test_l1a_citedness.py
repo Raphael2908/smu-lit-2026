@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import pytest
 
-from verifier.contracts.enums import FindingCode, LayerStatus, Severity
+from verifier.contracts.enums import FindingCode, LayerStatus, Severity, SubLayer
 from verifier.contracts.layers import LayerInput
 from verifier.extraction import extract
-from verifier.layers.l1_existence import CitationExistenceLayer
+from verifier.layers.l1ab_citations import CitationExistenceLayer
 from verifier.settings import Settings
 
 SPANDECK = "Spandeck Engineering (S) Pte Ltd v Defence Science & Technology Agency [2007] SGCA 37"
@@ -43,13 +43,13 @@ async def run(ai_output: str, *, is_followup: bool = False, **overrides):
     """Run L1 with no resolutions and no documents: L1a needs neither.
 
     That is itself worth pinning -- L1a is pure text, so it produces its verdict with
-    no fetch, no network and no model, in the same budget as the L2a blacklist check.
+    no fetch, no network and no model, in the same budget as the pre-fetch blacklist check.
     """
     layer = CitationExistenceLayer()
     if overrides:
         settings = Settings(**overrides)
         monkey = pytest.MonkeyPatch()
-        monkey.setattr("verifier.layers.l1_existence.get_settings", lambda: settings)
+        monkey.setattr("verifier.layers.l1ab_citations.get_settings", lambda: settings)
         try:
             return await layer.run(layer_input(ai_output, is_followup=is_followup))
         finally:
@@ -68,7 +68,7 @@ def l1a(result):
     draws an L1b CITATION_UNVERIFIED warning ("we did not check it"). That is correct
     behaviour and orthogonal to what is under test here.
     """
-    return [f for f in result.findings if f.evidence.extra.get("stage") == "L1a"]
+    return [f for f in result.findings if f.sub_layer is SubLayer.L1A_CITEDNESS]
 
 
 # --- the FAIL: law asserted, nothing cited anywhere --------------------------------
@@ -95,7 +95,7 @@ async def test_the_fail_carries_every_uncited_assertion_as_evidence():
     assert extra["authorities"] == 0
     assert extra["uncited"] == 2
     assert len(extra["propositions"]) == 2
-    assert extra["stage"] == "L1a"
+    assert result.findings[0].sub_layer is SubLayer.L1A_CITEDNESS
 
 
 async def test_a_followup_turn_warns_instead_of_failing():
@@ -203,7 +203,10 @@ async def test_l1a_does_not_disturb_the_counts_the_panel_renders():
     assert result.detail["propositions_cited"] == 1
     assert result.detail["propositions_uncited"] == 1
     assert result.detail["authorities"] == 1
-    assert set(result.detail["stages"]) == {"L1a", "L1b", "L1c"}
+    assert [s.sub_layer for s in result.sub_results] == [
+        SubLayer.L1A_CITEDNESS,
+        SubLayer.L1B_EXISTENCE,
+    ]
 
 
 # --- the extractor is now a model, and a model can be down --------------------------

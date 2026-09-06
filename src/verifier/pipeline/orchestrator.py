@@ -1,13 +1,25 @@
 """The layer DAG.
 
     L0 extract
-      -> L2a  explicit domains vs the trust lists.
-              A blacklist hit FAILS here: no fetch, no worker, no tokens.
-      -> asyncio.gather(L1, L3, L4)   over ONE shared single-flight resolution
-      -> L2b  the domains L1 resolved (a bare citation has no domain until now)
+      -> L1's 1c, pre-fetch: the domains the output wrote out ITSELF, against the
+              trust lists. A blacklist hit FAILS here and the run stops: no HTTP
+              request to a court website, no worker hop, no judge tokens. This is the
+              cheapest failure the system can produce, and on that path it is Layer 1's
+              one and only result.
+      -> asyncio.gather(L1, L2, L3)   over ONE shared single-flight resolution
       -> publish deterministic_verdict
-      -> gate -> L5, or judge_skipped
+      -> gate -> L4 judge, or judge_skipped
       -> publish final
+
+EVERY DETERMINISTIC LAYER NOW STARTS AT t=0. Source trust used to be a layer of its own
+that had to run AFTER L1, because a bare citation like [2007] SGCA 37 has no domain
+until the resolver turns it into a URL. It is now L1's sub-check 1c, sequenced inside
+L1 where that data dependency actually lives, so the pipeline has no sequential tail.
+
+THE PRE-FETCH PASS IS THROWN AWAY UNLESS IT FAILS. It and 1c-proper overlap on the
+domains the output named outright, so keeping both would report a graylisted domain
+twice -- which is exactly what the two hand-rolled implementations that preceded this
+used to do.
 
 WHY asyncio.gather AND NOT NESTED CELERY CHORDS. Every layer here is I/O-bound: an
 HTTP fetch, an embedding call, a model call. A chord per layer would add a Redis
@@ -44,7 +56,6 @@ from verifier.contracts.citations import Resolution
 from verifier.contracts.documents import SourceDocument
 from verifier.contracts.enums import (
     FindingCode,
-    FindingSource,
     Layer,
     LayerStatus,
     ListType,
@@ -52,7 +63,7 @@ from verifier.contracts.enums import (
     Severity,
     VerdictStage,
 )
-from verifier.contracts.findings import Evidence, Finding
+from verifier.contracts.findings import Finding
 from verifier.contracts.layers import ExtractionResult, LayerInput, LayerProtocol, LayerResult
 from verifier.contracts.runs import CacheStats, RunOptions, RunState, VerifyRequest
 from verifier.logging import get_logger, run_id_var
@@ -61,7 +72,7 @@ from verifier.pipeline.events import EventPublisher, EventSink
 from verifier.pipeline.resolver import SingleFlightResolver
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from verifier.layers.l5_judge import JudgeContext
+    from verifier.layers.l4_judge import JudgeContext
 
 __all__ = ["Orchestrator", "PipelineResult", "new_run_id", "run_verification"]
 
@@ -150,7 +161,7 @@ class Orchestrator:
     async def run_deterministic(
         self, request: VerifyRequest, *, run_id: str | None = None
     ) -> RunState:
-        """L0 -> L2a -> gather(L1, L3, L4) -> L2b -> the deterministic verdict."""
+        """L0 -> L1's 1c pre-fetch -> gather(L1, L2, L3) -> the deterministic verdict."""
         rid = run_id or new_run_id()
         token = run_id_var.set(rid)
         started = time.perf_counter()
@@ -224,20 +235,25 @@ class Orchestrator:
                 extraction=extraction,
             )
 
-            # --- L2a: cheapest possible failure -----------------------------------
-            l2a = await self._l2a(rid, extraction)
-            if l2a is not None:
-                state.layers[Layer.L2_SOURCE_TRUST] = l2a
-                state.findings.extend(l2a.findings)
-                await self._publish_layer(state, publisher, l2a)
-                if l2a.has_fail:
-                    # A blacklisted source is decided before anything is fetched: no
-                    # HTTP, no worker hop, no judge tokens.
-                    return await self._settle_deterministic(
-                        state, publisher, started, short_circuit_early=True
-                    )
+            l1 = await self._l1_layer()
 
-            # --- L1 / L3 / L4 in parallel over ONE resolution pass -----------------
+            # --- 1c pre-fetch: the cheapest possible failure -----------------------
+            # ``base_input`` carries no resolutions yet, so this sees only the domains
+            # the output wrote out itself. Kept ONLY if it fails; otherwise discarded,
+            # because L1 re-checks the same domains a few milliseconds later over the
+            # full explicit-plus-resolved set.
+            precheck = await self._precheck(l1, base_input)
+            if precheck is not None and precheck.has_fail:
+                state.layers[Layer.L1_CITATION_INTEGRITY] = precheck
+                state.findings.extend(precheck.findings)
+                await self._publish_layer(state, publisher, precheck)
+                # A blacklisted source is decided before anything is fetched: no
+                # HTTP, no worker hop, no judge tokens.
+                return await self._settle_deterministic(
+                    state, publisher, started, short_circuit_early=True
+                )
+
+            # --- L1 / L2 / L3 in parallel over ONE resolution pass -----------------
             resolver = self._build_resolver(extraction)
             resolution_task = asyncio.create_task(
                 self._resolve_all(resolver, extraction), name=f"{rid}:resolve"
@@ -245,8 +261,8 @@ class Orchestrator:
 
             async def with_resolutions(layer: LayerProtocol) -> LayerResult:
                 resolutions = await resolution_task
-                # Documents ride alongside the resolutions: L1 needs the text for quote
-                # and party verification, L3 for grounding, and neither may reach into a
+                # Documents ride alongside the resolutions: L1 needs the text for
+                # party verification, L2 for grounding, and neither may reach into a
                 # repo -- layers stay pure with respect to LayerInput.
                 return await self._safe_run(
                     layer,
@@ -258,36 +274,25 @@ class Orchestrator:
                     ),
                 )
 
-            l1 = self._layer(Layer.L1_EXISTENCE)
-            l3 = self._layer(Layer.L3_GROUNDING)
-            l4 = self._layer(Layer.L4_RESPONSIVENESS)
+            l2 = self._layer(Layer.L2_ALIGNMENT)
+            l3 = self._layer(Layer.L3_RESPONSIVENESS)
 
             parallel = await asyncio.gather(
                 with_resolutions(l1),
-                with_resolutions(l3),
-                # L4 depends on nothing but the output itself, so it starts at t=0 and
+                with_resolutions(l2),
+                # L3 depends on nothing but the output itself, so it starts at t=0 and
                 # usually lands first.
-                self._safe_run(l4, base_input),
+                self._safe_run(l3, base_input),
             )
             resolutions = await resolution_task
             state.resolutions.update(resolutions)
             state.cache = _cache_stats(parallel)
 
-            # Publish in completion-friendly order: L4, L1, L3 (see EventName's docs).
+            # Publish in completion-friendly order: L3, L1, L2 (see EventName's docs).
             for result in (parallel[2], parallel[0], parallel[1]):
                 state.layers[result.layer] = result
                 state.findings.extend(result.findings)
                 await self._publish_layer(state, publisher, result)
-
-            # --- L2b: the domains L1 resolved -------------------------------------
-            documents = self._documents_for(resolutions)
-            l2b = await self._safe_run(
-                self._layer(Layer.L2_SOURCE_TRUST),
-                base_input.model_copy(update={"resolutions": resolutions, "documents": documents}),
-            )
-            state.layers[Layer.L2_SOURCE_TRUST] = l2b
-            state.findings.extend(l2b.findings)
-            await self._publish_layer(state, publisher, l2b)
 
             return await self._settle_deterministic(state, publisher, started)
         except Exception as exc:  # noqa: BLE001 - a crash must still produce a run
@@ -315,7 +320,7 @@ class Orchestrator:
         publisher: EventPublisher | None = None,
         options: RunOptions | None = None,
     ) -> RunState:
-        """L5 (or the skip), then the final verdict. Safe to call on a restored run."""
+        """L4 (or the skip), then the final verdict. Safe to call on a restored run."""
         publisher = (
             publisher
             or self._publishers.get(state.run_id)
@@ -340,7 +345,7 @@ class Orchestrator:
             )
             judge_result = await self._safe_run(judge_layer, layer_input)
             state.timings.judge_ms = int((time.perf_counter() - judge_started) * 1000)
-            state.layers[Layer.L5_JUDGE] = judge_result
+            state.layers[Layer.L4_JUDGE] = judge_result
             state.cost_usd += float(judge_result.detail.get("cost_usd", 0.0) or 0.0)
             await self._publish_layer(state, publisher, judge_result)
         else:
@@ -442,82 +447,6 @@ class Orchestrator:
         if not isinstance(result, ExtractionResult):
             return ExtractionResult(), "L0 extraction returned an unexpected type"
         return result, None
-
-    async def _l2a(self, run_id: str, extraction: ExtractionResult) -> LayerResult | None:
-        """Check explicitly-written domains against the trust lists BEFORE any fetch.
-
-        This is the cheapest failure the system can produce: a blacklisted source is
-        decided from text alone -- no HTTP request to a court website, no worker hop, no
-        model tokens. Only domains the output wrote out itself can be checked here; a
-        bare citation has no domain until L1 resolves it, which is what L2b is for.
-        """
-        domains = tuple(dict.fromkeys(d for d in extraction.explicit_domains if d))
-        if not domains:
-            return None
-        repo = await self._get_list_repo()
-        if repo is None:
-            return None
-
-        findings: list[Finding] = []
-        checked: dict[str, str] = {}
-        for index, domain in enumerate(domains):
-            try:
-                match = await repo.match(domain)
-            except Exception as exc:  # noqa: BLE001 - a list outage is not a verdict
-                log.warning("l2a_lookup_failed", domain=domain, error=str(exc))
-                continue
-            if match is None:
-                checked[domain] = "unknown"
-                findings.append(
-                    _finding(
-                        run_id,
-                        Layer.L2_SOURCE_TRUST,
-                        FindingCode.SOURCE_UNKNOWN,
-                        Severity.INFO,
-                        f"{domain} is not on any trust list.",
-                        index,
-                        domain=domain,
-                    )
-                )
-                continue
-            list_type, reason = match
-            checked[domain] = list_type.value
-            if list_type is ListType.BLACK:
-                findings.append(
-                    _finding(
-                        run_id,
-                        Layer.L2_SOURCE_TRUST,
-                        FindingCode.SOURCE_BLACKLISTED,
-                        Severity.FAIL,
-                        f"{domain} is blacklisted: {reason}".strip().rstrip(":"),
-                        index,
-                        domain=domain,
-                        reason=reason,
-                    )
-                )
-            elif list_type is ListType.GRAY:
-                findings.append(
-                    _finding(
-                        run_id,
-                        Layer.L2_SOURCE_TRUST,
-                        FindingCode.SOURCE_GRAYLISTED,
-                        Severity.WARN,
-                        f"{domain} is graylisted: {reason}".strip().rstrip(":"),
-                        index,
-                        domain=domain,
-                        reason=reason,
-                    )
-                )
-
-        tupled = tuple(findings)
-        from verifier.layers.base import status_from_findings
-
-        return LayerResult(
-            layer=Layer.L2_SOURCE_TRUST,
-            status=status_from_findings(tupled),
-            findings=tupled,
-            detail={"stage": "L2a", "domains": checked},
-        )
 
     def _build_resolver(self, extraction: ExtractionResult) -> SingleFlightResolver[Resolution]:
         """One resolver per run, shared by everything that needs a document.
@@ -629,7 +558,7 @@ class Orchestrator:
             return None
 
     def _build_judge(self, state: RunState, det_findings: Sequence[Finding]) -> LayerProtocol:
-        from verifier.layers.l5_judge import (
+        from verifier.layers.l4_judge import (
             FaithfulnessJudgeLayer,
             JudgeContext,
             passages_from_layer_results,
@@ -640,7 +569,7 @@ class Orchestrator:
         # Give the judge the passages L3 actually retrieved, not whole judgments: it
         # keeps the faithfulness call checkable by a human reading the panel and the
         # request small enough to be worth caching.
-        evidence_layers = (Layer.L3_GROUNDING, Layer.L1_EXISTENCE)
+        evidence_layers = (Layer.L2_ALIGNMENT, Layer.L1_CITATION_INTEGRITY)
         grounding = [r for layer, r in state.layers.items() if layer in evidence_layers]
         context = JudgeContext(
             citations=tuple(
@@ -700,6 +629,49 @@ class Orchestrator:
                 ),
                 detail={"error": str(exc)},
             )
+
+    async def _l1_layer(self) -> LayerProtocol:
+        """L1, built with the injected trust lists.
+
+        Sub-check 1c reads the black/gray/white lists. ``registry.build_layer`` takes no
+        arguments by design, so building L1 here is what lets an INJECTED repo reach 1c.
+
+        Only a repo passed to this class's constructor is forwarded. A lazily-resolved
+        ``get_repos().lists`` deliberately is not: outside Postgres that is a bare
+        ``InMemoryListRepo`` with nothing in it, and handing the layer an empty repo
+        would defeat its seed-list fallback and silently turn every domain into
+        SOURCE_UNKNOWN. Passing None means "use the curated seeds", which is what keeps
+        the layer working offline with no database.
+        """
+        if Layer.L1_CITATION_INTEGRITY in self._layers:
+            return self._layers[Layer.L1_CITATION_INTEGRITY]
+        try:
+            from verifier.layers.l1_citation_integrity import CitationIntegrityLayer
+
+            built: LayerProtocol = CitationIntegrityLayer(self._list_repo)
+        except Exception as exc:  # noqa: BLE001 - stream not landed yet, or misbuilt
+            log.warning(
+                "layer_unavailable", layer=Layer.L1_CITATION_INTEGRITY.value, error=str(exc)
+            )
+            built = _MissingLayer(Layer.L1_CITATION_INTEGRITY, str(exc))  # type: ignore[assignment]
+        self._layers[Layer.L1_CITATION_INTEGRITY] = built
+        return built
+
+    async def _precheck(self, l1: LayerProtocol, data: LayerInput) -> LayerResult | None:
+        """Ask L1 for its pre-fetch sub-check, if it has one.
+
+        Reached through ``getattr`` rather than through the protocol so a stub layer in
+        a test -- which has no sub-checks at all -- degrades to "no precheck" instead of
+        raising, the same way ``_MissingLayer`` degrades.
+        """
+        precheck = getattr(l1, "precheck_explicit_domains", None)
+        if precheck is None:
+            return None
+        try:
+            return await precheck(data)
+        except Exception as exc:  # noqa: BLE001 - a list outage is never a verdict
+            log.warning("precheck_failed", error=str(exc))
+            return None
 
     async def _get_list_repo(self) -> ListLookup | None:
         if self._list_repo is not None:
@@ -781,26 +753,6 @@ async def run_verification(
 
 
 # --- helpers ----------------------------------------------------------------------
-
-
-def _finding(
-    run_id: str,
-    layer: Layer,
-    code: FindingCode,
-    severity: Severity,
-    message: str,
-    ordinal: int,
-    **extra: Any,
-) -> Finding:
-    return Finding(
-        id=f"{run_id}:{layer.value}:{code.value}:{ordinal}",
-        layer=layer,
-        code=code,
-        severity=severity,
-        message=message,
-        source=FindingSource.DETERMINISTIC,
-        evidence=Evidence(extra=extra),
-    )
 
 
 def _cache_stats(results: Sequence[LayerResult]) -> CacheStats:

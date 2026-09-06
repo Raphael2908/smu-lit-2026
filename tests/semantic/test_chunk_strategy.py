@@ -6,7 +6,7 @@ then used as a TARGET, which is a different question: how large a unit should a
 one-sentence claim be compared against? Measured on Spandeck, grouping produced 43
 chunks of ~6 paragraphs (median 2,042 chars) while the median paragraph is 338.
 
-Paragraph granularity is kept for the PASSAGE L5 reasons over, not for scores: on the
+Paragraph granularity is kept for the PASSAGE L4 reasons over, not for scores: on the
 fixed calibration set it raises genuine and foreign claims alike and leaves the gap
 unchanged (+0.386 grouped, +0.380 paragraph). What it changes is that the unit for [83]
 is [83-83] rather than [83-86], provenance is exact, and the quoted paragraph ranks #1.
@@ -43,7 +43,7 @@ def test_paragraph_mode_isolates_each_numbered_paragraph(spandeck):
     """The point of the mode: one judgment paragraph, one retrieval unit.
 
     It also makes provenance exact -- ``paragraph_from == paragraph_to`` -- so a
-    passage handed to L5 is labelled with the paragraph it actually came from.
+    passage handed to L4 is labelled with the paragraph it actually came from.
     """
     chunks = chunk_source_document(spandeck, strategy="paragraph")
     numbered = [c for c in chunks if c.paragraph_from is not None]

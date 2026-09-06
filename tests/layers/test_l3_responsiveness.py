@@ -4,7 +4,7 @@ L4 asks a retrieval question -- "does this output answer THIS question?" -- and 
 about whether the answer is correct. It runs at t=0 with no dependency on L1.
 
 A note on the numbers. The offline embedder is a hashed bag of words with no synonymy,
-so it under-scores a genuine paraphrase; the shipped ``L4_PASS_AT`` is a reasoned seed
+so it under-scores a genuine paraphrase; the shipped ``L3_PASS_AT`` is a reasoned seed
 keyed to ``voyage-law-2`` and no cosine threshold transfers between models
 (arXiv:2504.16318). Tests that need a specific band therefore inject thresholds
 calibrated for THIS embedder, and the tests that use the shipped defaults assert only
@@ -18,7 +18,7 @@ import pytest
 
 from tests.semantic.fixtures import layer_input, not_found, spandeck_cluster
 from verifier.contracts.enums import FindingCode, LayerStatus, Severity
-from verifier.layers.l4_responsiveness import ResponsivenessLayer
+from verifier.layers.l3_responsiveness import ResponsivenessLayer
 from verifier.providers.mock.embeddings import MockEmbedder
 
 QUESTION = "What is the test for the imposition of a duty of care in negligence in Singapore?"
@@ -221,9 +221,9 @@ async def test_the_registry_can_build_and_run_l4_with_no_injection():
 
     reset_default_repos()
     try:
-        layer = build_from_registry(Layer.L4_RESPONSIVENESS)
+        layer = build_from_registry(Layer.L3_RESPONSIVENESS)
         result = await layer.run(layer_input(question=QUESTION, ai_output=ON_POINT))
-        assert result.layer is Layer.L4_RESPONSIVENESS
+        assert result.layer is Layer.L3_RESPONSIVENESS
         assert result.status is not LayerStatus.ERROR
         assert result.score is not None
     finally:

@@ -97,7 +97,7 @@ class RawChunk:
     heading_path: tuple[str, ...] = ()
     paragraph_from: int | None = None
     paragraph_to: int | None = None
-    #: Offsets into the AI output. Present for output chunks (L3 uses them to decide
+    #: Offsets into the AI output. Present for output chunks (L2 uses them to decide
     #: which claims a citation is responsible for), absent for source chunks.
     span: Span | None = None
     #: Provenance of the split, surfaced in ``LayerResult.detail`` so a reviewer can see
@@ -381,7 +381,7 @@ def locate_claim(
     ``split_claims`` returns atomic claims that are usually, but not always, verbatim
     slices -- a model will happily resolve a pronoun or drop a parenthetical. An exact
     ``find`` therefore misses claims that are genuinely present, so we fall back to
-    fuzzy alignment. Returning ``None`` is a real answer: L3 attributes claims to
+    fuzzy alignment. Returning ``None`` is a real answer: L2 attributes claims to
     citations by position, and a claim we cannot locate must not be attributed to a
     citation by guesswork.
     """
@@ -500,7 +500,7 @@ async def chunk_output_claims(
     Primary path is ``Summariser.split_claims``; the deterministic sentence windows are
     the fallback for a missing summariser, an empty or unparseable response, or any
     provider error. The fallback is not a degraded mode we tolerate -- it is what keeps
-    L3 and L4 running at full speed when the LLM tier is slow, down, or absent.
+    L2 and L3 running at full speed when the LLM tier is slow, down, or absent.
     """
     if not text.strip():
         return []
@@ -529,5 +529,5 @@ async def chunk_output_claims(
                     strategy="claims",
                 )
             )
-    chunks = expand_fragments(text, chunks, min_chars=settings.L3_CLAIM_MIN_CHARS)
+    chunks = expand_fragments(text, chunks, min_chars=settings.L2_CLAIM_MIN_CHARS)
     return chunks or window_claims(text, target_tokens=target_tokens)

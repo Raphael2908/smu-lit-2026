@@ -1,6 +1,6 @@
-"""L3 -- source grounding.
+"""L2 -- source grounding.
 
-L3 ASKS A RETRIEVAL QUESTION, NOT A TRUTH QUESTION. It asks "does this output actually
+L2 ASKS A RETRIEVAL QUESTION, NOT A TRUTH QUESTION. It asks "does this output actually
 use the source it cites?", which is ranking, and ranking is the one thing cosine is
 proven to do (arXiv:2601.16907: anisotropy compresses absolute scores but leaves rank
 correlation with human judgment intact).
@@ -12,9 +12,9 @@ modes): cos(claim, passage) == cos(passage, claim), while "the passage entails t
 claim" and "the claim entails the passage" are entirely different statements. Any code
 here that starts scoring entailment is measuring something the metric cannot express.
 
-Whether the output is TRUE to the source is L5's job, and only L5's. Embedding methods
+Whether the output is TRUE to the source is L4's job, and only L4's. Embedding methods
 score 100% FPR on real hallucinations from RLHF-aligned models (arXiv:2512.15068),
-which are "semantically indistinguishable from faithful responses" -- so an L3 that
+which are "semantically indistinguishable from faithful responses" -- so an L2 that
 tried to judge truth would flag every faithful answer or none of the bad ones.
 
 WHY A MARGIN AND NOT AN ABSOLUTE SCORE
@@ -86,7 +86,7 @@ class SourceGroundingLayer(BaseLayer):
     changes nothing except that summaries are regenerated each run.
     """
 
-    layer = Layer.L3_GROUNDING
+    layer = Layer.L2_ALIGNMENT
 
     def __init__(
         self,
@@ -108,31 +108,31 @@ class SourceGroundingLayer(BaseLayer):
         self._doc_repo = resolve(doc_repo, default_document_repo)
         self._embedding_repo = resolve(embedding_repo, default_embedding_repo)
         self.margin_fail_at_or_below = (
-            settings.L3_MARGIN_FAIL_AT_OR_BELOW
+            settings.L2_MARGIN_FAIL_AT_OR_BELOW
             if margin_fail_at_or_below is None
             else margin_fail_at_or_below
         )
         self.margin_pass_above = (
-            settings.L3_MARGIN_PASS_ABOVE if margin_pass_above is None else margin_pass_above
+            settings.L2_MARGIN_PASS_ABOVE if margin_pass_above is None else margin_pass_above
         )
         self.absolute_floor = (
-            settings.L3_ABSOLUTE_FLOOR if absolute_floor is None else absolute_floor
+            settings.L2_ABSOLUTE_FLOOR if absolute_floor is None else absolute_floor
         )
         self.background_size = (
-            settings.L3_BACKGROUND_SIZE if background_size is None else background_size
+            settings.L2_BACKGROUND_SIZE if background_size is None else background_size
         )
         #: How the source is cut into retrieval units. Injectable for the same reason
         #: as contextual_prefix: it changes the score, so it has to be measurable
         #: without editing source. See settings.CHUNK_STRATEGY.
         self.chunk_strategy = settings.CHUNK_STRATEGY if chunk_strategy is None else chunk_strategy
         # Retrieval breadth, NOT a threshold. It widens what the judge may read and
-        # changes no verdict this layer reaches -- see settings.L3_PASSAGES_PER_CLAIM.
+        # changes no verdict this layer reaches -- see settings.L2_PASSAGES_PER_CLAIM.
         self.passages_per_claim = (
-            settings.L3_PASSAGES_PER_CLAIM if passages_per_claim is None else passages_per_claim
+            settings.L2_PASSAGES_PER_CLAIM if passages_per_claim is None else passages_per_claim
         )
-        # WHICH TEXT IS EMBEDDED, not a threshold. See settings.L3_CONTEXTUAL_PREFIX.
+        # WHICH TEXT IS EMBEDDED, not a threshold. See settings.L2_CONTEXTUAL_PREFIX.
         self.contextual_prefix = (
-            settings.L3_CONTEXTUAL_PREFIX if contextual_prefix is None else contextual_prefix
+            settings.L2_CONTEXTUAL_PREFIX if contextual_prefix is None else contextual_prefix
         )
 
     async def _run(self, data: LayerInput) -> LayerResult:
@@ -250,7 +250,7 @@ class SourceGroundingLayer(BaseLayer):
                 claim = raw_claims[index]
                 vector = claim_vectors[index]
                 # Top-k, but the SCORE is still the maximum. Retrieving more passages
-                # widens what L5 may read; it must not widen what L3 scores, because
+                # widens what L4 may read; it must not widen what L2 scores, because
                 # every threshold in docs/03-findings.md Part 4 was calibrated against
                 # max cos(claim, chunks) and a mean or an n-th best would invalidate
                 # all of them.
@@ -267,7 +267,7 @@ class SourceGroundingLayer(BaseLayer):
                 # only on FAIL and WARN, so without this a PASSING claim's score is
                 # invisible -- which makes a regime or threshold change unmeasurable
                 # from outside the layer, and leaves the panel unable to show why a
-                # green L3 is green. ``ranked_chunks`` is what reveals a decisive
+                # green L2 is green. ``ranked_chunks`` is what reveals a decisive
                 # paragraph sitting just below the retrieval cut-off.
                 claim_scores.append(
                     {
@@ -305,9 +305,9 @@ class SourceGroundingLayer(BaseLayer):
                 if finding is not None:
                     findings.append(finding)
 
-                # Record what we matched regardless of the verdict. L5 judges
+                # Record what we matched regardless of the verdict. L4 judges
                 # faithfulness against these passages, and evidence attached only to
-                # findings means a fully PASSING L3 hands the judge nothing -- which
+                # findings means a fully PASSING L2 hands the judge nothing -- which
                 # is precisely when the judge runs. It then scores the answer while
                 # stating it has no text to check against, which is worse than not
                 # running it at all.
@@ -351,8 +351,8 @@ class SourceGroundingLayer(BaseLayer):
             "claim_strategy": raw_claims[0].strategy,
             "assessed_clusters": assessed_clusters,
             # Retrieval coverage, so a thin evidence set is VISIBLE in the panel
-            # instead of silently producing a confident verdict. L5 is only as good as
-            # what L3 hands it, and that bound should be reported rather than
+            # instead of silently producing a confident verdict. L4 is only as good as
+            # what L2 hands it, and that bound should be reported rather than
             # discovered by reading the judge's reasons.
             "retrieval": {
                 "claims_total": len(raw_claims),
@@ -361,7 +361,7 @@ class SourceGroundingLayer(BaseLayer):
                 "passages_per_claim": self.passages_per_claim,
                 # Which text was embedded. Reported because it changes what every
                 # score in this result MEANS, and because two runs under different
-                # regimes are not comparable -- see settings.L3_CONTEXTUAL_PREFIX.
+                # regimes are not comparable -- see settings.L2_CONTEXTUAL_PREFIX.
                 "contextual_prefix": self.contextual_prefix,
                 "passages_generated": generated,
                 "passages_kept": len(kept),
@@ -372,7 +372,7 @@ class SourceGroundingLayer(BaseLayer):
         if not background_seen:
             # Cold cache: no other judgment has ever been embedded, so there is nothing
             # to contrast against. Fall back to the absolute floor alone and SAY SO, so
-            # nobody reads a green L3 on a cold cache as a margin having been cleared.
+            # nobody reads a green L2 on a cold cache as a margin having been cleared.
             detail["background_empty"] = True
             detail["margin_skipped"] = True
             detail["note"] = (
@@ -491,7 +491,7 @@ class SourceGroundingLayer(BaseLayer):
         self, embedder: CachedEmbedder, document: SourceDocument, doc_key: str
     ) -> tuple[list[Chunk], object]:
         # The summariser is called ONLY when the regime actually embeds its output.
-        # Under the default that is never, which takes a Haiku call off L3's critical
+        # Under the default that is never, which takes a Haiku call off L2's critical
         # path as well as taking the summary out of the vector.
         summary = None
         if self.contextual_prefix == "summary_heading":
@@ -662,7 +662,7 @@ def _source_for(
     """Find the resolution and fetched document for a cluster.
 
     Both come off ``LayerInput`` -- the resolver fetched once and handed the text to
-    every layer that needs it, so L3 never reaches into a repo and never waits on L1's
+    every layer that needs it, so L2 never reaches into a repo and never waits on L1's
     verdict. A key absent from ``documents`` is the normal signal that the citation did
     not resolve; there is no placeholder to distinguish.
 

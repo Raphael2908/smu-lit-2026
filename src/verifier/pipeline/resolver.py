@@ -77,7 +77,7 @@ class SingleFlightResolver[T]:
 
     @property
     def resolved(self) -> dict[str, T]:
-        """Everything resolved so far. L2b reads this to learn the domains L1 found."""
+        """Everything resolved so far. L1's 1c reads this to learn the domains 1b found."""
         return dict(self._done)
 
     def peek(self, citation_key: str) -> T | None:

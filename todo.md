@@ -7,6 +7,33 @@ context, not as outstanding work.
 
 ## Bugs to fix
 
+### 0. Nothing verifies a quotation any more
+
+**Severity: medium — a deliberate gap, recorded so it is a decision and not an
+oversight.**
+
+The check that compared quoted text against the fetched judgment was removed when the
+layers were renumbered. It was right to remove: it turned on a fuzzy 75/90
+`partial_ratio` band, and an honest paraphrase and an invented sentence land **3.6 points
+apart** under it — noise, with the band sitting 25 points above both. A check that cannot
+separate its two most important inputs was deciding FAIL, and under fail-fast a false red
+is unrecoverable.
+
+What that leaves: an answer can attribute a fabricated quotation to a real, resolvable,
+whitelisted judgment and nothing in the system will say so. L1b confirms the case exists;
+L2 scores whether the answer's claims are grounded in it, which a well-chosen fake
+quotation can pass.
+
+The judge is now the only component positioned to catch it, and it is **not currently
+asked to**. `layers/prompts/judge.md` had its false claim removed ("any quoted text has
+been confirmed to appear in the judgment" — it no longer is), but the prompt body has not
+been given a replacement instruction, because that body is user-authored. The decision to
+make: add a line asking the judge to weigh whether quoted text matches the retrieved
+passages, or accept the gap explicitly.
+
+Files: `src/verifier/layers/prompts/judge.md` (body). Evidence: `docs/03-findings.md`
+Part 3, `docs/v1-plan.md` F8.
+
 ### 1. ~~The contextual prefix fails correct legal work~~ — FIXED
 
 Diagnosed, measured and fixed. See `docs/03-findings.md` F14.
@@ -42,14 +69,14 @@ Haiku call whose output varies, so a run may or may not contain the claim that t
 > it on the answer hash, is the outstanding work.
 
 **Fixed:** `settings.L3_CONTEXTUAL_PREFIX` (`none` / `heading` / `summary_heading`,
-default `heading`). The summariser is no longer called on the L3 path unless the regime
+default `heading`). The summariser is no longer called on the L2 path unless the regime
 uses it, and the regime namespaces the embedding cache so two regimes cannot mix in the
 background pool — that mixing would have been a false *green*, so nothing would have
 gone red to reveal it.
 
 **`voyage-context-4` is not the alternative.** Now measured: within-document
 compression 0.940, decisive paragraph at rank #12–#38. Contextualisation inside the
-model does the same damage as contextualisation by string concatenation, because L3
+model does the same damage as contextualisation by string concatenation, because L2
 needs to discriminate *within* a document, not between documents. See F15.
 
 **Left open:** the A/B is n=5 claims over one judgment with 22 background chunks from
@@ -59,7 +86,7 @@ harness is not committed yet.
 
 ---
 
-### 2. ~~The judge's verdict tracks whatever passages L3 hands it~~ — FIXED
+### 2. ~~The judge's verdict tracks whatever passages L2 hands it~~ — FIXED
 
 Diagnosed to three concrete causes, none of which was the passage cap this file
 originally proposed widening. See `docs/03-findings.md` F13.
@@ -74,14 +101,14 @@ originally proposed widening. See `docs/03-findings.md` F13.
 - **Provenance was wrong.** A passage was labelled `chunk.paragraph_from`, the first
   paragraph of a merge, so `at [187]` could head text from [188]–[190].
 - **The harvest cap applied to arrival order**, and the orchestrator supplies L1 before
-  L3, so incidental quote evidence could displace what L3 actually ranked.
+  L2, so incidental quote evidence could displace what L2 actually ranked.
 
 Fixed: top-k per claim; an over-long chunk split into its own numbered paragraphs and
 ranked; passages labelled with the range they cover; the budget spent round-robin so
 every attributed claim is represented before any gets depth; the harvest ranked by
 score. Live, the judge's evidence went from 5 passages to **21**.
 
-**The score is untouched** — L3 still scores `max cos(claim, chunks)`, so Part 4's
+**The score is untouched** — L2 still scores `max cos(claim, chunks)`, so Part 4's
 thresholds stand. `test_widening_retrieval_does_not_move_the_score` pins it.
 
 Retrieval coverage now rides in `LayerResult.detail["retrieval"]` (claims attributed vs
@@ -90,14 +117,14 @@ a thin evidence set is visible in the panel rather than inferred from a confiden
 verdict arriving with nothing behind it.
 
 The honest framing for the writeup is unchanged and now demonstrated: the deterministic
-layers are model-independent, but **L5's reliability is bounded by retrieval quality**.
+layers are model-independent, but **L4's reliability is bounded by retrieval quality**.
 
 ---
 
 ### 3. ~~The Chrome extension does not inject~~ — FIXED, confirmed loaded
 
 Verified live on `https://claude.ai`: the panel mounts, captures the prompt and
-response, calls the API, polls, and renders all five layers with per-layer status,
+response, calls the API, polls, and renders all four layers with per-layer status,
 score and timing, deterministic findings with source links, the citations list and the
 judge section. It verified a real Claude answer end to end against the Docker stack
 (29.8 s, cache 43/44, $0.0435).
@@ -114,18 +141,18 @@ looks exactly like a CSS change that did not work.
 
 ---
 
-### 4. L3 verdicts are not reproducible, because the claim splitter is not
+### 4. L2 verdicts are not reproducible, because the claim splitter is not
 
 **Severity: high — the same answer verified twice gives different verdicts.**
 
 `chunk_output_claims` calls `Summariser.split_claims`, a Haiku call with no seed and no
 cache. The same 2,184-char answer split into 14, 15 and 16 claims across four runs in
-one session. L3's status is driven by the **worst** attributed claim, so one extra
+one session. L2's status is driven by the **worst** attributed claim, so one extra
 claim flips the layer and with it the run.
 
 Measured on one real claude.ai answer verified twice, nothing else changed:
 
-| Run | claims | attributed | L3 | verdict |
+| Run | claims | attributed | L2 | verdict |
 |---|---|---|---|---|
 | First | 14 | 3 | **pass** 0.545 | warn |
 | Replay | 15 | 4 | **fail** 0.279 | fail |
@@ -286,7 +313,7 @@ rename it so it is opt-in (`-f`), or have `MockFetcher` return `UNRESOLVABLE` ra
 a soft-404 for anything outside the corpus — a stub that does not hold a document has not
 established that the document does not exist.
 
-### 9. The L3 floor may be wrong for negative and meta claims
+### 9. The L2 floor may be wrong for negative and meta claims
 
 **Severity: medium — one confirmed instance, not yet a pattern.**
 
@@ -295,10 +322,10 @@ All three prefix arms fail this claim from a real Claude answer:
 > *"The court expressly declined to treat pure economic loss as attracting a separate or
 > more restrictive control device ..."*
 
-Spandeck [115] says close to the opposite, so it may be a true positive. But L3 asks a
+Spandeck [115] says close to the opposite, so it may be a true positive. But L2 asks a
 **retrieval** question, and a claim about what a court *declined* to do is a negative
 proposition that matches no single paragraph well even when accurate — the asymmetry
-arXiv:2504.16318 names, and the reason faithfulness belongs to L5. Here L3 short-
+arXiv:2504.16318 names, and the reason faithfulness belongs to L4. Here L2 short-
 circuited the judge, so the layer that could actually rule on it never ran.
 
 The floor is calibrated on `n=5` positive assertions. Whether it is the right instrument
@@ -372,7 +399,7 @@ Files: `docker/Dockerfile`.
 independently of `PROVIDER_MODE`. The fetcher cannot: `get_http_fetcher()` keys on
 `settings.is_mock`, which is the global switch. So "real models, local corpus" — the exact configuration
 used for every calibration run in `docs/03-findings.md` Parts 4 and 5, and the only way
-to exercise L3/L5 while eLitigation is down — requires flipping the global to `mock`
+to exercise L2/L4 while eLitigation is down — requires flipping the global to `mock`
 and setting the other three back to `real`.
 
 Files: `src/verifier/providers/factory.py`, `src/verifier/settings.py`.
@@ -471,24 +498,26 @@ browsers is a preference to respect, and the HTTP path needs no workaround anywa
 
 ---
 
-### 17. SSO does not serve an Act's text, so no statute can be quote-checked
+### 17. SSO does not serve an Act's text, so no statute can be grounded
 
-**Severity: high — it is the ceiling on what L1c and L3 can ever say about legislation.**
+**Severity: medium — it is the ceiling on what L2 can say about legislation. The half of
+this that could produce a FALSE RED is closed.**
 
 `Act/IA1959` is 346kB containing a 106-entry table of contents and **four** provisions —
 1,968 characters of statutory text. The body is fetched by the page's own JavaScript (a
 Knockout app; the control is `data-bind="click: OnGetProvisions"`), and `?WholeDoc=1`,
 which the site's own "Whole Document" button navigates to, returns the identical four.
 
-The consequence if this were ignored is the worst failure this system has: a document
+~~The consequence if this were ignored is the worst failure this system has: a document
 built from that HTML holds sections 1–4, so quote-checking section 57 would score near
 zero and emit `QUOTE_NOT_FOUND`, which is a FAIL — **a real statute, correctly quoted,
-reported as fabricated.**
+reported as fabricated.**~~ **UNREACHABLE.** Quote verification was removed with the
+fuzzy matcher, so there is no longer a check that can fail a correctly quoted statute
+against a truncated document. Nothing verifies quotations at all now.
 
-What prevents it today is that `SsoAdapter.document_for` returns `None`, so L1c's
-"no document" branch stays silent and L3 returns NOT_APPLICABLE. That is the conservative
-direction and it holds, but it is a floor, not a fix: an SSO citation can be confirmed to
-EXIST and can never be checked for what it SAYS.
+What remains is the softer half. `SsoAdapter.document_for` returns `None`, so L2 returns
+NOT_APPLICABLE: an SSO citation can be confirmed to EXIST and can never be scored for
+whether the answer's claims are grounded in it.
 
 Two ways out, neither in scope yet: a browser that runs the page's JS (SSO answers
 headless Chromium with 403, so this needs a headed or stealth browser — the first is
@@ -511,8 +540,8 @@ verified byte-identical to `HEAD` before the run, and the database was empty at 
 and `fetch_strategy = http` (F23). Three of them are the same `[2013] SGCA 29`,
 `[2021] SGCA 28` and `[2020] SGHC 32` that bug 8 saw reported as *fabricated* under the
 mock override — against the live source they resolve, with documents, which closes bug
-8's diagnosis. A correct Singapore answer verifies **pass** end to end, L1 1.0 / L3 0.537
-/ L5 1.0, for `$0.0338` (F24). L3's top passage is Spandeck [72] with a paragraph range
+8's diagnosis. A correct Singapore answer verifies **pass** end to end, L1 1.0 / L2 0.537
+/ L4 1.0, for `$0.0338` (F24). L2's top passage is Spandeck [72] with a paragraph range
 and a live URL, so F13's fix works on real data.
 
 **It did not work through the deployed worker, and now does.** The run took 53.4 s
@@ -533,7 +562,7 @@ where the direct URL had worked moments earlier, which is that bug's fingerprint
 
 **Fixed in `2607f5a`, verified live: `docs/03-findings.md` F30.** `text_embeddings` went
 0 -> 170 rows, a second run hit `170/1` where every run before it reported `0/171`, and
-the deterministic phase dropped **46.0 s -> 11.5 s**. The L3 score is unchanged to three
+the deterministic phase dropped **46.0 s -> 11.5 s**. The L2 score is unchanged to three
 decimals (0.548 cold and warm), which is the property that matters: a cache that moved
 the score would be a bug wearing a speedup's clothes.
 
@@ -552,7 +581,7 @@ an `InMemoryEmbeddingRepo`. `embedding_repo` is never passed anywhere in the tre
 
 So every run re-embeds the whole judgment (~40 s), which is precisely what pushes a
 53.4 s run past a 45 s budget: **the cache that would fix the timeout is the broken
-thing.** It also means L3's contrastive background pool is whatever one process has
+thing.** It also means L2's contrastive background pool is whatever one process has
 seen rather than the corpus, so Part 4's margin is calibrated against a pool that does
 not survive a restart.
 
@@ -658,8 +687,8 @@ setting in two files, and changing either alone just relocates the failure.
 file shows.**
 
 `saveConfig` is only ever called with `{panelView}` or `{panelTheme}`, but it stored
-`{...SALV.config}` — the **entire** object — and `loadConfig` did
-`Object.assign(SALV.config, stored.config)`, applying that blob over the defaults.
+`{...SIGMA.config}` — the **entire** object — and `loadConfig` did
+`Object.assign(SIGMA.config, stored.config)`, applying that blob over the defaults.
 
 So the first time anyone clicked the full-screen or theme toggle, the extension wrote a
 complete snapshot of that session's config into `chrome.storage.sync`, `pollTimeoutMs:
@@ -725,19 +754,19 @@ in the system -- it just can no longer be reached from the sidebar.
 
 ---
 
-### 22. A truncated embeddings response takes L3 down with no retry
+### 22. A truncated embeddings response takes L2 down with no retry
 
 **Severity: medium — safe direction, but the layer is lost and the run still pays.**
 
 ```
-L3 could not complete: Response payload is not completed:
+L2 could not complete: Response payload is not completed:
 <ContentLengthError: 400, 'Not enough data to satisfy content length header
 (received 27699 of 707298 bytes)'>
 ```
 
 A Voyage response was cut off at 4% of its declared length. One truncated batch errors
 the whole layer, because nothing retries. The verdict degraded to `warn` with a
-`LAYER_ERROR` finding rather than failing anything — the F12 rule holding — but L3
+`LAYER_ERROR` finding rather than failing anything — the F12 rule holding — but L2
 contributed nothing and the run still bought a judge call.
 
 **Fix:** retry a truncated/short read, the same way any transport error should be
@@ -761,7 +790,7 @@ Files: `src/verifier/repos/resolutions.py`, `src/verifier/pipeline/resolver.py`.
 
 ---
 
-### 24. Embeddings never carry a `document_id`, so L3's background pool is always empty
+### 24. Embeddings never carry a `document_id`, so L2's background pool is always empty
 
 **Severity: high — the contrastive margin has never run in production.**
 
@@ -772,12 +801,12 @@ Newly visible now that the cache is durable (F33). All 170 cached vectors have
 embeddings with doc: 0 of 170
 ```
 
-`_document_key` (`layers/l3_alignment.py:645-656`) falls back to the document's **content
+`_document_key` (`layers/l2_alignment.py:645-656`) falls back to the document's **content
 hash** when `SourceDocument.id` is unset, which it is for a freshly-fetched document.
 `PgEmbeddingRepo.put_many` then does `uuid.UUID(document_id)`, gets `ValueError`, and
 stores `NULL`. `sample_background` filters `document_id IS NOT NULL` and matches nothing.
 
-L3 handles it correctly and reports it — `background_empty: true`, `margin_skipped: true`,
+L2 handles it correctly and reports it — `background_empty: true`, `margin_skipped: true`,
 with a note saying only the absolute floor was applied — so this is safe degradation, not
 a silent failure.
 
@@ -786,18 +815,18 @@ seen the document under test, so the pool was empty then too. What changed is th
 now *permanently* empty rather than incidentally so: 170 durable vectors sit in the table
 and none can be sampled.
 
-The consequence is worth stating plainly: **every live L3 verdict to date rests on the
+The consequence is worth stating plainly: **every live L2 verdict to date rests on the
 absolute floor alone.** Scores are unaffected (they are `max cos(claim, cited)`, which
 does not involve the margin), but the margin half of Part 4's calibration has never been
 exercised outside the offline set.
 
 **Fix:** carry the persisted row id onto the `SourceDocument` before chunking — the
 orchestrator already learns it at `orchestrator.py:610` (`stored.id`) and writes it back
-onto the resolution, so the id exists and simply never reaches L3. Failing that,
+onto the resolution, so the id exists and simply never reaches L2. Failing that,
 `PgEmbeddingRepo` could store a deterministic UUID5 of the content hash rather than
 discarding a non-UUID key. The first is the real fix.
 
-Files: `src/verifier/layers/l3_alignment.py`, `src/verifier/repos/embeddings.py`,
+Files: `src/verifier/layers/l2_alignment.py`, `src/verifier/repos/embeddings.py`,
 `src/verifier/pipeline/orchestrator.py`.
 
 ---
@@ -807,7 +836,7 @@ Files: `src/verifier/layers/l3_alignment.py`, `src/verifier/repos/embeddings.py`
 ### ~~The panel is unreadable in dark mode~~ — FIXED
 
 The dark-mode block overrode surfaces and left the **ink** at its light-mode values.
-`.salv-finding-msg` stayed `#23262e` on a `#1f222a` card — a contrast ratio of
+`.sigma-finding-msg` stayed `#23262e` on a `#1f222a` card — a contrast ratio of
 **1.05:1**, i.e. invisible — while the pills and links were overridden and looked
 correct, so the panel read as working.
 
@@ -828,10 +857,10 @@ is 1.79:1 however correct the hue.
 Type was also raised for the actual readers — lawyers reading dense findings with
 paragraph pinpoints, not developers skimming a debug overlay. Body 13→15 px, finding
 text 12→14 px, evidence 11→13 px, meta 10→12 px, all driven by a single
-`--salv-scale` multiplier so nothing drifts out of proportion.
+`--sigma-scale` multiplier so nothing drifts out of proportion.
 
 **Full-screen reading view** added: `⤢` in the header expands the 380 px rail to a
-centred, max-1100 px sheet and raises the same `--salv-scale` to 1.15. The choice is
+centred, max-1100 px sheet and raises the same `--sigma-scale` to 1.15. The choice is
 remembered in `chrome.storage` — written best-effort and applied only *after* mount,
 because the panel's existence must never depend on a storage round trip (that was the
 orphaned-content-script hang in bug 3).
@@ -861,7 +890,7 @@ orphaned-content-script hang in bug 3).
   `layerRow` fell back to `'skipped'` for any layer without a result — so all five rows
   read `Skipped` while the run was still in flight. `skipped` is a *terminal*
   `LayerStatus` meaning the layer was deliberately not run, which is what fail-fast does
-  to L5; using it for *not started yet* told the reader five layers had looked and
+  to L4; using it for *not started yet* told the reader four layers had looked and
   declined at a moment when none had reported. It is the same objection `statusLabel`
   already makes to softening `not_applicable` into "skipped", in the other direction.
   A pending row now carries the run's elapsed time instead, measured client-side from
@@ -886,12 +915,12 @@ orphaned-content-script hang in bug 3).
   the dedupe early-return, left `active` permanently non-null after `pollRun` exited
   without clearing it.
 - ~~**Long evidence passages are not scrollable.**~~ Fixed in the serif/light restyle:
-  `.salv-evidence` is capped at `calc(var(--salv-scale) * 190px)` with `overflow-y:
+  `.sigma-evidence` is capped at `calc(var(--sigma-scale) * 190px)` with `overflow-y:
   auto`, so a long retrieved passage no longer pushes the layer table below the fold.
 
 ## Calibration debt
 
-- **Widen the L3 calibration set.** `make l3` scores 3 genuine and 4 foreign claims
+- **Widen the L2 calibration set.** `make l3` scores 3 genuine and 4 foreign claims
   against one judgment. Enough to rank configurations — it caught a change that improved
   every score while narrowing the gap (F19) — and nowhere near enough to state a
   threshold. Every genuine claim is from Spandeck; no second judgment, no second area of
@@ -900,7 +929,7 @@ orphaned-content-script hang in bug 3).
   of law. The harder negative is a claim about the *same* area that the cited judgment
   happens not to decide, and nothing here covers that.
 
-- **Widen the threshold samples.** L4 is calibrated on `n=11`, L3 on `n=5`. Enough to
+- **Widen the threshold samples.** L3 is calibrated on `n=11`, L2 on `n=5`. Enough to
   replace a demonstrably wrong threshold with a measured one; not enough to quote a
   confidence interval. See `docs/03-findings.md` Part 4.
 - **L1's quote bands are still uncalibrated under `partial_ratio`** at scale — the
@@ -913,7 +942,7 @@ orphaned-content-script hang in bug 3).
 
 ## Deferred by scope decision
 
-- **Bias evaluation** — the problem statement asks for it. It would attach as an L5
+- **Bias evaluation** — the problem statement asks for it. It would attach as an L4
   rubric dimension plus a deterministic authority-balance signal, and the citation
   graph it needs is already extracted free from `<nobr>` tags into
   `documents.cited_authorities`.
@@ -939,13 +968,13 @@ orphaned-content-script hang in bug 3).
 | `localhost` → `::1` while uvicorn bound `127.0.0.1` | loading the extension |
 | The judge grading with no source passages at all | first real-model run |
 | `response_format` overriding the judge prompt's own output contract | installing the user's prompt |
-| L5 crashing on `None` scores for unpopulated rubric dimensions | installing the user's prompt |
-| L4's 0.50 threshold failing 3 of 5 correct answers | real `voyage-law-2` |
+| L4 crashing on `None` scores for unpopulated rubric dimensions | installing the user's prompt |
+| L3's 0.50 threshold failing 3 of 5 correct answers | real `voyage-law-2` |
 | The claim splitter cutting a sentence into a fragment that says the second stage of nothing — 0.313 against 0.649 for the sentence itself (F18) | restoring foreign claims to the calibration set |
 | Self-contained claims failing to locate, so half of them were never attributed and never scored | measuring the fix for the line above |
 | Two findings both numbered F13 | writing up F18 |
 | The judge given one passage per claim, truncated at a byte offset, labelled with the wrong paragraph | first full e2e |
-| The harvest cap applied to arrival order, so L1 evidence displaced L3's ranking | reading the orchestrator's layer order |
+| The harvest cap applied to arrival order, so L1 evidence displaced L2's ranking | reading the orchestrator's layer order |
 | `background.js` still on `localhost` after the 127.0.0.1 fix — on the sticky proxy path | grepping the extension |
 | `boot()` awaiting a `chrome.storage` read that never settles, before mounting the panel | tracing the injection symptom |
 | Selector tier 1 classifying three action-bar buttons as user messages, and winning the ladder with no assistant in the result | driving the extension on live claude.ai |

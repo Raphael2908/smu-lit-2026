@@ -68,8 +68,8 @@ async def test_since_seq_returns_the_delta_after_a_mutation(client):
         run_id,
         status=RunStatus.RUNNING,
         layers={
-            Layer.L4_RESPONSIVENESS: LayerResult(
-                layer=Layer.L4_RESPONSIVENESS, status=LayerStatus.PASS, score=0.81
+            Layer.L3_RESPONSIVENESS: LayerResult(
+                layer=Layer.L3_RESPONSIVENESS, status=LayerStatus.PASS, score=0.81
             )
         },
     )
@@ -77,7 +77,7 @@ async def test_since_seq_returns_the_delta_after_a_mutation(client):
     body = client.get(f"/v1/runs/{run_id}", params={"since_seq": seq}).json()
     assert body["changed"] is True
     assert body["seq"] > seq
-    assert body["state"]["layers"]["L4"]["status"] == "pass"
+    assert body["state"]["layers"]["L3"]["status"] == "pass"
 
     names = [e["event"] for e in body["events"]]
     assert "extracted" in names
@@ -115,7 +115,7 @@ async def test_short_circuit_emits_judge_skipped_and_final(client):
         findings=[
             Finding(
                 id="L1-0",
-                layer=Layer.L1_EXISTENCE,
+                layer=Layer.L1_CITATION_INTEGRITY,
                 code=FindingCode.CITATION_NOT_FOUND,
                 severity=Severity.FAIL,
                 message="[2019] SGCA 999 does not exist",

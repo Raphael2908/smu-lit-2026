@@ -122,10 +122,10 @@ def stub_pipeline(monkeypatch):
             {
                 layer: StubLayer(layer)
                 for layer in (
-                    Layer.L1_EXISTENCE,
-                    Layer.L2_SOURCE_TRUST,
-                    Layer.L3_GROUNDING,
-                    Layer.L4_RESPONSIVENESS,
+                    Layer.L1_CITATION_INTEGRITY,
+                    Layer.L1_CITATION_INTEGRITY,
+                    Layer.L2_ALIGNMENT,
+                    Layer.L3_RESPONSIVENESS,
                 )
             },
         )
@@ -282,13 +282,12 @@ async def test_a_deterministic_fail_never_dispatches_to_the_judge_queue(stub_pip
 
     def failing_build(**overrides):
         overrides["layers"] = {
-            Layer.L1_EXISTENCE: StubLayer(
-                Layer.L1_EXISTENCE,
+            Layer.L1_CITATION_INTEGRITY: StubLayer(
+                Layer.L1_CITATION_INTEGRITY,
                 findings=(finding(FindingCode.CITATION_NOT_FOUND, Severity.FAIL),),
             ),
-            Layer.L2_SOURCE_TRUST: StubLayer(Layer.L2_SOURCE_TRUST),
-            Layer.L3_GROUNDING: StubLayer(Layer.L3_GROUNDING),
-            Layer.L4_RESPONSIVENESS: StubLayer(Layer.L4_RESPONSIVENESS),
+            Layer.L2_ALIGNMENT: StubLayer(Layer.L2_ALIGNMENT),
+            Layer.L3_RESPONSIVENESS: StubLayer(Layer.L3_RESPONSIVENESS),
         }
         return real_build(**overrides)
 

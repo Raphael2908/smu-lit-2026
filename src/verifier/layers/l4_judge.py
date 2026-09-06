@@ -1,6 +1,6 @@
-"""L5 -- factual faithfulness, judged by a reasoning model.
+"""L4 -- factual faithfulness, judged by a reasoning model.
 
-This layer runs ONLY when L1-L4 all passed. By the time it is consulted the cited
+This layer runs ONLY when L1-L3 all passed. By the time it is consulted the cited
 cases exist, the quotes are genuine, the output draws on the cited sources and it
 addresses the question. What remains is the one question none of those checks can
 answer, and the one embeddings provably cannot: **is the answer true to what the law
@@ -10,7 +10,7 @@ That restriction is not a stylistic choice. docs/03-findings.md Part 2, result 4
 embedding methods reach 95.8% coverage at 0% FPR on *synthetic* hallucinations but
 **100% FPR on real ones** from an RLHF-aligned model -- those are "semantically
 indistinguishable from faithful responses" and "preserve the 'vibe' of the truth while
-altering the facts". Only reasoning judges succeeded. So L5 exists precisely, and only,
+altering the facts". Only reasoning judges succeeded. So L4 exists precisely, and only,
 where a reasoning model is the proven tool.
 
 Two structural rules this layer enforces:
@@ -96,13 +96,13 @@ _RUBRIC_CODES: dict[str, FindingCode] = {
 #:
 #: Both budgets live in settings and are read AT CALL TIME, not bound at import.
 #: They used to be module constants here duplicating a second pair in
-#: l3_alignment.py, and two caps in two files is how evidence gets silently truncated
+#: l2_alignment.py, and two caps in two files is how evidence gets silently truncated
 #: between the layer that retrieves it and the layer that reads it.
 
 
 @dataclass(frozen=True)
 class RetrievedPassage:
-    """One passage L3 actually retrieved, with enough provenance to be checkable."""
+    """One passage L2 actually retrieved, with enough provenance to be checkable."""
 
     text: str
     citation: str | None = None
@@ -129,7 +129,7 @@ class RetrievedPassage:
         if self.source_url:
             head = f"{head} <{self.source_url}>"
         body = self.text.strip()
-        # A backstop, not the mechanism. L3 now splits an over-long chunk into its own
+        # A backstop, not the mechanism. L2 now splits an over-long chunk into its own
         # paragraphs and ranks them, so what the judge loses is chosen by relevance
         # rather than by byte offset; this only catches a passage that arrived from
         # somewhere else already too long.
@@ -141,9 +141,9 @@ class RetrievedPassage:
 
 @dataclass(frozen=True)
 class JudgeContext:
-    """Everything L5 needs that ``LayerInput`` has no field for.
+    """Everything L4 needs that ``LayerInput`` has no field for.
 
-    ``LayerInput`` is a frozen contract with no slot for L3's retrieved passages or for
+    ``LayerInput`` is a frozen contract with no slot for L2's retrieved passages or for
     the deterministic findings, so the orchestrator hands them to the layer at
     construction instead. The layer stays pure with respect to its inputs either way:
     it reads only what it was given, never the DB and never another layer's state.
@@ -217,10 +217,10 @@ def _render_citations(citations: Sequence[str]) -> str:
 
 
 class FaithfulnessJudgeLayer(BaseLayer):
-    """L5. Default-constructible so ``registry.build_layer`` keeps working; the
+    """L4. Default-constructible so ``registry.build_layer`` keeps working; the
     orchestrator supplies a bound ``JudgeContext`` and an explicit provider."""
 
-    layer = Layer.L5_JUDGE
+    layer = Layer.L4_JUDGE
 
     def __init__(
         self,
@@ -273,7 +273,7 @@ class FaithfulnessJudgeLayer(BaseLayer):
                 status=LayerStatus.ERROR,
                 findings=(
                     Finding(
-                        id=f"{data.run_id}:L5:judge_error",
+                        id=f"{data.run_id}:L4:judge_error",
                         layer=self.layer,
                         code=FindingCode.JUDGE_ERROR,
                         severity=Severity.WARN,
@@ -324,7 +324,7 @@ class FaithfulnessJudgeLayer(BaseLayer):
             # judge we could not read is not evidence that the answer is wrong.
             return [
                 Finding(
-                    id=f"{run_id}:L5:unparseable",
+                    id=f"{run_id}:L4:unparseable",
                     layer=self.layer,
                     code=FindingCode.JUDGE_UNPARSEABLE,
                     severity=Severity.WARN,
@@ -357,7 +357,7 @@ class FaithfulnessJudgeLayer(BaseLayer):
                 continue
             findings.append(
                 Finding(
-                    id=f"{run_id}:L5:{dimension}",
+                    id=f"{run_id}:L4:{dimension}",
                     layer=self.layer,
                     code=code,
                     severity=severity,
@@ -381,7 +381,7 @@ class FaithfulnessJudgeLayer(BaseLayer):
             # to a false red.
             findings.append(
                 Finding(
-                    id=f"{run_id}:L5:unlocalised",
+                    id=f"{run_id}:L4:unlocalised",
                     layer=self.layer,
                     code=FindingCode.JUDGE_FAILED_FAITHFULNESS,
                     severity=Severity.WARN,
@@ -495,9 +495,9 @@ class _PassageHarvest:
         """Best-scoring first, then cap.
 
         The cap used to be applied to ARRIVAL order, and the orchestrator hands this
-        function L1's results before L3's (``state.layers`` is populated L4, L1, L3).
+        function L1's results before L2's (``state.layers`` is populated L3, L1, L2).
         So L1's quote evidence -- a by-product of checking a quotation, not a retrieval
-        result -- could displace the passages L3 actually ranked. An unscored passage
+        result -- could displace the passages L2 actually ranked. An unscored passage
         sorts last rather than first, because "no score" is not a good score.
         """
         order = sorted(
@@ -508,7 +508,7 @@ class _PassageHarvest:
 
 
 def passages_from_layer_results(results: Iterable[LayerResult]) -> tuple[RetrievedPassage, ...]:
-    """Harvest the passages L3 actually retrieved, from its result.
+    """Harvest the passages L2 actually retrieved, from its result.
 
     Two sources, in order of preference: an explicit ``detail["passages"]`` list, and
     the ``Evidence.best_match_text`` on its findings. The second is a fallback, not a

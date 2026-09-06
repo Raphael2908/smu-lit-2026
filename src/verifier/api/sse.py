@@ -137,7 +137,7 @@ def diff_events(previous: RunState | None, current: RunState) -> list[tuple[Even
     """Turn a state transition into the event vocabulary from ``contracts/api.py``.
 
     Emitted in the documented order: accepted -> extracted -> layer_result* ->
-    deterministic_verdict -> {judge_skipped | layer_result(L5)} -> final -> done.
+    deterministic_verdict -> {judge_skipped | layer_result(L4)} -> final -> done.
     """
     events: list[tuple[EventName, dict]] = []
 

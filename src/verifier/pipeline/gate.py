@@ -1,4 +1,4 @@
-"""The fail-fast gate: whether L5 is consulted at all.
+"""The fail-fast gate: whether L4 is consulted at all.
 
 WHY FAIL-FAST. Three reasons, in order of importance:
 

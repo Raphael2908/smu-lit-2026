@@ -44,7 +44,7 @@ __all__ = [
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 #: The sentinel ``JudgeResult.parse_path`` carries when every rung of the ladder failed.
-#: L5 maps this to JUDGE_UNPARSEABLE / Severity.WARN.
+#: L4 maps this to JUDGE_UNPARSEABLE / Severity.WARN.
 PARSE_PATH_UNPARSEABLE = "unparseable"
 
 RUBRIC_DIMENSIONS = (
@@ -300,7 +300,7 @@ def unparseable_result(
 ) -> JudgeResult:
     """Fail OPEN: ``passed=True`` with no rubric.
 
-    A judge we could not read has not convicted anyone. L5 turns the missing rubric
+    A judge we could not read has not convicted anyone. L4 turns the missing rubric
     into JUDGE_UNPARSEABLE at Severity.WARN, which annotates without failing.
     """
     return JudgeResult(
@@ -365,7 +365,7 @@ class OpenRouterJudge:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             # OpenRouter attribution headers; harmless elsewhere.
-            "X-Title": "sal-verifier",
+            "X-Title": "sigma-tech",
         }
 
     def _body(self, system_prompt: str, user_turn: str) -> dict[str, Any]:
@@ -558,7 +558,7 @@ class OpenRouterSummariser:
         return {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
-            "X-Title": "sal-verifier",
+            "X-Title": "sigma-tech",
         }
 
     async def _complete(self, system: str, user: str, max_tokens: int) -> str:
@@ -725,7 +725,7 @@ class OpenRouterCitationExtractor:
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
-                    "X-Title": "sal-verifier",
+                    "X-Title": "sigma-tech",
                 },
                 json=body,
             )

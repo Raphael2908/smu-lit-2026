@@ -115,7 +115,7 @@ async def test_celery_is_not_consulted_in_mock_mode(mode):
 
 
 async def test_dispatch_defers_the_judge_to_its_own_queue(monkeypatch):
-    """L5 must not be spent from inside the deterministic task's budget.
+    """L4 must not be spent from inside the deterministic task's budget.
 
     ``_dispatch`` called ``task.delay(run_id)`` with no kwargs, so ``defer_judge`` took
     its default of False and the QUEUE_JUDGE branch in ``tasks._run_verification`` was

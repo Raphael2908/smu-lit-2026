@@ -1,17 +1,23 @@
 <!--
-  L5 SYSTEM PROMPT — AUTHORED BY THE USER. The body below is theirs, verbatim.
+  L4 SYSTEM PROMPT — AUTHORED BY THE USER. The body below is theirs, verbatim.
 
-  Loaded at call time by layers/l5_judge.py; editing this file needs no code change.
+  Loaded at call time by layers/l4_judge.py; editing this file needs no code change.
   Bump JUDGE_PROMPT_VERSION in settings when you edit it, so the judge_calls table
   keeps an accurate provenance trail.
 
   Two things the surrounding code guarantees, which this prompt relies on:
 
-  1. This layer runs ONLY when L1-L4 have all passed. Citation existence, quote
-     fidelity and source trust are already settled deterministically -- which is why
+  1. This layer runs ONLY when every deterministic layer has passed. Citation
+     existence and source trust are already settled deterministically -- which is why
      this prompt is right to say citation formatting and source quality are outside
      its task. It is free to spend its entire attention on whether the LAW is stated
      correctly and completely.
+
+     NOT settled: whether a quoted passage actually appears in the source it is hung
+     on. That check was removed with the fuzzy quote matcher, so nothing upstream of
+     this prompt verifies quotations. If quotation accuracy is to be caught at all,
+     this is the only layer positioned to catch it, and the body below has to ask for
+     it -- it does not today.
 
   2. The judge can convict but never acquit. A verdict returned here is intersected
      with the deterministic one and can only lower it; nothing in the output can clear
@@ -610,9 +616,8 @@ If the answer merely retrieves relevant law but fails to interpret, reconcile, t
 
 ## Citations resolved by the verifier
 
-Each of these has already been confirmed to exist, and any quoted text has been
-confirmed to appear in the judgment. Do not re-verify their existence; assess what
-they are said to establish.
+Each of these has already been confirmed to exist. Do not re-verify their existence;
+assess what they are said to establish.
 
 {citations}
 

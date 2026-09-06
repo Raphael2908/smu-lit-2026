@@ -12,7 +12,14 @@ from __future__ import annotations
 
 import pytest
 
-from verifier.contracts.enums import FindingCode, Layer, LayerStatus, Severity, Verdict
+from verifier.contracts.enums import (
+    FindingCode,
+    Layer,
+    LayerStatus,
+    Severity,
+    SubLayer,
+    Verdict,
+)
 from verifier.contracts.runs import VerifyRequest
 from verifier.pipeline.orchestrator import Orchestrator
 
@@ -25,7 +32,7 @@ QUESTION = "What is the test for establishing a duty of care in negligence under
 # and, second, policy considerations" and expressly declines to make factual
 # foreseeability part of the legal test -- it is a threshold question. L1-L4 all
 # PASSED that draft (real case, real citation, genuinely grounded, on-question); only
-# the reasoning judge caught it, which is the entire argument for L5 in one example.
+# the reasoning judge caught it, which is the entire argument for L4 in one example.
 _ANSWER = (
     "The Court of Appeal established a single two-stage test for the imposition of a duty "
     "of care, comprising first legal proximity and second policy considerations, with "
@@ -44,11 +51,35 @@ async def _run(ai_output: str):
 
 
 @pytest.mark.asyncio
+async def test_a_run_reports_exactly_four_scoring_layers():
+    """The bug this renumber fixed, asserted end to end.
+
+    Source trust used to be a layer of its own, so a clean run reported five scoring
+    layers for a system that asks four questions. It is now sub-check 1c, visible in
+    Layer 1's ``sub_results`` rather than as a row of its own.
+    """
+    state = await _run(REAL_CITATION)
+
+    scoring = {layer for layer in state.layers if layer is not Layer.L0_EXTRACT}
+    assert scoring == {
+        Layer.L1_CITATION_INTEGRITY,
+        Layer.L2_ALIGNMENT,
+        Layer.L3_RESPONSIVENESS,
+        Layer.L4_JUDGE,
+    }
+    assert [r.sub_layer for r in state.layers[Layer.L1_CITATION_INTEGRITY].sub_results] == [
+        SubLayer.L1A_CITEDNESS,
+        SubLayer.L1B_EXISTENCE,
+        SubLayer.L1C_SOURCE_TRUST,
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_real_citation_resolves_and_is_not_failed():
     state = await _run(REAL_CITATION)
 
     assert state.verdict is not Verdict.FAIL
-    assert state.layers[Layer.L1_EXISTENCE].status is LayerStatus.PASS
+    assert state.layers[Layer.L1_CITATION_INTEGRITY].status is LayerStatus.PASS
     assert not any(f.code is FindingCode.CITATION_NOT_FOUND for f in state.findings)
     # The judge is consulted precisely because nothing deterministic failed.
     assert state.short_circuited is False
@@ -60,7 +91,7 @@ async def test_a_fabricated_citation_fails_and_never_reaches_the_judge():
     state = await _run(FABRICATED_CITATION)
 
     assert state.verdict is Verdict.FAIL
-    assert state.layers[Layer.L1_EXISTENCE].status is LayerStatus.FAIL
+    assert state.layers[Layer.L1_CITATION_INTEGRITY].status is LayerStatus.FAIL
 
     finding = next(f for f in state.findings if f.code is FindingCode.CITATION_NOT_FOUND)
     assert finding.severity is Severity.FAIL
@@ -68,7 +99,7 @@ async def test_a_fabricated_citation_fails_and_never_reaches_the_judge():
     # Fail-fast: the judge is not merely overruled, it is never asked.
     assert state.short_circuited is True
     assert state.short_circuit_reason
-    assert Layer.L5_JUDGE not in state.layers
+    assert Layer.L4_JUDGE not in state.layers
 
 
 @pytest.mark.asyncio
@@ -83,13 +114,13 @@ async def test_a_fabricated_citation_still_reports_on_the_argument():
     """
     state = await _run(FABRICATED_CITATION)
 
-    l4 = state.layers[Layer.L4_RESPONSIVENESS]
+    l4 = state.layers[Layer.L3_RESPONSIVENESS]
     assert l4.status is not LayerStatus.SKIPPED
     assert l4.status is not LayerStatus.NOT_APPLICABLE
 
     # L3 correctly stands down -- there is no source to be grounded in, and it spends
     # no embeddings saying so.
-    assert state.layers[Layer.L3_GROUNDING].status is LayerStatus.NOT_APPLICABLE
+    assert state.layers[Layer.L2_ALIGNMENT].status is LayerStatus.NOT_APPLICABLE
 
 
 @pytest.mark.asyncio
@@ -108,8 +139,16 @@ async def test_the_verdicts_diverge_at_L1_not_elsewhere():
     assert bad.verdict is Verdict.FAIL
 
     # The divergence is at L1 and nowhere else.
-    assert good.layers[Layer.L1_EXISTENCE].status is LayerStatus.PASS
-    assert bad.layers[Layer.L1_EXISTENCE].status is LayerStatus.FAIL
+    assert good.layers[Layer.L1_CITATION_INTEGRITY].status is LayerStatus.PASS
+    assert bad.layers[Layer.L1_CITATION_INTEGRITY].status is LayerStatus.FAIL
     for state in (good, bad):
-        assert state.layers[Layer.L4_RESPONSIVENESS].status is not LayerStatus.FAIL
-        assert state.layers[Layer.L2_SOURCE_TRUST].status is not LayerStatus.FAIL
+        assert state.layers[Layer.L3_RESPONSIVENESS].status is not LayerStatus.FAIL
+        # And WITHIN L1 it is 1b, not 1c: both answers cite the same trusted publisher,
+        # so source trust cannot be what separates them. This is the assertion that
+        # kept its meaning when source trust became a sub-check instead of a layer.
+        trust = next(
+            r
+            for r in state.layers[Layer.L1_CITATION_INTEGRITY].sub_results
+            if r.sub_layer is SubLayer.L1C_SOURCE_TRUST
+        )
+        assert trust.status is not LayerStatus.FAIL

@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from verifier.contracts.citations import Span
-from verifier.contracts.enums import FindingCode, FindingSource, Layer, Severity
+from verifier.contracts.enums import FindingCode, FindingSource, Layer, Severity, SubLayer
 
 
 class Evidence(BaseModel):
@@ -43,12 +43,14 @@ class Finding(BaseModel):
 
     id: str
     layer: Layer
+    #: Which named sub-check inside ``layer`` raised this. Set only by layers that have
+    #: sub-checks; the panel groups findings by it.
+    sub_layer: SubLayer | None = None
     code: FindingCode
     severity: Severity
     message: str
     source: FindingSource = FindingSource.DETERMINISTIC
     citation_ordinal: int | None = None
-    quote_ordinal: int | None = None
     output_span: Span | None = None
     evidence: Evidence = Field(default_factory=Evidence)
 

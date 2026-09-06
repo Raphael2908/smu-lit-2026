@@ -13,7 +13,7 @@
 
   panel.js is a self-contained IIFE that calls no chrome.* API on any render path, so
   the stubs below are the entire dependency surface. What you see here is what
-  claude.ai shows: every rule is scoped under #salv-panel and `all: initial` blocks the
+  claude.ai shows: every rule is scoped under #sigma-panel and `all: initial` blocks the
   host page's cascade either way.
 -->
 <meta charset="utf-8">
@@ -28,16 +28,16 @@
   .grid { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
   .cell { width: 380px; }
   /* Un-fix the clones so they lay out in a grid instead of stacking at top right. */
-  .cell #salv-panel { position: static !important; width: 380px !important;
+  .cell #sigma-panel { position: static !important; width: 380px !important;
                       max-height: none !important; inset: auto !important; }
 </style>
 <div class="grid" id="grid"></div>
 
 <script>
   // The entire dependency surface of panel.js.
-  globalThis.SALV = {
+  globalThis.SIGMA = {
     config: { panelView: 'panel', panelTheme: 'light' },
-    saveConfig(patch) { Object.assign(SALV.config, patch); },
+    saveConfig(patch) { Object.assign(SIGMA.config, patch); },
     log() {}, banner() {}, warn() {},
   };
 </script>
@@ -47,13 +47,27 @@
 // Finding, Evidence, Resolution). Preview only -- nothing here ships.
 const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache_hits: cache || 0 });
 
+  // Layer 1's three sub-checks. `L1(...)` builds a Layer 1 result with them attached;
+  // every other layer has none. Statuses default to the layer's own, so a fixture only
+  // names the ones that differ -- which is how a run where 1c cleared a domain while 1b
+  // failed gets expressed.
+  const SUBS = (a, b, c) => [
+    { sub_layer: 'L1a', status: a, finding_count: 0, detail: {} },
+    { sub_layer: 'L1b', status: b, finding_count: 0, detail: {} },
+    { sub_layer: 'L1c', status: c, finding_count: 0, detail: {} },
+  ];
+  const L1 = (status, ms, cache, subs) => ({
+    ...L(status, null, ms, cache),
+    sub_results: subs || SUBS(status, status, status),
+  });
+
   const LONG = 'The appellant submits that the doctrine of common mistake operates to render the contract void ab initio. In our judgment that submission cannot be sustained on the authorities. A common mistake as to quality will only avoid a contract where it renders the subject matter essentially and radically different from that which the parties believed it to be, and the burden of establishing that state of affairs lies squarely on the party asserting it. Nothing in the evidence before the Judge came close to discharging that burden, and we are unable to accept that the parties were labouring under any operative mistake at the moment of contracting. We would add, for completeness, that the point was not pleaded below.';
 
     const FIXTURES = {
     'Pass — everything checked': {
       verdict: 'pass', is_final: true,
       timings: { total_ms: 8420 }, cache: { hits: 3, misses: 1 }, cost_usd: 0.0182,
-      layers: { L1: L('pass', 1.0, 210, 2), L2: L('pass', 1.0, 95), L3: L('pass', 0.61, 3180, 1), L4: L('pass', 0.58, 1240), L5: L('pass', null, 3690) },
+      layers: { L1: L1('pass', 305, 2), L2: L('pass', 0.61, 3180, 1), L3: L('pass', 0.58, 1240), L4: L('pass', null, 3690) },
       findings: [],
       resolutions: {
         'sgca:2007:37': { status: 'resolved', case_name: 'Chwee Kin Keong v Digilandmall.com Pte Ltd', domain: 'elitigation.sg', url: 'https://www.elitigation.sg/gd/s/2007_SGCA_37' },
@@ -63,14 +77,14 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
 
     'Fail — fabricated citation': {
       verdict: 'fail', is_final: true, short_circuited: true,
-      short_circuit_reason: 'L1b found a citation the source reports does not exist, so the judge was never consulted.',
+      short_circuit_reason: '1b found a citation the source reports does not exist, so the judge was never consulted.',
       timings: { total_ms: 4110 }, cache: { hits: 1, misses: 2 },
-      layers: { L1: L('fail', 0.0, 980), L2: L('pass', 1.0, 88), L3: L('skipped', null, 0), L4: L('pass', 0.55, 1190), L5: null },
+      layers: { L1: L1('fail', 1068, 0, SUBS('warn', 'fail', 'pass')), L2: L('skipped', null, 0), L3: L('pass', 0.55, 1190), L4: null },
       findings: [
-        { source: 'deterministic', severity: 'fail', code: 'L1B_CITATION_NOT_FOUND',
+        { source: 'deterministic', severity: 'fail', code: 'CITATION_NOT_FOUND', sub_layer: 'L1b',
           message: 'The answer cites [2018] SGCA 12 as authority for the proposition that a unilateral mistake known to the other party voids the contract. eLitigation was reachable and reports no such judgment.',
           evidence: { source_url: 'https://www.elitigation.sg/gd/s/2018_SGCA_12', http_status: 404 } },
-        { source: 'deterministic', severity: 'warn', code: 'L1A_UNSUPPORTED_ASSERTION',
+        { source: 'deterministic', severity: 'warn', code: 'PROPOSITION_UNCITED', sub_layer: 'L1a',
           message: 'The sentence beginning "It is well established that..." asserts a rule of law with no citation in scope.',
           evidence: {} },
       ],
@@ -83,7 +97,7 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
     'Nothing was verified': {
       verdict: 'warn', is_final: true,
       timings: { total_ms: 6050 }, cache: { hits: 0, misses: 3 },
-      layers: { L1: L('warn', null, 3020), L2: L('pass', 1.0, 91), L3: L('not_applicable', null, 0), L4: L('pass', 0.52, 1310), L5: L('pass', null, 1620) },
+      layers: { L1: L1('warn', 3111, 0, SUBS('pass', 'warn', 'pass')), L2: L('not_applicable', null, 0), L3: L('pass', 0.52, 1310), L4: L('pass', null, 1620) },
       findings: [],
       resolutions: {
         'sgca:2007:37': { status: 'unauthenticated', case_name: null },
@@ -102,9 +116,12 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
     'Partial — judge advisory, long evidence': {
       verdict: 'warn', is_final: true,
       timings: { total_ms: 12980 }, cache: { hits: 2, misses: 4 }, cost_usd: 0.0341,
-      layers: { L1: L('pass', 1.0, 240, 1), L2: L('warn', 0.5, 102), L3: L('warn', 0.279, 4820, 1), L4: L('pass', 0.61, 1450), L5: L('warn', null, 6310) },
+      layers: { L1: L1('warn', 342, 1, SUBS('pass', 'pass', 'warn')), L2: L('warn', 0.279, 4820, 1), L3: L('pass', 0.61, 1450), L4: L('warn', null, 6310) },
       findings: [
-        { source: 'deterministic', severity: 'warn', code: 'L3_CLAIM_NOT_GROUNDED',
+        { source: 'deterministic', severity: 'warn', code: 'SOURCE_GRAYLISTED', sub_layer: 'L1c',
+          message: 'singaporelawwatch.sg is a secondary or unofficial source. Check the primary authority before relying on it.',
+          evidence: { domain: 'singaporelawwatch.sg' } },
+        { source: 'deterministic', severity: 'warn', code: 'CLAIM_NOT_GROUNDED_IN_SOURCE',
           message: 'The claim that the court "expressly declined to follow Bell v Lever Brothers" scores below the grounding floor against every passage retrieved from the cited judgment.',
           evidence: { best_match_text: LONG, best_match_paragraph: 47, score: 0.279, threshold: 0.35, margin: -0.071, source_url: 'https://www.elitigation.sg/gd/s/2007_SGCA_37' } },
         { source: 'llm', severity: 'warn', code: 'JUDGE_FAILED_CONTEXTUAL_ACCURACY',
@@ -123,7 +140,7 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
   /*
    * A run still in flight. `layers` is empty because nothing has reported yet -- which
    * is a different fact from a layer having been deliberately skipped, and the reason
-   * this state needed a fixture: with none, five rows reading "Skipped" mid-run went
+   * this state needed a fixture: with none, four rows reading "Skipped" mid-run went
    * out unreviewed. Rendered with a `startedAt` so the elapsed column has something to
    * show; in the live panel it ticks every 400 ms off pollRun's re-render.
    */
@@ -142,9 +159,9 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
   if (theme === 'dark') document.body.classList.add('dark');
 
   const grid = document.getElementById('grid');
-  // Hold the singleton by reference: after the first clone, getElementById('salv-panel')
+  // Hold the singleton by reference: after the first clone, getElementById('sigma-panel')
   // finds a clone rather than the live panel.
-  const live = SALV.panel.mount();
+  const live = SIGMA.panel.mount();
 
   function snapshot(label, render) {
     render();
@@ -155,33 +172,33 @@ const L = (status, score, ms, cache) => ({ status, score, duration_ms: ms, cache
     const h = document.createElement('h2');
     h.textContent = label;
     // The id travels with the clone on purpose: every rule in panel.css is scoped to
-    // #salv-panel, and a CSS id selector matches every element carrying that id.
+    // #sigma-panel, and a CSS id selector matches every element carrying that id.
     cell.append(h, live.cloneNode(true));
     grid.appendChild(cell);
   }
 
-  snapshot('Idle', () => SALV.panel.renderIdle());
+  snapshot('Idle', () => SIGMA.panel.renderIdle());
   // The note only ever accompanies an explicit gesture -- a toolbar click or a
   // right-click that found no answer. An automatic scan that comes up empty renders the
   // bare state above, which is what /new shows.
-  snapshot('Idle — nothing on this page', () => SALV.panel.renderIdle(
+  snapshot('Idle — nothing on this page', () => SIGMA.panel.renderIdle(
     'No conversation on this page yet. Open a chat and ask a question.'));
-  // The long one. This is the fixture that answers whether .salv-note needs its
+  // The long one. This is the fixture that answers whether .sigma-note needs its
   // word-break rule: watch the 380px rail for horizontal overflow.
-  snapshot('Idle — page furniture', () => SALV.panel.renderIdle(
+  snapshot('Idle — page furniture', () => SIGMA.panel.renderIdle(
     'Nothing to verify: this captured as 38 characters, which is page furniture rather ' +
     'than an answer. Right-click the response and choose "Verify this response" to run ' +
     'it anyway.'));
-  snapshot('Verifying (follow-up)', () => SALV.panel.renderVerifying({ isFollowup: true }));
+  snapshot('Verifying (follow-up)', () => SIGMA.panel.renderVerifying({ isFollowup: true }));
   snapshot('Pending — nothing has reported yet', () =>
-    SALV.panel.render(PENDING, { startedAt: Date.now() - 4200 }));
+    SIGMA.panel.render(PENDING, { startedAt: Date.now() - 4200 }));
   // Two errors side by side, so the line between "the tool broke" and "there was
   // nothing here" can be judged in one glance against the two idle states above.
-  snapshot('Error — backend down', () => SALV.panel.renderError(
+  snapshot('Error — backend down', () => SIGMA.panel.renderError(
     'Could not reach the verifier at http://127.0.0.1:8000. Is it running? (Failed to fetch)'));
-  snapshot('Error — timed out', () => SALV.panel.renderError('The verification timed out.'));
+  snapshot('Error — timed out', () => SIGMA.panel.renderError('The verification timed out.'));
   for (const [label, state] of Object.entries(FIXTURES)) {
-    snapshot(label, () => SALV.panel.render(state, {}));
+    snapshot(label, () => SIGMA.panel.render(state, {}));
   }
   live.remove();   // only the clones remain
   document.title = `Sigma Tech panel — ${theme} / ${view}`;

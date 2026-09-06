@@ -294,7 +294,7 @@ async def _dispatch(run_id: str) -> None:
             # .delay() is blocking socket work against the broker; keep it off the loop
             # and bounded, because a dead broker must not swallow the run.
             #
-            # defer_judge=True is what puts L5 on QUEUE_JUDGE, where it has its own
+            # defer_judge=True is what puts L4 on QUEUE_JUDGE, where it has its own
             # 90s budget, instead of inside the deterministic task's. Omitting it left
             # the branch in tasks._run_verification unreachable and the judgeworker
             # subscribed to a queue nothing ever wrote to (docs/03-findings.md F26).

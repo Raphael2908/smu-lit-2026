@@ -26,7 +26,7 @@ VERDICT_ORDER: dict[Verdict, int] = {
 class Severity(StrEnum):
     """How a finding affects the verdict.
 
-    FAIL from any of L1-L4 skips the judge entirely (fail-fast gate).
+    FAIL from any of L1-L3 skips the judge entirely (fail-fast gate).
     WARN passes but annotates. INFO is reporting only.
     """
 
@@ -45,12 +45,43 @@ class LayerStatus(StrEnum):
 
 
 class Layer(StrEnum):
+    """The four scoring layers, plus the extraction pre-pass.
+
+    There used to be five, because source trust was given a layer of its own. It is not
+    a peer of "does the argument follow from the source?" -- it is one of the things
+    Layer 1 asks about a citation, and it now sits inside Layer 1 as sub-check 1c (see
+    ``SubLayer``). Everything after it moved down one.
+    """
+
+    #: Not scored, and it cannot move a verdict. Finds the citations, quotes,
+    #: propositions and domains every scoring layer works from.
     L0_EXTRACT = "L0"
-    L1_EXISTENCE = "L1"
-    L2_SOURCE_TRUST = "L2"
-    L3_GROUNDING = "L3"
-    L4_RESPONSIVENESS = "L4"
-    L5_JUDGE = "L5"
+    #: 1a cited at all -> 1b resolves to a real document -> 1c the domain is trusted.
+    L1_CITATION_INTEGRITY = "L1"
+    L2_ALIGNMENT = "L2"
+    L3_RESPONSIVENESS = "L3"
+    L4_JUDGE = "L4"
+
+
+class SubLayer(StrEnum):
+    """The named checks inside Layer 1, in the order they depend on each other.
+
+    Layer 1 asks one question -- "is the citation integrity of this answer sound?" --
+    and answers it in three parts. They are a real contract, not prose: each finding
+    carries the sub-check that raised it, and ``LayerResult.sub_results`` reports each
+    one's status, so a reader can see WHICH part failed without the layer having to
+    split into three rows the API would then have to call layers.
+
+    Values match the strings these checks were already tagged with informally, so
+    nothing downstream has to relearn the vocabulary.
+    """
+
+    #: Does the output offer any authority at all? A count over the whole output.
+    L1A_CITEDNESS = "L1a"
+    #: Does each citation resolve to a real document, and the right one?
+    L1B_EXISTENCE = "L1b"
+    #: Is the domain it resolved to one we trust? (black / gray / white lists)
+    L1C_SOURCE_TRUST = "L1c"
 
 
 class RunStatus(StrEnum):
@@ -176,16 +207,13 @@ class FindingCode(StrEnum):
     #: generous and this finding's errors fall towards silence, not accusation.
     PROPOSITION_UNCITED = "PROPOSITION_UNCITED"
 
-    # --- L1: citation existence and quote verification ---
+    # --- L1b: does the citation exist, and is it the right document? ---
     CITATION_NOT_FOUND = "CITATION_NOT_FOUND"
     RESOLVED_WRONG_DOC = "RESOLVED_WRONG_DOC"
     CITATION_CASE_NAME_MISMATCH = "CITATION_CASE_NAME_MISMATCH"
-    QUOTE_NOT_FOUND = "QUOTE_NOT_FOUND"
-    QUOTE_INEXACT = "QUOTE_INEXACT"
     CITATION_AMBIGUOUS = "CITATION_AMBIGUOUS"
     CITATION_UNVERIFIED = "CITATION_UNVERIFIED"  # report-only (F7): WARN, never FAIL
     SOURCE_UNAUTHENTICATED = "SOURCE_UNAUTHENTICATED"  # WARN: cannot check != fabricated
-    QUOTE_UNATTRIBUTED = "QUOTE_UNATTRIBUTED"
 
     # --- L2: source trust ---
     SOURCE_BLACKLISTED = "SOURCE_BLACKLISTED"
@@ -202,7 +230,7 @@ class FindingCode(StrEnum):
     ANSWER_TOO_SHORT = "ANSWER_TOO_SHORT"
     FOLLOWUP_NOT_SCORED = "FOLLOWUP_NOT_SCORED"
 
-    # --- L5: judge ---
+    # --- L4: judge ---
     JUDGE_FAILED_FAITHFULNESS = "JUDGE_FAILED_FAITHFULNESS"
     JUDGE_FAILED_CONTEXTUAL_ACCURACY = "JUDGE_FAILED_CONTEXTUAL_ACCURACY"
     JUDGE_FAILED_CITATION_INTEGRITY = "JUDGE_FAILED_CITATION_INTEGRITY"

@@ -20,22 +20,29 @@
  * The panel is a plain (non-shadow) element styled from panel.css, which is injected as
  * a content-script stylesheet. Shadow DOM would isolate it better, but `::highlight()`
  * rules must live in the page document to paint page ranges, so one page-level
- * stylesheet serves both and every rule is scoped under `#salv-panel`.
+ * stylesheet serves both and every rule is scoped under `#sigma-panel`.
  */
-globalThis.SALV = globalThis.SALV || {};
+globalThis.SIGMA = globalThis.SIGMA || {};
 
 (function panelModule() {
   const LAYER_LABELS = {
     L0: 'Extraction',
-    // L1a cited at all -> L1b citation exists -> L1c quote is really in it.
     L1: 'Citation integrity',
-    L2: 'Source trust',
-    L3: 'Source grounding',
-    L4: 'Responsiveness',
-    L5: 'Faithfulness (LLM judge)',
+    L2: 'Semantic alignment',
+    L3: 'Responsiveness',
+    L4: 'Faithfulness (LLM judge)',
   };
 
-  const DETERMINISTIC_LAYERS = ['L1', 'L2', 'L3', 'L4'];
+  // Layer 1 asks one question in three parts, and the backend reports each part's
+  // status on `sub_results`. They are rows in the same grid, indented -- NOT layers.
+  const SUB_LAYER_LABELS = {
+    L1a: 'Cited at all?',
+    L1b: 'Citation exists?',
+    L1c: 'Source trusted?',
+  };
+
+  const DETERMINISTIC_LAYERS = ['L1', 'L2', 'L3'];
+  const JUDGE_LAYER = 'L4';
 
   /*
    * `focus` belongs in this map even though nothing buckets findings into it.
@@ -47,10 +54,10 @@ globalThis.SALV = globalThis.SALV || {};
    * nothing and closes the leak.
    */
   const HIGHLIGHT_NAMES = {
-    fail: 'salv-fail',
-    warn: 'salv-warn',
-    info: 'salv-info',
-    focus: 'salv-focus',
+    fail: 'sigma-fail',
+    warn: 'sigma-warn',
+    info: 'sigma-info',
+    focus: 'sigma-focus',
   };
 
   let root = null;
@@ -74,23 +81,23 @@ globalThis.SALV = globalThis.SALV || {};
   function mount() {
     if (root && root.isConnected) return root;
     root = el('div');
-    root.id = 'salv-panel';
+    root.id = 'sigma-panel';
     root.setAttribute('data-state', 'idle');
 
-    headerEl = el('div', 'salv-header');
-    const title = el('div', 'salv-title', 'Sigma Tech');
-    const verdict = el('span', 'salv-verdict-pill', 'idle');
-    verdict.id = 'salv-verdict';
-    themeBtn = el('button', 'salv-toggle', '☾');
+    headerEl = el('div', 'sigma-header');
+    const title = el('div', 'sigma-title', 'Sigma Tech');
+    const verdict = el('span', 'sigma-verdict-pill', 'idle');
+    verdict.id = 'sigma-verdict';
+    themeBtn = el('button', 'sigma-toggle', '☾');
     themeBtn.addEventListener('click', () => setTheme(theme === 'dark' ? 'light' : 'dark', true));
 
     // Expand to the full-screen reading view. A 380px rail is the right shape for
     // glancing at a verdict beside an answer and the wrong one for working through
     // twenty findings against paragraph pinpoints, which is what this is actually for.
-    expandBtn = el('button', 'salv-toggle', '⤢');
+    expandBtn = el('button', 'sigma-toggle', '⤢');
     expandBtn.addEventListener('click', () => setView(view === 'full' ? 'panel' : 'full', true));
 
-    const toggle = el('button', 'salv-toggle', '–');
+    const toggle = el('button', 'sigma-toggle', '–');
     toggle.title = 'Collapse';
     toggle.addEventListener('click', () => {
       collapsed = !collapsed;
@@ -98,7 +105,7 @@ globalThis.SALV = globalThis.SALV || {};
       toggle.textContent = collapsed ? '+' : '–';
       toggle.title = collapsed ? 'Expand' : 'Collapse';
     });
-    const close = el('button', 'salv-toggle', '×');
+    const close = el('button', 'sigma-toggle', '×');
     close.title = 'Dismiss';
     close.addEventListener('click', () => {
       clearHighlights();
@@ -106,7 +113,7 @@ globalThis.SALV = globalThis.SALV || {};
     });
 
     headerEl.append(title, verdict, themeBtn, expandBtn, toggle, close);
-    bodyEl = el('div', 'salv-body');
+    bodyEl = el('div', 'sigma-body');
     root.append(headerEl, bodyEl);
     document.body.appendChild(root);
     setView(view, false);
@@ -133,8 +140,8 @@ globalThis.SALV = globalThis.SALV || {};
       expandBtn.setAttribute('aria-pressed', view === 'full' ? 'true' : 'false');
     }
     if (persist) {
-      SALV.config.panelView = view;
-      SALV.saveConfig({ panelView: view });
+      SIGMA.config.panelView = view;
+      SIGMA.saveConfig({ panelView: view });
     }
   }
 
@@ -155,15 +162,15 @@ globalThis.SALV = globalThis.SALV || {};
       themeBtn.setAttribute('aria-pressed', theme === 'dark' ? 'true' : 'false');
     }
     if (persist) {
-      SALV.config.panelTheme = theme;
-      SALV.saveConfig({ panelTheme: theme });
+      SIGMA.config.panelTheme = theme;
+      SIGMA.saveConfig({ panelTheme: theme });
     }
   }
 
   function setVerdict(text, kind) {
     mount();
     root.setAttribute('data-state', kind || 'idle');
-    const pill = root.querySelector('#salv-verdict');
+    const pill = root.querySelector('#sigma-verdict');
     if (pill) {
       pill.textContent = text;
       pill.setAttribute('data-kind', kind || 'idle');
@@ -171,8 +178,8 @@ globalThis.SALV = globalThis.SALV || {};
   }
 
   function section(titleText, className) {
-    const wrap = el('section', `salv-section ${className || ''}`.trim());
-    if (titleText) wrap.appendChild(el('h3', 'salv-section-title', titleText));
+    const wrap = el('section', `sigma-section ${className || ''}`.trim());
+    if (titleText) wrap.appendChild(el('h3', 'sigma-section-title', titleText));
     return wrap;
   }
 
@@ -203,41 +210,41 @@ globalThis.SALV = globalThis.SALV || {};
    * finished, and how long it has been going.
    *
    * SKIPPED IS A TERMINAL STATUS. It means the layer was deliberately not run -- what
-   * fail-fast does to L5 once a deterministic check has already failed. A layer with no
+   * fail-fast does to L4 once a deterministic check has already failed. A layer with no
    * result on a run still in flight has not been skipped; it has not started. Printing
-   * the terminal word for the transient state told the reader that five layers had
+   * the terminal word for the transient state told the reader that four layers had
    * looked at their work and declined, at a moment when none of them had reported yet.
    * The same objection statusLabel() makes to softening `not_applicable` into "skipped"
    * applies here, in the other direction.
    */
   function layerRow(code, result, run) {
-    const row = el('div', 'salv-layer');
-    row.appendChild(el('span', 'salv-layer-code', code));
-    row.appendChild(el('span', 'salv-layer-name', LAYER_LABELS[code] || code));
+    const row = el('div', 'sigma-layer');
+    row.appendChild(el('span', 'sigma-layer-code', code));
+    row.appendChild(el('span', 'sigma-layer-name', LAYER_LABELS[code] || code));
 
     const pending = !result && !(run && run.isFinal);
     if (pending) {
-      // The row keeps four children whatever happens. `.salv-layer` is `display:
+      // The row keeps four children whatever happens. `.sigma-layer` is `display:
       // contents` inside a four-column grid, so a missing cell does not close up -- it
       // slides the meta column left and knocks this row out of line with every other.
       row.appendChild(el('span'));
     } else {
       const status = result ? result.status : 'skipped';
-      const pill = el('span', 'salv-pill', statusLabel(status));
+      const pill = el('span', 'sigma-pill', statusLabel(status));
       pill.setAttribute('data-kind', statusKind(status));
       row.appendChild(pill);
     }
 
-    const meta = el('span', 'salv-layer-meta');
+    const meta = el('span', 'sigma-layer-meta');
     if (result) {
       if (typeof result.score === 'number') {
-        meta.appendChild(el('span', 'salv-score', result.score.toFixed(2)));
+        meta.appendChild(el('span', 'sigma-score', result.score.toFixed(2)));
       }
-      meta.appendChild(el('span', 'salv-duration', `${result.duration_ms || 0} ms`));
+      meta.appendChild(el('span', 'sigma-duration', `${result.duration_ms || 0} ms`));
       if (result.cache_hits) {
         // Cache hits are the scalability story made visible: the second query that
         // touches a judgment pays nothing.
-        const cache = el('span', 'salv-cache', `⚡ ${result.cache_hits}`);
+        const cache = el('span', 'sigma-cache', `⚡ ${result.cache_hits}`);
         cache.title = `${result.cache_hits} cache hit(s)`;
         meta.appendChild(cache);
       }
@@ -246,29 +253,53 @@ globalThis.SALV = globalThis.SALV || {};
       // run has been going. It lands in the same reserved slot as a finished layer's
       // duration, so the column reads straight down, and it ticks without a timer:
       // pollRun re-renders every 400 ms whether or not the delta carried anything new.
-      meta.appendChild(el('span', 'salv-duration', `${(run.elapsedMs / 1000).toFixed(1)}s`));
+      meta.appendChild(el('span', 'sigma-duration', `${(run.elapsedMs / 1000).toFixed(1)}s`));
     }
     row.appendChild(meta);
     return row;
   }
 
+  /*
+   * One of Layer 1's sub-checks. FOUR CHILDREN, LIKE EVERY OTHER ROW -- `.sigma-layer`
+   * is `display: contents` inside a four-column grid, so a row that supplies three
+   * cells slides the meta column left and knocks every row below it out of line. The
+   * empty meta span at the end is load-bearing for that reason, not decoration.
+   *
+   * A sub-check reports no duration and no score. It is a part of one question, not a
+   * layer, and giving it the same metadata furniture as a layer is precisely the
+   * "system looks more complicated than it is" problem this whole change is fixing.
+   */
+  function subLayerRow(sub) {
+    const code = sub.sub_layer;
+    const row = el('div', 'sigma-layer sigma-sublayer');
+    row.appendChild(el('span', 'sigma-layer-code', code));
+    row.appendChild(el('span', 'sigma-layer-name', SUB_LAYER_LABELS[code] || code));
+
+    const pill = el('span', 'sigma-pill sigma-pill-sm', statusLabel(sub.status));
+    pill.setAttribute('data-kind', statusKind(sub.status));
+    row.appendChild(pill);
+
+    row.appendChild(el('span', 'sigma-layer-meta'));
+    return row;
+  }
+
   function findingItem(finding, onHover) {
-    const item = el('li', 'salv-finding');
+    const item = el('li', 'sigma-finding');
     item.setAttribute('data-severity', finding.severity);
     item.setAttribute('data-source', finding.source);
 
-    const head = el('div', 'salv-finding-head');
-    const sev = el('span', 'salv-pill salv-pill-sm', statusLabel(finding.severity));
+    const head = el('div', 'sigma-finding-head');
+    const sev = el('span', 'sigma-pill sigma-pill-sm', statusLabel(finding.severity));
     sev.setAttribute('data-kind', statusKind(finding.severity));
-    head.append(sev, el('code', 'salv-code', finding.code));
+    head.append(sev, el('code', 'sigma-code', finding.code));
     item.appendChild(head);
-    item.appendChild(el('p', 'salv-finding-msg', finding.message));
+    item.appendChild(el('p', 'sigma-finding-msg', finding.message));
 
     const evidence = finding.evidence || {};
     if (evidence.best_match_text) {
-      const quote = el('blockquote', 'salv-evidence', evidence.best_match_text);
+      const quote = el('blockquote', 'sigma-evidence', evidence.best_match_text);
       if (evidence.best_match_paragraph) {
-        quote.appendChild(el('cite', 'salv-para', `at [${evidence.best_match_paragraph}]`));
+        quote.appendChild(el('cite', 'sigma-para', `at [${evidence.best_match_paragraph}]`));
       }
       item.appendChild(quote);
     }
@@ -276,10 +307,10 @@ globalThis.SALV = globalThis.SALV || {};
       const parts = [`score ${evidence.score.toFixed(2)}`];
       if (typeof evidence.threshold === 'number') parts.push(`threshold ${evidence.threshold}`);
       if (typeof evidence.margin === 'number') parts.push(`margin ${evidence.margin.toFixed(3)}`);
-      item.appendChild(el('div', 'salv-evidence-meta', parts.join(' · ')));
+      item.appendChild(el('div', 'sigma-evidence-meta', parts.join(' · ')));
     }
     if (evidence.source_url) {
-      const link = el('a', 'salv-link', evidence.source_url);
+      const link = el('a', 'sigma-link', evidence.source_url);
       link.href = evidence.source_url;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
@@ -287,7 +318,7 @@ globalThis.SALV = globalThis.SALV || {};
     }
 
     if (finding.output_span && onHover) {
-      item.classList.add('salv-finding-locatable');
+      item.classList.add('sigma-finding-locatable');
       item.addEventListener('mouseenter', () => onHover(finding));
       item.addEventListener('mouseleave', () => onHover(null));
     }
@@ -367,28 +398,28 @@ globalThis.SALV = globalThis.SALV || {};
     if (!total) return null;
 
     if (fabricated.length) {
-      const box = el('div', 'salv-banner', '');
+      const box = el('div', 'sigma-banner', '');
       box.setAttribute('data-kind', 'fail');
       box.appendChild(
         el(
           'strong',
-          'salv-banner-title',
+          'sigma-banner-title',
           fabricated.length === 1 ? 'Fabricated citation' : `${fabricated.length} fabricated citations`
         )
       );
       box.appendChild(
         el(
           'p',
-          'salv-banner-body',
+          'sigma-banner-body',
           'The source was reachable and reported no such judgment. This is positive ' +
             'evidence the authority does not exist.'
         )
       );
-      const list = el('ul', 'salv-banner-list');
+      const list = el('ul', 'sigma-banner-list');
       for (const item of fabricated) {
-        const li = el('li', 'salv-banner-item');
-        li.appendChild(el('span', 'salv-banner-cite', item.label));
-        li.appendChild(el('span', 'salv-banner-why', 'does not exist'));
+        const li = el('li', 'sigma-banner-item');
+        li.appendChild(el('span', 'sigma-banner-cite', item.label));
+        li.appendChild(el('span', 'sigma-banner-why', 'does not exist'));
         list.appendChild(li);
       }
       box.appendChild(list);
@@ -396,13 +427,13 @@ globalThis.SALV = globalThis.SALV || {};
     }
 
     if (!verified.length) {
-      const box = el('div', 'salv-banner', '');
+      const box = el('div', 'sigma-banner', '');
       box.setAttribute('data-kind', 'unverified');
-      box.appendChild(el('strong', 'salv-banner-title', 'Nothing was verified'));
+      box.appendChild(el('strong', 'sigma-banner-title', 'Nothing was verified'));
       box.appendChild(
         el(
           'p',
-          'salv-banner-body',
+          'sigma-banner-body',
           `0 of ${total} citation${total === 1 ? '' : 's'} could be checked. This is NOT ` +
             'evidence that they are wrong — and NOT evidence that they are right. ' +
             'Check them yourself before relying on this answer.'
@@ -413,15 +444,15 @@ globalThis.SALV = globalThis.SALV || {};
     }
 
     if (unchecked.length) {
-      const box = el('div', 'salv-banner', '');
+      const box = el('div', 'sigma-banner', '');
       box.setAttribute('data-kind', 'partial');
       box.appendChild(
-        el('strong', 'salv-banner-title', `${verified.length} of ${total} citations verified`)
+        el('strong', 'sigma-banner-title', `${verified.length} of ${total} citations verified`)
       );
       box.appendChild(
         el(
           'p',
-          'salv-banner-body',
+          'sigma-banner-body',
           `${unchecked.length} could not be checked. Unchecked is not the same as wrong.`
         )
       );
@@ -432,12 +463,12 @@ globalThis.SALV = globalThis.SALV || {};
   }
 
   function uncheckedList(unchecked) {
-    const list = el('ul', 'salv-banner-list');
+    const list = el('ul', 'sigma-banner-list');
     for (const item of unchecked) {
-      const li = el('li', 'salv-banner-item');
-      li.appendChild(el('span', 'salv-banner-cite', item.label));
+      const li = el('li', 'sigma-banner-item');
+      li.appendChild(el('span', 'sigma-banner-cite', item.label));
       li.appendChild(
-        el('span', 'salv-banner-why', UNCHECKED_REASON[item.status] || 'could not be checked')
+        el('span', 'sigma-banner-why', UNCHECKED_REASON[item.status] || 'could not be checked')
       );
       list.appendChild(li);
     }
@@ -445,26 +476,26 @@ globalThis.SALV = globalThis.SALV || {};
   }
 
   function citationRow(key, resolution) {
-    const row = el('div', 'salv-citation');
+    const row = el('div', 'sigma-citation');
     // citationLabel, not the raw key: an unreachable or fabricated citation has no
     // case_name (it comes off the fetched page), and naming the thing that failed as
     // `sgca:2018:12` is not naming it. Same helper the coverage banner uses.
-    row.appendChild(el('span', 'salv-citation-key', resolution.case_name || citationLabel(key, resolution)));
+    row.appendChild(el('span', 'sigma-citation-key', resolution.case_name || citationLabel(key, resolution)));
 
     const status = resolution.status;
-    const pill = el('span', 'salv-pill salv-pill-sm', statusLabel(status));
+    const pill = el('span', 'sigma-pill sigma-pill-sm', statusLabel(status));
     pill.setAttribute('data-kind', status === 'resolved' ? 'pass' : status === 'not_found' ? 'fail' : 'warn');
     row.appendChild(pill);
 
     if (resolution.url) {
-      const link = el('a', 'salv-link', resolution.domain || resolution.url);
+      const link = el('a', 'sigma-link', resolution.domain || resolution.url);
       link.href = resolution.url;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       row.appendChild(link);
     } else {
       // "Cannot verify" is never "fabricated" -- say which one this is.
-      row.appendChild(el('span', 'salv-unresolved', 'could not be resolved'));
+      row.appendChild(el('span', 'sigma-unresolved', 'could not be resolved'));
     }
     return row;
   }
@@ -493,7 +524,7 @@ globalThis.SALV = globalThis.SALV || {};
     for (const finding of findings || []) {
       const span = finding.output_span;
       if (!span) continue;
-      const range = SALV.capture.rangeFor(segments, span.start, span.end);
+      const range = SIGMA.capture.rangeFor(segments, span.start, span.end);
       if (!range) continue;
       (buckets[finding.severity] || buckets.info).push(range);
     }
@@ -506,7 +537,7 @@ globalThis.SALV = globalThis.SALV || {};
     if (!highlightsSupported()) return;
     CSS.highlights.delete(HIGHLIGHT_NAMES.focus);
     if (!finding || !finding.output_span) return;
-    const range = SALV.capture.rangeFor(segments, finding.output_span.start, finding.output_span.end);
+    const range = SIGMA.capture.rangeFor(segments, finding.output_span.start, finding.output_span.end);
     if (range) CSS.highlights.set(HIGHLIGHT_NAMES.focus, new Highlight(range));
   }
 
@@ -523,21 +554,21 @@ globalThis.SALV = globalThis.SALV || {};
     mount();
     setVerdict('idle', 'idle');
     bodyEl.replaceChildren();
-    bodyEl.appendChild(el('p', 'salv-hint', 'Waiting for a response to verify.'));
-    if (note) bodyEl.appendChild(el('p', 'salv-note', note));
+    bodyEl.appendChild(el('p', 'sigma-hint', 'Waiting for a response to verify.'));
+    if (note) bodyEl.appendChild(el('p', 'sigma-note', note));
   }
 
   function renderVerifying(meta) {
     mount();
     setVerdict('verifying…', 'verifying');
     bodyEl.replaceChildren();
-    const note = el('p', 'salv-hint', 'Running deterministic layers…');
+    const note = el('p', 'sigma-hint', 'Running deterministic layers…');
     bodyEl.appendChild(note);
     if (meta && meta.isFollowup) {
       bodyEl.appendChild(
         el(
           'p',
-          'salv-note',
+          'sigma-note',
           'Follow-up question detected: responsiveness will be reported as advisory.'
         )
       );
@@ -548,7 +579,7 @@ globalThis.SALV = globalThis.SALV || {};
     mount();
     setVerdict('error', 'error');
     bodyEl.replaceChildren();
-    bodyEl.appendChild(el('p', 'salv-error', message));
+    bodyEl.appendChild(el('p', 'sigma-error', message));
   }
 
   function render(state, ctx) {
@@ -577,7 +608,7 @@ globalThis.SALV = globalThis.SALV || {};
     const onHover = (finding) => highlightOne(segments, finding);
 
     // --- summary -----------------------------------------------------------------
-    const summary = el('div', 'salv-summary');
+    const summary = el('div', 'sigma-summary');
     const timings = state.timings || {};
     const bits = [];
     if (timings.total_ms) bits.push(`${(timings.total_ms / 1000).toFixed(1)}s`);
@@ -596,7 +627,7 @@ globalThis.SALV = globalThis.SALV || {};
     if (coverage) bodyEl.appendChild(coverage);
 
     if (state.short_circuited) {
-      const banner = el('div', 'salv-shortcircuit');
+      const banner = el('div', 'sigma-shortcircuit');
       banner.appendChild(el('strong', null, 'Fail-fast: '));
       banner.appendChild(
         document.createTextNode(
@@ -608,7 +639,7 @@ globalThis.SALV = globalThis.SALV || {};
     }
 
     // --- layers (ALL of them, including the ones that passed) ---------------------
-    const layers = section('Layers', 'salv-layers');
+    const layers = section('Layers', 'sigma-layers');
     // Elapsed is measured client-side, from the moment the run was dispatched: the
     // backend's `timings` only fill in as the run completes, so mid-run there is no
     // server number to show. `ctx.startedAt` is absent in the fixture harness, and an
@@ -618,18 +649,24 @@ globalThis.SALV = globalThis.SALV || {};
       elapsedMs: ctx && typeof ctx.startedAt === 'number' ? Date.now() - ctx.startedAt : null,
     };
     for (const code of DETERMINISTIC_LAYERS) {
-      layers.appendChild(layerRow(code, (state.layers || {})[code], run));
+      const result = (state.layers || {})[code];
+      layers.appendChild(layerRow(code, result, run));
+      // Layer 1's three sub-checks, indented under it. Absent on every other layer,
+      // and absent on L1 itself until it reports.
+      for (const sub of (result && result.sub_results) || []) {
+        layers.appendChild(subLayerRow(sub));
+      }
     }
-    layers.appendChild(layerRow('L5', (state.layers || {})['L5'], run));
+    layers.appendChild(layerRow(JUDGE_LAYER, (state.layers || {})[JUDGE_LAYER], run));
     bodyEl.appendChild(layers);
 
     // --- deterministic findings ---------------------------------------------------
-    const det = section('Deterministic findings', 'salv-deterministic');
+    const det = section('Deterministic findings', 'sigma-deterministic');
     det.appendChild(
-      el('p', 'salv-section-note', 'Machine-checkable. Each one is a fact about a source.')
+      el('p', 'sigma-section-note', 'Machine-checkable. Each one is a fact about a source.')
     );
     if (deterministic.length) {
-      const list = el('ul', 'salv-findings');
+      const list = el('ul', 'sigma-findings');
       for (const finding of deterministic) list.appendChild(findingItem(finding, onHover));
       det.appendChild(list);
     } else {
@@ -639,7 +676,7 @@ globalThis.SALV = globalThis.SALV || {};
       det.appendChild(
         el(
           'p',
-          'salv-empty',
+          'sigma-empty',
           run.isFinal ? 'No deterministic problems found.' : 'Nothing found so far.'
         )
       );
@@ -647,26 +684,26 @@ globalThis.SALV = globalThis.SALV || {};
     bodyEl.appendChild(det);
 
     // --- judge (advisory), or its explicit absence --------------------------------
-    const judge = section('LLM judge (advisory)', 'salv-advisory');
+    const judge = section('LLM judge (advisory)', 'sigma-advisory');
     if (state.short_circuited) {
       judge.appendChild(
         el(
           'p',
-          'salv-judge-absent',
+          'sigma-judge-absent',
           'Not consulted — failed deterministic checks. The judge can convict, never acquit.'
         )
       );
-    } else if (!(state.layers || {})['L5']) {
-      judge.appendChild(el('p', 'salv-empty', 'Judge has not run yet.'));
+    } else if (!(state.layers || {})[JUDGE_LAYER]) {
+      judge.appendChild(el('p', 'sigma-empty', 'Judge has not run yet.'));
     } else if (advisory.length) {
       judge.appendChild(
-        el('p', 'salv-section-note', 'Model opinion, not ground truth. Weigh accordingly.')
+        el('p', 'sigma-section-note', 'Model opinion, not ground truth. Weigh accordingly.')
       );
-      const list = el('ul', 'salv-findings');
+      const list = el('ul', 'sigma-findings');
       for (const finding of advisory) list.appendChild(findingItem(finding, onHover));
       judge.appendChild(list);
     } else {
-      judge.appendChild(el('p', 'salv-empty', 'Judge raised no concerns.'));
+      judge.appendChild(el('p', 'sigma-empty', 'Judge raised no concerns.'));
     }
     bodyEl.appendChild(judge);
 
@@ -674,21 +711,21 @@ globalThis.SALV = globalThis.SALV || {};
     const resolutions = state.resolutions || {};
     const keys = Object.keys(resolutions);
     if (keys.length) {
-      const cites = section('Citations', 'salv-citations');
+      const cites = section('Citations', 'sigma-citations');
       for (const key of keys) cites.appendChild(citationRow(key, resolutions[key]));
       bodyEl.appendChild(cites);
     }
 
     if ((state.errors || []).length) {
-      const errors = section('Errors', 'salv-errors');
-      for (const message of state.errors) errors.appendChild(el('p', 'salv-error', message));
+      const errors = section('Errors', 'sigma-errors');
+      for (const message of state.errors) errors.appendChild(el('p', 'sigma-error', message));
       bodyEl.appendChild(errors);
     }
 
     applyHighlights(segments, findings);
   }
 
-  SALV.panel = {
+  SIGMA.panel = {
     mount,
     setView,
     setTheme,

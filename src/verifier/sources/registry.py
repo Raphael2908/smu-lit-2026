@@ -36,7 +36,7 @@ log = get_logger(__name__)
 #: The detail a resolution carries when no adapter covers the host.
 #:
 #: Shares the ``url_not_on_`` stem with ``ElitigationAdapter``'s own
-#: ``url_not_on_this_source`` so ``layers/l1_existence.py`` can recognise the whole family
+#: ``url_not_on_this_source`` so ``layers/l1ab_citations.py`` can recognise the whole family
 #: with one prefix test and without importing anything from ``sources/``.
 DETAIL_NO_ADAPTER = "url_not_on_any_source"
 
@@ -138,9 +138,9 @@ def _unresolvable(citation: ExtractedCitation, detail: str | None) -> Resolution
         status=ResolutionStatus.UNRESOLVABLE,
         method=ResolutionMethod.NONE,
         url=url,
-        # Set even though nothing resolved, so L2b still trust-checks the domain: an
+        # Set even though nothing resolved, so 1c still trust-checks the domain: an
         # unrecognised host we could not read is exactly the case where "is this source
-        # on the blocklist?" is worth answering. l2_lists reads `domain or url`.
+        # on the blocklist?" is worth answering. l1c_lists reads `domain or url`.
         domain=host_of(url),
         detail=detail,
     )
@@ -182,7 +182,7 @@ def document_for(url: str | None) -> SourceDocument | None:
     Tries the adapter that owns the host first, then asks the rest. The fallback is not
     redundant: a cross-host redirect means the adapter that fetched a document is not
     necessarily the one that owns the URL we were handed, and silently dropping the
-    document would take L1c's quote check and L3's grounding down with it.
+    document would take L1c's quote check and L2's grounding down with it.
     """
     if not url:
         return None

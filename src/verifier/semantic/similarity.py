@@ -1,8 +1,8 @@
 """Cosine similarity, top-k retrieval, and the band classifier.
 
 Everything here is deliberately small. The interesting decisions are in what the layers
-ASK of these functions, not in the functions themselves -- see l3_alignment.py for why
-L3 scores a margin between two cosines rather than a cosine.
+ASK of these functions, not in the functions themselves -- see l2_alignment.py for why
+L2 scores a margin between two cosines rather than a cosine.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def max_similarity(query: Vector, candidates: list[Vector], *, default: float = 
 
 
 def classify(score: float, *, fail_below: float, pass_at: float) -> Band:
-    """Absolute-threshold band, used by L4."""
+    """Absolute-threshold band, used by L3."""
     if score < fail_below:
         return Band.FAIL
     if score < pass_at:
@@ -96,7 +96,7 @@ def classify(score: float, *, fail_below: float, pass_at: float) -> Band:
 
 
 def classify_margin(margin: float, *, fail_at_or_below: float, pass_above: float) -> Band:
-    """Margin band, used by L3.
+    """Margin band, used by L2.
 
     Note the boundary asymmetry against :func:`classify`: the FAIL test is ``<=`` and
     not ``<``, because a margin of exactly zero means the cited source is no better

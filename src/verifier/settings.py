@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     #: L1a's citation finder. "auto" follows PROVIDER_MODE, which is what keeps the
     #: offline suite and every mock demo on the deterministic path at ~5 ms.
     EXTRACTOR_MODE: Literal["auto", "mock", "real"] = "auto"
-    JUDGE_PROMPT_VERSION: str = "v1"
+    JUDGE_PROMPT_VERSION: str = "v2"
     SUMMARY_PROMPT_VERSION: str = "v1"
 
     # --- Thresholds -------------------------------------------------------------
@@ -97,32 +97,34 @@ class Settings(BaseSettings):
     #: on nothing is the failure this layer exists to catch.
     L1A_MIN_ASSERTIONS_FOR_FAIL: int = 1
 
-    L1_QUOTE_FAIL_BELOW: float = 75.0  # rapidfuzz.partial_ratio, 0-100
-    L1_QUOTE_PASS_AT: float = 90.0
-    L1_MIN_QUOTE_CHARS: int = 40  # shorter strings match anything
     L1_SOFT_404_MAX_BYTES: int = 10_000  # real judgment ~150kB, soft-404 ~3.5kB (F3)
     L1_PARTY_MATCH_MIN: float = 85.0
+
+    #: Shortest span L0 will emit as a quotation. A dozen quoted words is usually a
+    #: turn of phrase, not an appeal to what a judgment said, and the units downstream
+    #: consume -- claim attribution in L2, the proposition mask in L1a -- are both
+    #: better off without them.
+    MIN_QUOTE_CHARS: int = 40
 
     #: A claim shorter than this is expanded to the sentence it was cut from.
     #:
     #: The splitter is a model call and the prompt asking for self-contained claims is a
     #: request, not a guarantee. It cut "Policy considerations are applied only at the
     #: second stage, once a prima facie duty of care has been established" in half, and
-    #: L3 scored the first 58 characters at 0.313 against a 0.35 floor while the whole
+    #: L2 scored the first 58 characters at 0.313 against a 0.35 floor while the whole
     #: sentence scores 0.649 (docs/03-findings.md F18). The fragment does not say the
     #: second stage OF WHAT, so it was never a proposition the answer made.
     #:
-    #: Same principle as L1_MIN_QUOTE_CHARS from the other direction: below some length
-    #: a unit is too thin to carry a reliable signal. There a short quotation matches
-    #: anything; here a short claim matches nothing in particular.
-    L3_CLAIM_MIN_CHARS: int = 80
+    #: Same principle as MIN_QUOTE_CHARS from the other direction: below some length a
+    #: unit is too thin to carry a reliable signal.
+    L2_CLAIM_MIN_CHARS: int = 80
 
-    L3_MARGIN_FAIL_AT_OR_BELOW: float = 0.02
-    L3_MARGIN_PASS_ABOVE: float = 0.08
-    L3_ABSOLUTE_FLOOR: float = 0.35
-    L3_BACKGROUND_SIZE: int = 200
+    L2_MARGIN_FAIL_AT_OR_BELOW: float = 0.02
+    L2_MARGIN_PASS_ABOVE: float = 0.08
+    L2_ABSOLUTE_FLOOR: float = 0.35
+    L2_BACKGROUND_SIZE: int = 200
 
-    # --- L3 contextual prefix. MEASURED, not a preference. See docs/03-findings.md F14.
+    # --- L2 contextual prefix. MEASURED, not a preference. See docs/03-findings.md F14.
     #
     #   "none"             chunk text only
     #   "heading"          "Section: A > B" + text                        (default)
@@ -135,7 +137,7 @@ class Settings(BaseSettings):
     #     raw 0.426 | heading 0.435 | summary+heading 0.894 | voyage-context-4 0.940
     #
     # At 0.894 the 43 passages are one blurred point. Ranking inside the document is
-    # all L3 scores and all of L5's evidence retrieval, so collapsing it breaks both:
+    # all L2 scores and all of L4's evidence retrieval, so collapsing it breaks both:
     # the paragraph an answer quotes VERBATIM falls from rank #2 to #16, and a
     # correctly grounded claim falls from 0.392 to 0.325, under the 0.35 floor.
     #
@@ -145,22 +147,22 @@ class Settings(BaseSettings):
     # This is deliberately NOT a threshold and must not be tuned to move a verdict.
     # It selects which text is embedded; the thresholds in Part 4 are calibrated
     # against raw-ish chunk text and stay where they are.
-    L3_CONTEXTUAL_PREFIX: Literal["none", "heading", "summary_heading"] = "heading"
+    L2_CONTEXTUAL_PREFIX: Literal["none", "heading", "summary_heading"] = "heading"
 
-    # --- L3 retrieval breadth. NOT a threshold: no verdict depends on these. ------
-    # L3 SCORES on max cos(claim, chunks) and always will -- every figure in
+    # --- L2 retrieval breadth. NOT a threshold: no verdict depends on these. ------
+    # L2 SCORES on max cos(claim, chunks) and always will -- every figure in
     # docs/03-findings.md Part 4 is calibrated against that maximum, so widening the
     # evidence set must not widen what is scored. These two govern only how much of
     # the source the JUDGE gets to read, which has no threshold attached to it.
     #
-    # Retrieving one chunk per claim was the real bound on L5: the judge could only
+    # Retrieving one chunk per claim was the real bound on L4: the judge could only
     # ever reason over the single best-matching passage, so a decisive paragraph
     # ranked second was invisible to it and the verdict tracked whichever passage
     # happened to win. See todo.md bug 2.
-    L3_PASSAGES_PER_CLAIM: int = 3
+    L2_PASSAGES_PER_CLAIM: int = 3
 
     #: Total passages handed to the judge, across every claim and citation. One
-    #: setting because L3 fills the list and L5 renders it, and two constants drifting
+    #: setting because L2 fills the list and L4 renders it, and two constants drifting
     #: apart silently truncates evidence in between.
     MAX_JUDGE_PASSAGES: int = 24
 
@@ -188,9 +190,9 @@ class Settings(BaseSettings):
     #
     # Caveat: n=11 total. This is a working calibration, not a benchmark. Widen the
     # sample before relying on it, and re-run it for any other embedding model.
-    L4_FAIL_BELOW: float = 0.40
-    L4_PASS_AT: float = 0.45
-    L4_MIN_ANSWER_TOKENS: int = 20  # "Yes." scores erratically -> WARN, not FAIL
+    L3_FAIL_BELOW: float = 0.40
+    L3_PASS_AT: float = 0.45
+    L3_MIN_ANSWER_TOKENS: int = 20  # "Yes." scores erratically -> WARN, not FAIL
 
     # --- Chunking ---
     # How a source judgment is cut into retrieval units.
@@ -205,7 +207,7 @@ class Settings(BaseSettings):
     # the first one was ever answered. Measured on Spandeck: 43 grouped chunks, median
     # 2,042 chars and ~6 paragraphs each, against a median paragraph of 338 chars.
     # Default chosen for EVIDENCE PRECISION, not for scores. Against real voyage-law-2
-    # on the fixed calibration set (scripts/l3_probe.py), at prefix_mode=none:
+    # on the fixed calibration set (scripts/l2_probe.py), at prefix_mode=none:
     #
     #   strategy     genuine min   foreign max   GAP
     #   grouped         0.640         0.254     +0.386
@@ -213,12 +215,12 @@ class Settings(BaseSettings):
     #
     # Every score rises and the gap does not -- finer chunks match unrelated material
     # better too. So this buys no discrimination, and must not be justified as though
-    # it did. What it buys is the passage L5 reasons over: the unit for [83] is [83-83]
+    # it did. What it buys is the passage L4 reasons over: the unit for [83] is [83-83]
     # rather than [83-86], provenance is exact so "at [N]" names the text actually
-    # supplied, and paragraph [115] moves from rank #3 to #1. L5's reliability is
+    # supplied, and paragraph [115] moves from rank #3 to #1. L4's reliability is
     # bounded by retrieval quality, and that bound is what this moves.
     #
-    # It is also the regime Part 4's L3 thresholds were derived in, since those were
+    # It is also the regime Part 4's L2 thresholds were derived in, since those were
     # measured against raw paragraphs.
     #
     # Costs ~4x the vectors per document (170 chunks vs 43 on Spandeck), paid once per
@@ -232,7 +234,7 @@ class Settings(BaseSettings):
     #: Below this, a paragraph is merged into the next one instead of standing alone.
     #: Judgments are full of "I agree." and "The appeal is dismissed." -- embedded by
     #: themselves those are noise that can out-rank substantive text, the same reason
-    #: L1 refuses to score a quotation under L1_MIN_QUOTE_CHARS.
+    #: L0 refuses to emit a quotation under MIN_QUOTE_CHARS.
     #:
     #: A section boundary still wins over it: merging across a heading change would
     #: give the chunk a heading path true of only half its text. So a short fragment at
@@ -249,14 +251,14 @@ class Settings(BaseSettings):
     SOURCE_MAX_CONCURRENCY: int = 2
     SOURCE_MIN_INTERVAL_MS: int = 250
     SOURCE_TIMEOUT_S: float = 20.0
-    SOURCE_USER_AGENT: str = "sal-verifier/0.1 (SMU LIT 2026 research prototype)"
+    SOURCE_USER_AGENT: str = "sigma-tech/0.1 (SMU LIT 2026 research prototype)"
     ELITIGATION_BASE_URL: str = "https://www.elitigation.sg"
     SSO_BASE_URL: str = "https://sso.agc.gov.sg"
 
     #: SSO's WAF rejects SOURCE_USER_AGENT outright. MEASURED, not guessed:
     #:
-    #:   sal-verifier/0.1 (SMU LIT 2026 research prototype)              -> 403 blocked
-    #:   Mozilla/5.0 (compatible; sal-verifier/0.1; SMU LIT 2026 ...)    -> 200, 346kB
+    #:   sigma-tech/0.1 (SMU LIT 2026 research prototype)                -> 403 blocked
+    #:   Mozilla/5.0 (compatible; sigma-tech/0.1; SMU LIT 2026 ...)      -> 200, 346kB
     #:   HeadlessChrome/151 (what our own browser fetcher sends)         -> 403 blocked
     #:
     #: This is the conventional ``(compatible; <product>)`` bot form, and it still names
@@ -265,7 +267,7 @@ class Settings(BaseSettings):
     #: browsers, and dressing one up as a headed browser would be evading that rather
     #: than complying with it. Plain HTTP under an honest name is what SSO permits.
     SSO_USER_AGENT: str = (
-        "Mozilla/5.0 (compatible; sal-verifier/0.1; SMU LIT 2026 research prototype)"
+        "Mozilla/5.0 (compatible; sigma-tech/0.1; SMU LIT 2026 research prototype)"
     )
 
     #: Bound on an inline browser fetch. NOT a duplicate of SOURCE_TIMEOUT_S, which is
@@ -336,16 +338,16 @@ class Settings(BaseSettings):
     # 0.08 / 0.20 gives ZERO false fails on the on-point set while still failing 3 of
     # 4 off-point answers -- the correct trade under fail-fast, where a false FAIL is
     # unrecoverable. Applying the real-model 0.50/0.70 here fails EVERY answer, which
-    # would paint a green run red on L4 alone.
+    # would paint a green run red on L3 alone.
     # Lowered from 0.08 after a live run: a correctly-worded on-point answer scored
     # 0.073 and was failed. The original figure came from a 4-sample estimate whose
     # on-point minimum was 0.145, so the real spread is wider than that sample showed.
     # Under fail-fast a false FAIL is unrecoverable, so the threshold sits below the
     # lowest on-point score actually observed, not below the estimated one.
-    MOCK_L4_FAIL_BELOW: float = 0.04
-    MOCK_L4_PASS_AT: float = 0.20
+    MOCK_L3_FAIL_BELOW: float = 0.04
+    MOCK_L3_PASS_AT: float = 0.20
 
-    # L3 under the mock embedder. Measured, claim -> cited document, over 3 genuine
+    # L2 under the mock embedder. Measured, claim -> cited document, over 3 genuine
     # Spandeck claims and 2 from an unrelated area of law:
     #   genuine  cited min 0.151   margin min +0.012
     #   foreign  cited max 0.105   margin max +0.040
@@ -358,9 +360,9 @@ class Settings(BaseSettings):
     # anti-discriminative under a hashed bag-of-words with no synonymy. It is a real
     # signal for a real embedding model and a coin flip for this one, so mock mode
     # leans on the absolute floor alone rather than pretending otherwise.
-    MOCK_L3_ABSOLUTE_FLOOR: float = 0.12
-    MOCK_L3_MARGIN_FAIL_AT_OR_BELOW: float = -1.0
-    MOCK_L3_MARGIN_PASS_ABOVE: float = -0.99
+    MOCK_L2_ABSOLUTE_FLOOR: float = 0.12
+    MOCK_L2_MARGIN_FAIL_AT_OR_BELOW: float = -1.0
+    MOCK_L2_MARGIN_PASS_ABOVE: float = -0.99
 
     @model_validator(mode="after")
     def _apply_mock_thresholds(self) -> Settings:
@@ -369,17 +371,17 @@ class Settings(BaseSettings):
         Only fields the caller did not set are replaced, so an explicit env var or
         constructor argument always wins -- tests that pin a threshold keep pinning it.
         """
-        # Keyed on the EMBEDDER, not PROVIDER_MODE: L3/L4 thresholds describe the
+        # Keyed on the EMBEDDER, not PROVIDER_MODE: L2/L3 thresholds describe the
         # embedding model, so a real judge running alongside mock embeddings must
         # still use the mock's numbers.
         if self.capability_is_real("embeddings"):
             return self
         for field, mock_field in (
-            ("L4_FAIL_BELOW", "MOCK_L4_FAIL_BELOW"),
-            ("L4_PASS_AT", "MOCK_L4_PASS_AT"),
-            ("L3_ABSOLUTE_FLOOR", "MOCK_L3_ABSOLUTE_FLOOR"),
-            ("L3_MARGIN_FAIL_AT_OR_BELOW", "MOCK_L3_MARGIN_FAIL_AT_OR_BELOW"),
-            ("L3_MARGIN_PASS_ABOVE", "MOCK_L3_MARGIN_PASS_ABOVE"),
+            ("L3_FAIL_BELOW", "MOCK_L3_FAIL_BELOW"),
+            ("L3_PASS_AT", "MOCK_L3_PASS_AT"),
+            ("L2_ABSOLUTE_FLOOR", "MOCK_L2_ABSOLUTE_FLOOR"),
+            ("L2_MARGIN_FAIL_AT_OR_BELOW", "MOCK_L2_MARGIN_FAIL_AT_OR_BELOW"),
+            ("L2_MARGIN_PASS_ABOVE", "MOCK_L2_MARGIN_PASS_ABOVE"),
         ):
             if field not in self.model_fields_set:
                 object.__setattr__(self, field, getattr(self, mock_field))

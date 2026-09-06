@@ -7,12 +7,11 @@ state that makes polling work at all.
 
 ``RunState`` is one flat model; the schema spreads it across ``runs``, ``layer_results``,
 ``findings`` and ``run_citations``. Round-tripping must be lossless, because the panel
-renders from whatever ``GET /v1/runs/{id}`` returns. Four ``RunState`` fields have no
+renders from whatever ``GET /v1/runs/{id}`` returns. Several ``RunState`` fields have no
 column in the frozen migration (``errors``, ``timings.extract_ms``, ``is_final``,
-``LayerResult.cache_misses``, and ``Finding.id`` which is a free-form string against a
-UUID primary key). Each rides in an existing JSON column under an underscore-prefixed
-key, unpacked tolerantly on read. Adding a migration mid-fan-out is forbidden for good
-reason -- parallel streams deadlock on the revision chain.
+``LayerResult.cache_misses``, ``LayerResult.sub_results``, ``Finding.sub_layer``, and
+``Finding.id`` which is a free-form string against a UUID primary key). Each rides in an
+existing JSON column under an underscore-prefixed key, unpacked tolerantly on read.
 """
 
 from __future__ import annotations
@@ -37,11 +36,12 @@ from verifier.contracts.enums import (
     ResolutionStatus,
     RunStatus,
     Severity,
+    SubLayer,
     Verdict,
     VerdictStage,
 )
 from verifier.contracts.findings import Evidence, Finding
-from verifier.contracts.layers import LayerResult
+from verifier.contracts.layers import LayerResult, SubLayerResult
 from verifier.contracts.runs import CacheStats, RunState, Timings
 from verifier.logging import get_logger
 from verifier.repos.models import CitationResolution, FindingRow, LayerResultRow, Run, RunCitation
@@ -160,6 +160,7 @@ class PgRunRepo:
         for layer, result in state.layers.items():
             detail = dict(result.detail)
             detail["_cache_misses"] = result.cache_misses  # no column in the frozen schema
+            detail["_sub_results"] = [r.model_dump(mode="json") for r in result.sub_results]
             s.add(
                 LayerResultRow(
                     run_id=key,
@@ -180,6 +181,8 @@ class PgRunRepo:
             # Finding.id is a free-form string ("L1-2"); the PK is a UUID. Keep the
             # real identifier so the panel's finding->highlight mapping survives a save.
             evidence["_finding_id"] = finding.id
+            if finding.sub_layer is not None:
+                evidence["_sub_layer"] = str(finding.sub_layer)
             s.add(
                 FindingRow(
                     id=uuid.uuid4(),
@@ -189,7 +192,6 @@ class PgRunRepo:
                     severity=str(finding.severity),
                     message=finding.message,
                     citation_ordinal=finding.citation_ordinal,
-                    quote_ordinal=finding.quote_ordinal,
                     span_start=finding.output_span.start if finding.output_span else None,
                     span_end=finding.output_span.end if finding.output_span else None,
                     evidence=evidence,
@@ -310,6 +312,7 @@ class PgRunRepo:
         for lr in layer_rows:
             detail = dict(lr.detail or {})
             cache_misses = int(detail.pop("_cache_misses", 0) or 0)
+            sub_results = tuple(SubLayerResult(**r) for r in (detail.pop("_sub_results", []) or []))
             layer = Layer(lr.layer)
             layers[layer] = LayerResult(
                 layer=layer,
@@ -318,6 +321,7 @@ class PgRunRepo:
                 duration_ms=lr.duration_ms or 0,
                 cache_hits=lr.cache_hits or 0,
                 cache_misses=cache_misses,
+                sub_results=sub_results,
                 detail=detail,
             )
 
@@ -330,6 +334,8 @@ class PgRunRepo:
         for fr in finding_rows:
             evidence = dict(fr.evidence or {})
             finding_id = str(evidence.pop("_finding_id", "") or fr.id)
+            packed_sub = evidence.pop("_sub_layer", None)
+            sub_layer = SubLayer(packed_sub) if packed_sub else None
             span = None
             if fr.span_start is not None and fr.span_end is not None:
                 span = Span(start=fr.span_start, end=fr.span_end)
@@ -337,12 +343,12 @@ class PgRunRepo:
                 Finding(
                     id=finding_id,
                     layer=Layer(fr.layer),
+                    sub_layer=sub_layer,
                     code=FindingCode(fr.code),
                     severity=Severity(fr.severity),
                     message=fr.message,
                     source=FindingSource(fr.source or "deterministic"),
                     citation_ordinal=fr.citation_ordinal,
-                    quote_ordinal=fr.quote_ordinal,
                     output_span=span,
                     evidence=Evidence(**evidence),
                 )

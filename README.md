@@ -1,9 +1,9 @@
-# SAL Verifier
+# Sigma Tech
 
 Automated verification of legal AI outputs. Given a `(question, ai_output)` pair scraped from
-claude.ai by a Chrome extension, five layers score it for citation integrity, source trust,
-source grounding, responsiveness and factual faithfulness — returning a green check, or a red
-check with the reason.
+claude.ai by a Chrome extension, four layers score it for citation integrity, semantic
+alignment, responsiveness and factual faithfulness — returning a green check, or a red check
+with the reason.
 
 The first thing it asks is the one that is easy to forget: **does the answer cite anything at
 all?** An output can be entirely free of fabricated citations by citing nothing whatsoever, and
@@ -13,7 +13,7 @@ Built for SMU LIT 2026, Problem Statement 2 (Singapore Academy of Law).
 
 ## Why it is defensible
 
-**The LLM judge can convict but never acquit.** Layers 1–4 are deterministic and run first; if
+**The LLM judge can convict but never acquit.** Layers 1–3 are deterministic and run first; if
 any fails, the run fails and the judge is never consulted. The judge only ever sees output that
 already passed every machine-checkable test. That invariant is the answer to "who audits the
 auditor?", and it is enforced in `pipeline/aggregate.py` and proven by
@@ -21,15 +21,23 @@ auditor?", and it is enforced in `pipeline/aggregate.py` and proven by
 
 ## The layers
 
+**L1 is one layer that asks its question in three parts.** They are reported as sub-checks on
+the layer's result, not as layers of their own — the run has four scoring layers, and the panel
+shows four rows with L1's three nested under it.
+
 | Layer | Question | Type |
 |---|---|---|
 | L1a | Is the proposition supported by any authority at all? | Deterministic count |
 | L1b | Does this citation exist, and is it the right document? | Deterministic lookup |
-| L1c | Is the quote really in it? | Deterministic lookup |
-| L2 | Is the source trustworthy? (black / gray / white lists) | Deterministic lookup |
-| L3 | Does the output actually *use* the cited source? | Retrieval / ranking |
-| L4 | Does the output answer the question? | Retrieval / ranking |
-| L5 | Is it *faithful* to what the source holds? | Reasoning (Claude Opus) |
+| L1c | Is the source trustworthy? (black / gray / white lists) | Deterministic lookup |
+| L2 | Does the output actually *use* the cited source? | Retrieval / ranking |
+| L3 | Does the output answer the question? | Retrieval / ranking |
+| L4 | Is it *faithful* to what the source holds? | Reasoning (Claude Opus) |
+
+Nothing checks whether a quoted passage really appears in the judgment it is hung on. That
+check existed and was removed: it turned on a fuzzy 75/90 similarity band, and an honest
+paraphrase and an invented sentence land 3.6 points apart under it — noise, and the band sat
+25 points above both. See `docs/03-findings.md` Part 3.
 
 Embeddings are used only for retrieval, where they are proven; faithfulness is left to a
 reasoning judge, because published results show embedding similarity cannot detect real LLM

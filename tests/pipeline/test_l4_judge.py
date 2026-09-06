@@ -1,4 +1,4 @@
-"""L5: prompt rendering, rubric mapping, and the unparseable path."""
+"""L4: prompt rendering, rubric mapping, and the unparseable path."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from verifier.contracts.enums import (
     Verdict,
 )
 from verifier.contracts.layers import LayerInput, LayerResult
-from verifier.layers.l5_judge import (
+from verifier.layers.l4_judge import (
     PARSE_PATH_UNPARSEABLE,
     PROMPT_PATH,
     FaithfulnessJudgeLayer,
@@ -118,12 +118,12 @@ def test_passages_are_harvested_from_evidence_when_no_detail_is_supplied():
     from verifier.contracts.findings import Evidence, Finding
 
     result = LayerResult(
-        layer=Layer.L3_GROUNDING,
+        layer=Layer.L2_ALIGNMENT,
         status=LayerStatus.WARN,
         findings=(
             Finding(
                 id="f1",
-                layer=Layer.L3_GROUNDING,
+                layer=Layer.L2_ALIGNMENT,
                 code=FindingCode.CLAIM_WEAKLY_GROUNDED,
                 severity=Severity.WARN,
                 message="weak",
@@ -245,13 +245,13 @@ def test_judge_unparseable_does_not_flip_a_pass_to_fail():
     from tests.pipeline.conftest import finding
 
     unparseable = LayerResult(
-        layer=Layer.L5_JUDGE,
+        layer=Layer.L4_JUDGE,
         status=LayerStatus.ERROR,
         findings=(
             finding(
                 FindingCode.JUDGE_UNPARSEABLE,
                 Severity.WARN,
-                layer=Layer.L5_JUDGE,
+                layer=Layer.L4_JUDGE,
                 source=FindingSource.LLM,
             ),
         ),
@@ -267,10 +267,10 @@ async def test_an_unparseable_judge_does_not_fail_an_end_to_end_run():
         layers={
             layer: StubLayer(layer)
             for layer in (
-                Layer.L1_EXISTENCE,
-                Layer.L2_SOURCE_TRUST,
-                Layer.L3_GROUNDING,
-                Layer.L4_RESPONSIVENESS,
+                Layer.L1_CITATION_INTEGRITY,
+                Layer.L1_CITATION_INTEGRITY,
+                Layer.L2_ALIGNMENT,
+                Layer.L3_RESPONSIVENESS,
             )
         },
         judge_factory=lambda ctx: FaithfulnessJudgeLayer(MockJudge(mode="garbage"), context=ctx),
@@ -331,29 +331,29 @@ def test_the_harvest_ranks_by_score_rather_than_by_arrival():
     """The cap used to be applied to arrival order.
 
     The orchestrator populates ``state.layers`` L4, L1, L3, so it hands this function
-    L1's results FIRST. L1's ``best_match_text`` is a by-product of checking a quotation,
-    not a retrieval result -- and under an arrival-ordered cap it could displace the
-    passages L3 actually ranked, which is the judge reading the wrong evidence for a
-    structural reason nobody would ever see.
+    L1's results FIRST. L1's ``best_match_text`` is a by-product of checking a citation
+    -- the title of the page it resolved to -- not a retrieval result, and under an
+    arrival-ordered cap it could displace the passages L3 actually ranked, which is the
+    judge reading the wrong evidence for a structural reason nobody would ever see.
     """
     from verifier.contracts.findings import Evidence, Finding
 
     l1 = LayerResult(
-        layer=Layer.L1_EXISTENCE,
+        layer=Layer.L1_CITATION_INTEGRITY,
         status=LayerStatus.PASS,
         findings=(
             Finding(
                 id="f1",
-                layer=Layer.L1_EXISTENCE,
-                code=FindingCode.QUOTE_INEXACT,
-                severity=Severity.WARN,
-                message="quote",
-                evidence=Evidence(best_match_text="an incidental quote match", score=0.2),
+                layer=Layer.L1_CITATION_INTEGRITY,
+                code=FindingCode.RESOLVED_WRONG_DOC,
+                severity=Severity.FAIL,
+                message="wrong document",
+                evidence=Evidence(best_match_text="an incidental title match", score=0.2),
             ),
         ),
     )
     l3 = LayerResult(
-        layer=Layer.L3_GROUNDING,
+        layer=Layer.L2_ALIGNMENT,
         status=LayerStatus.PASS,
         detail={"passages": [{"text": "the passage L3 ranked highest", "score": 0.9}]},
     )

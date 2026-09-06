@@ -1,6 +1,6 @@
 """Domains the AI output names for itself.
 
-L2a can check these before anything is fetched, because they already carry a domain --
+1c can check these before anything is fetched, because they already carry a domain --
 unlike a bare citation, which has no domain until L1 resolves it. Keeping the two paths
 separate is what lets the source-trust layer run first and independently.
 """

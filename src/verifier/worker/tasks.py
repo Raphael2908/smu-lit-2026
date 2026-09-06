@@ -217,7 +217,7 @@ async def _run_verification(run_id: str, *, defer_judge: bool = False) -> dict[s
     acks_late=True,
 )
 def judge_verification(self: Any, run_id: str) -> dict[str, Any]:
-    """L5 plus finalisation, on the judge queue."""
+    """L4 plus finalisation, on the judge queue."""
     try:
         return _run_async(_judge_verification(run_id))
     except SoftTimeLimitExceeded:

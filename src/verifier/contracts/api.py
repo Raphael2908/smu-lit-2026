@@ -12,10 +12,13 @@ from verifier.contracts.enums import ListType, MatchType
 
 class EventName(StrEnum):
     """SSE event names. Order in a typical run: accepted -> extracted ->
-    layer_result(L4) -> layer_result(L1) -> layer_result(L3) -> layer_result(L2) ->
-    deterministic_verdict -> {judge_skipped | layer_result(L5)} -> final -> done.
+    layer_result(L3) -> layer_result(L1) -> layer_result(L2) ->
+    deterministic_verdict -> {judge_skipped | layer_result(L4)} -> final -> done.
 
-    L4 usually lands first (no dependencies); L2 last (it needs L1's resolved domain).
+    L3 (responsiveness) usually lands first: it depends on nothing but the output. L1
+    and L2 both wait on the shared resolution pass. Exactly one layer_result per layer
+    -- source trust used to emit a second L2 event because it ran twice, and it is now
+    a sub-check reported inside L1's single result.
     """
 
     ACCEPTED = "accepted"

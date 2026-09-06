@@ -12,7 +12,7 @@ L2 does not read, rewrite or acknowledge L1's findings; it only emits its own. I
 put elitigation.sg on the whitelist and every fabricated eLitigation citation --
 resolved from a real domain, pointing at a document that does not exist -- would pass.
 Trust in a publisher is not evidence about a document. See
-``tests/layers/test_l2_lists.py::test_whitelist_cannot_clear_an_l1_failure``.
+``tests/layers/test_l1_composite.py::test_a_whitelist_cannot_clear_a_fabricated_citation``.
 
 L2 runs AFTER L1 because a bare citation like ``[2007] SGCA 37`` has no domain at all
 until L1's resolver turns it into a URL. Domains written out in the output are
@@ -26,7 +26,14 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
-from verifier.contracts.enums import FindingCode, Layer, LayerStatus, ListType, Severity
+from verifier.contracts.enums import (
+    FindingCode,
+    Layer,
+    LayerStatus,
+    ListType,
+    Severity,
+    SubLayer,
+)
 from verifier.contracts.findings import Evidence, Finding
 from verifier.contracts.layers import LayerInput, LayerResult
 from verifier.layers.base import BaseLayer, status_from_findings
@@ -75,7 +82,7 @@ class SourceTrustLayer(BaseLayer):
     fully functional offline with no database.
     """
 
-    layer = Layer.L2_SOURCE_TRUST
+    layer = Layer.L1_CITATION_INTEGRITY
 
     def __init__(self, lists: ListRepo | None = None) -> None:
         self._lists = lists
@@ -208,8 +215,9 @@ class SourceTrustLayer(BaseLayer):
         ordinals: list[int],
     ) -> Finding:
         return Finding(
-            id=f"{run_id}:L2:{domain}:{code.value}",
+            id=f"{run_id}:L1c:domain:{domain}:{code.value}",
             layer=self.layer,
+            sub_layer=SubLayer.L1C_SOURCE_TRUST,
             code=code,
             severity=severity,
             message=message,
