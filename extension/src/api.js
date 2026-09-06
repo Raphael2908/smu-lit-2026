@@ -11,14 +11,14 @@
  * The fallback is sticky: once the direct path has failed for CSP reasons it will keep
  * failing, and re-testing it on every one of ~50 polls per run would be pure latency.
  */
-globalThis.SALV = globalThis.SALV || {};
+globalThis.SIGMA = globalThis.SIGMA || {};
 
 (function apiModule() {
   let useProxy = false;
 
   async function viaProxy(path, options) {
     const response = await chrome.runtime.sendMessage({
-      type: 'salv:fetch',
+      type: 'sigma:fetch',
       path,
       method: (options && options.method) || 'GET',
       body: options && options.body ? options.body : null,
@@ -29,7 +29,7 @@ globalThis.SALV = globalThis.SALV || {};
   }
 
   async function direct(path, options) {
-    const response = await fetch(SALV.config.apiBase + path, {
+    const response = await fetch(SIGMA.config.apiBase + path, {
       method: (options && options.method) || 'GET',
       headers: { 'Content-Type': 'application/json' },
       body: options && options.body ? options.body : undefined,
@@ -54,14 +54,14 @@ globalThis.SALV = globalThis.SALV || {};
         return await direct(path, options);
       } catch (err) {
         if (options && options.signal && options.signal.aborted) throw err;
-        SALV.log('direct fetch failed, switching to background proxy:', err && err.message);
+        SIGMA.log('direct fetch failed, switching to background proxy:', err && err.message);
         useProxy = true;
       }
     }
     return viaProxy(path, options);
   }
 
-  SALV.api = {
+  SIGMA.api = {
     get usingProxy() {
       return useProxy;
     },

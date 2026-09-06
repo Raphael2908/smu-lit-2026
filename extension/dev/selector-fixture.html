@@ -53,7 +53,7 @@
 
 <script>
   // The entire dependency surface of selectors.js.
-  globalThis.SALV = { log() {}, banner() {}, warn() {} };
+  globalThis.SIGMA = { log() {}, banner() {}, warn() {} };
 </script>
 <script src="../src/selectors.js"></script>
 <script>
@@ -150,8 +150,8 @@
   const stage = document.getElementById('stage');
   shape.build(stage);
 
-  const messages = SALV.selectors.findMessages();
-  const tier = SALV.selectors.lastTier;
+  const messages = SIGMA.selectors.findMessages();
+  const tier = SIGMA.selectors.lastTier;
   const roles = messages.map((m) => m.role);
 
   const pass =

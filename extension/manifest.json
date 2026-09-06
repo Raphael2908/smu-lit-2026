@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "SAL Verifier",
+  "name": "Sigma Tech",
   "version": "0.1.0",
   "description": "Verifies Claude's legal answers: citation existence, source trust, grounding, responsiveness and faithfulness.",
   "permissions": [

@@ -3,8 +3,8 @@
 SSO is the official repository of Singapore legislation. It is fetched over plain HTTP
 with a source-specific user agent, and that combination is MEASURED rather than assumed:
 
-    sal-verifier/0.1 (SMU LIT 2026 research prototype)             -> 403, blocked
-    Mozilla/5.0 (compatible; sal-verifier/0.1; SMU LIT 2026 ...)   -> 200, 346kB
+    sigma-tech/0.1 (SMU LIT 2026 research prototype)               -> 403, blocked
+    Mozilla/5.0 (compatible; sigma-tech/0.1; SMU LIT 2026 ...)     -> 200, 346kB
     HeadlessChrome/151 (what our own BrowserFetcher sends)         -> 403, blocked
     a burst of ~12 requests                                        -> 202, waf challenge
 

@@ -17,7 +17,7 @@
  * 127.0.0.1. The symptom is an intermittently dead backend, not a resolution error.
  */
 const API_BASE = 'http://127.0.0.1:8000';
-const MENU_ID = 'salv-verify-response';
+const MENU_ID = 'sigma-verify-response';
 
 /*
  * The badge cannot read a CSS custom property, so these five are the one place the
@@ -61,12 +61,12 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== MENU_ID || !tab || tab.id === undefined) return;
-  chrome.tabs.sendMessage(tab.id, { type: 'salv:verify', source: 'context-menu' });
+  chrome.tabs.sendMessage(tab.id, { type: 'sigma:verify', source: 'context-menu' });
 });
 
 chrome.action.onClicked.addListener((tab) => {
   if (!tab || tab.id === undefined) return;
-  chrome.tabs.sendMessage(tab.id, { type: 'salv:verify', source: 'toolbar' });
+  chrome.tabs.sendMessage(tab.id, { type: 'sigma:verify', source: 'toolbar' });
 });
 
 /**
@@ -97,12 +97,12 @@ async function proxyFetch(message) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== 'string') return false;
 
-  if (message.type === 'salv:badge') {
+  if (message.type === 'sigma:badge') {
     applyBadge(sender.tab && sender.tab.id, message.state);
     return false;
   }
 
-  if (message.type === 'salv:fetch') {
+  if (message.type === 'sigma:fetch') {
     proxyFetch(message)
       .then(sendResponse)
       .catch((err) => sendResponse({ error: err && err.message ? err.message : String(err) }));

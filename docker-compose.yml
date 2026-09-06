@@ -1,5 +1,5 @@
 # The whole stack boots with an empty .env in PROVIDER_MODE=mock.
-name: sal-verifier
+name: sigma-tech
 
 x-app: &app
   build:

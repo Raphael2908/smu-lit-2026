@@ -19,8 +19,8 @@ def get_http_fetcher(user_agent: str | None = None) -> Fetcher:
     """``user_agent`` is per-SOURCE, not per-deployment.
 
     Sources disagree about what a polite client looks like. eLitigation accepts
-    ``sal-verifier/0.1 (...)``; sso.agc.gov.sg answers that exact string with 403 and
-    serves ``Mozilla/5.0 (compatible; sal-verifier/0.1; ...)`` -- the conventional
+    ``sigma-tech/0.1 (...)``; sso.agc.gov.sg answers that exact string with 403 and
+    serves ``Mozilla/5.0 (compatible; sigma-tech/0.1; ...)`` -- the conventional
     ``(compatible; ...)`` bot form -- with 200. Both identify us honestly; only one is
     shaped the way that WAF expects. One global default could not satisfy both.
 

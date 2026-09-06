@@ -16,7 +16,7 @@
  * Tier 4 is not a fallback so much as an insurance policy: whatever happens to the DOM,
  * a user can right-click an answer and the demo continues.
  */
-globalThis.SALV = globalThis.SALV || {};
+globalThis.SIGMA = globalThis.SIGMA || {};
 
 (function selectorsModule() {
   const ROLE_USER = 'user';
@@ -390,7 +390,7 @@ globalThis.SALV = globalThis.SALV || {};
         try {
           messages = run();
         } catch (err) {
-          SALV.log(`selector tier "${name}" threw`, err);
+          SIGMA.log(`selector tier "${name}" threw`, err);
         }
         if (!messages || !messages.length) continue;
         // A TIER ONLY WINS IF IT FOUND AN ANSWER TO VERIFY.
@@ -481,5 +481,5 @@ globalThis.SALV = globalThis.SALV || {};
     },
   };
 
-  SALV.selectors = selectors;
+  SIGMA.selectors = selectors;
 })();

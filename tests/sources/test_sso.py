@@ -228,7 +228,7 @@ def test_sso_uses_its_own_user_agent_not_the_global_one() -> None:
     assert settings.SSO_USER_AGENT != settings.SOURCE_USER_AGENT
     assert settings.SSO_USER_AGENT.startswith("Mozilla/5.0 (compatible;")
     # Still names us. This is a conventional bot UA, not a browser impersonation.
-    assert "sal-verifier" in settings.SSO_USER_AGENT
+    assert "sigma-tech" in settings.SSO_USER_AGENT
 
 
 async def test_the_adapter_asks_for_its_own_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:

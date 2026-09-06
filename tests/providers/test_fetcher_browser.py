@@ -79,7 +79,7 @@ def test_a_profile_directory_is_used_rather_than_credentials():
 # -- user agent -------------------------------------------------------------------
 #
 # This used to pass settings.SOURCE_USER_AGENT unconditionally, telling a real Chromium
-# to identify as "sal-verifier/0.1". Against the bot filter that is half the reason this
+# to identify as "sigma-tech/0.1". Against the bot filter that is half the reason this
 # fetcher exists, that is the worst of both worlds: the seconds of a browser with none of
 # the benefit, plus a renderer/client mismatch that is itself a detection signal.
 

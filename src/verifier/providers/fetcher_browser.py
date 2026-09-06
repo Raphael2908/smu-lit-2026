@@ -88,7 +88,7 @@ class BrowserFetcher:
 
         NOTE WHAT IS ABSENT: ``user_agent``, unless one was explicitly asked for. This
         used to pass ``settings.SOURCE_USER_AGENT`` unconditionally, which told a real
-        Chromium to identify as ``sal-verifier/0.1``. Against the bot filter that is half
+        Chromium to identify as ``sigma-tech/0.1``. Against the bot filter that is half
         the reason this fetcher exists, that is the worst of both worlds -- the seconds
         of a browser with none of the benefit, and a renderer/client mismatch that is
         itself a detection signal. Blank means "send whatever Chromium sends".

@@ -1290,7 +1290,7 @@ wheels = [
 ]
 
 [[package]]
-name = "sal-verifier"
+name = "sigma-tech"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
